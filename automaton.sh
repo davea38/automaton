@@ -693,6 +693,57 @@ is_network_error() {
     echo "$output" | grep -qi 'network\|connection\|timeout\|ECONNREFUSED\|ETIMEDOUT\|ENOTFOUND\|EHOSTUNREACH\|getaddrinfo'
 }
 
+# Plan corruption guard: checkpoint IMPLEMENTATION_PLAN.md before each iteration
+# so we can detect if an agent rewrites the plan and destroys completed work.
+# Sets PLAN_CHECKPOINT_COMPLETED_COUNT for post-iteration comparison.
+#
+# Usage: checkpoint_plan   (call before each iteration)
+checkpoint_plan() {
+    if [ ! -f "IMPLEMENTATION_PLAN.md" ]; then
+        PLAN_CHECKPOINT_COMPLETED_COUNT=0
+        return 0
+    fi
+
+    cp IMPLEMENTATION_PLAN.md "$AUTOMATON_DIR/plan_checkpoint.md"
+    PLAN_CHECKPOINT_COMPLETED_COUNT=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+}
+
+# Plan corruption guard: verify that the [x] count did not decrease after an
+# iteration. If it did, the agent rewrote the plan and lost completed tasks —
+# restore from the pre-iteration checkpoint.
+#
+# After 2 corruption events, escalates to human (exit 3).
+#
+# Usage: check_plan_integrity   (call after each iteration)
+# Returns: 0 = plan is intact or was restored successfully
+# Exits:   3 via escalate() if corruption_count reaches 2
+check_plan_integrity() {
+    if [ ! -f "IMPLEMENTATION_PLAN.md" ]; then
+        return 0
+    fi
+
+    local completed_after
+    completed_after=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+
+    if [ "$completed_after" -lt "$PLAN_CHECKPOINT_COMPLETED_COUNT" ]; then
+        log "ORCHESTRATOR" "PLAN CORRUPTION: completed count dropped from $PLAN_CHECKPOINT_COMPLETED_COUNT to $completed_after"
+
+        # Restore from checkpoint
+        cp "$AUTOMATON_DIR/plan_checkpoint.md" IMPLEMENTATION_PLAN.md
+        git add IMPLEMENTATION_PLAN.md 2>/dev/null || true
+        git commit -m "automaton: restore plan from corruption" 2>/dev/null || true
+        log "ORCHESTRATOR" "Plan restored from checkpoint."
+
+        corruption_count=$((corruption_count + 1))
+        if [ "$corruption_count" -ge 2 ]; then
+            escalate "Plan corruption detected twice. Agent may be rewriting the plan."
+            # escalate() exits — control never reaches here
+        fi
+    fi
+
+    return 0
+}
+
 # Stall detection: checks whether the last build iteration produced any code
 # changes by inspecting `git diff --stat HEAD~1`. If the diff is empty, the
 # agent claimed progress without modifying files — a "stall".
