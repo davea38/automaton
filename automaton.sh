@@ -1043,6 +1043,60 @@ check_phase_timeout() {
 }
 
 # ---------------------------------------------------------------------------
+# Agent Invocation
+# ---------------------------------------------------------------------------
+
+# Centralized agent invocation. Pipes the given prompt file into `claude -p`
+# with stream-json output, the specified model, and configured flags.
+# Captures all output and the exit code in global variables for downstream
+# processing (token extraction, error classification, budget tracking).
+#
+# Sets global variables:
+#   AGENT_RESULT    — full output from the agent (stream-json lines + stderr)
+#   AGENT_EXIT_CODE — the claude CLI exit code (0 = success)
+#
+# Always returns 0 so callers can safely use this with set -e and as the
+# retry function for handle_rate_limit(). Check AGENT_EXIT_CODE for the
+# actual result.
+#
+# Usage: run_agent "PROMPT_research.md" "sonnet"
+run_agent() {
+    local prompt_file="$1"
+    local model="$2"
+
+    if [ ! -f "$prompt_file" ]; then
+        log "ORCHESTRATOR" "ERROR: Prompt file not found: $prompt_file"
+        AGENT_RESULT=""
+        AGENT_EXIT_CODE=1
+        return 0
+    fi
+
+    local cmd_args=("-p" "--output-format" "stream-json" "--model" "$model")
+
+    if [ "$FLAG_DANGEROUSLY_SKIP_PERMISSIONS" = "true" ]; then
+        cmd_args+=("--dangerously-skip-permissions")
+    fi
+
+    if [ "$FLAG_VERBOSE" = "true" ]; then
+        cmd_args+=("--verbose")
+    fi
+
+    log "ORCHESTRATOR" "Invoking agent: model=$model prompt=$prompt_file"
+
+    AGENT_RESULT=""
+    AGENT_EXIT_CODE=0
+
+    # Capture stdout (stream-json) and stderr (errors, verbose logs) together.
+    # extract_tokens() greps for "type":"result" lines so stderr noise is harmless.
+    # Error classifiers (is_rate_limit, is_network_error) need stderr to detect failures.
+    AGENT_RESULT=$(cat "$prompt_file" | claude "${cmd_args[@]}" 2>&1) || AGENT_EXIT_CODE=$?
+
+    log "ORCHESTRATOR" "Agent finished: exit_code=$AGENT_EXIT_CODE"
+
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # CLI Argument Parsing & Main Entry Point
 # ---------------------------------------------------------------------------
 
