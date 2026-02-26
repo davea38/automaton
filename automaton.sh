@@ -505,3 +505,50 @@ check_budget() {
 
     return 0
 }
+
+# ---------------------------------------------------------------------------
+# Rate Limiting
+# ---------------------------------------------------------------------------
+
+# Implements exponential backoff when a rate limit is detected.
+# Retries the agent invocation up to 5 times with increasing delays.
+# After 5 consecutive failures, saves state and pauses for 10 minutes.
+#
+# Usage: handle_rate_limit retry_function [args...]
+#   The retry function must set AGENT_RESULT and AGENT_EXIT_CODE globals
+#   and must not exit on failure (capture errors internally).
+#
+# Returns: 0 = successful retry, 1 = all retries exhausted
+handle_rate_limit() {
+    local delay="$RATE_COOLDOWN_SECONDS"
+
+    for ((attempt = 1; attempt <= 5; attempt++)); do
+        log "ORCHESTRATOR" "Rate limit detected. Backing off ${delay}s (attempt ${attempt}/5)"
+        sleep "$delay"
+
+        # Retry — the called function sets AGENT_RESULT and AGENT_EXIT_CODE
+        "$@"
+
+        if [ "${AGENT_EXIT_CODE:-1}" -eq 0 ]; then
+            log "ORCHESTRATOR" "Rate limit retry succeeded."
+            return 0
+        fi
+
+        # If the error is no longer rate-limit-related, stop retrying here
+        if ! echo "${AGENT_RESULT:-}" | grep -qi 'rate_limit\|429\|overloaded\|rate limit'; then
+            log "ORCHESTRATOR" "Retry failed with non-rate-limit error (exit ${AGENT_EXIT_CODE})."
+            return 1
+        fi
+
+        # Exponential backoff capped at max_backoff_seconds
+        delay=$(awk -v d="$delay" -v m="$RATE_BACKOFF_MULTIPLIER" -v cap="$RATE_MAX_BACKOFF_SECONDS" \
+            'BEGIN { nd = int(d * m); print (nd > cap) ? cap : nd }')
+    done
+
+    # All 5 retries exhausted — enter extended pause
+    log "ORCHESTRATOR" "Persistent rate limiting. Pausing for 10 minutes."
+    write_state
+    sleep 600
+
+    return 1
+}

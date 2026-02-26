@@ -35,7 +35,7 @@
 
 ## 5. Rate Limiting
 
-- [ ] Write `handle_rate_limit()` implementing exponential backoff: starting at cooldown_seconds, retrying up to 5 times with backoff_multiplier, capping at max_backoff_seconds, and triggering a 10-minute pause after 5 consecutive failures (WHY: rate limits are the most common transient failure; proper backoff prevents wasted iterations; spec-08)
+- [x] Write `handle_rate_limit()` implementing exponential backoff: starting at cooldown_seconds, retrying up to 5 times with backoff_multiplier, capping at max_backoff_seconds, and triggering a 10-minute pause after 5 consecutive failures (WHY: rate limits are the most common transient failure; proper backoff prevents wasted iterations; spec-08)
 - [ ] Write `check_pacing()` that calculates token velocity over the last 3 iterations from budget.json history and inserts a sleep if velocity exceeds 80% of tokens_per_minute (WHY: proactive pacing avoids rate limits rather than reacting to them; spec-08)
 
 ## 6. Error Handling & Recovery
