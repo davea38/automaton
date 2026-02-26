@@ -693,6 +693,45 @@ is_network_error() {
     echo "$output" | grep -qi 'network\|connection\|timeout\|ECONNREFUSED\|ETIMEDOUT\|ENOTFOUND\|EHOSTUNREACH\|getaddrinfo'
 }
 
+# Stall detection: checks whether the last build iteration produced any code
+# changes by inspecting `git diff --stat HEAD~1`. If the diff is empty, the
+# agent claimed progress without modifying files — a "stall".
+#
+# After stall_threshold consecutive stalls, forces a re-plan (return 1).
+# After 2 re-plans that still lead to stalls, escalates to human (exit 3).
+# Resets stall_count on any detected change.
+#
+# Usage: check_stall
+# Returns: 0 = continue normally, 1 = force re-plan (transition to plan phase)
+# Exits:   3 via escalate() if re-planning has failed twice
+check_stall() {
+    local diff_stat
+    diff_stat=$(git diff --stat HEAD~1 2>/dev/null || true)
+
+    if [ -z "$diff_stat" ]; then
+        stall_count=$((stall_count + 1))
+        log "ORCHESTRATOR" "Stall detected ($stall_count/$EXEC_STALL_THRESHOLD). No code changes."
+    else
+        stall_count=0
+        return 0
+    fi
+
+    if [ "$stall_count" -ge "$EXEC_STALL_THRESHOLD" ]; then
+        # Check if we've already re-planned too many times
+        if [ "$replan_count" -ge 2 ]; then
+            escalate "Agent stalled after $replan_count re-plans. Manual intervention required."
+            # escalate() exits — control never reaches here
+        fi
+
+        log "ORCHESTRATOR" "$EXEC_STALL_THRESHOLD consecutive stalls. Forcing re-plan."
+        stall_count=0
+        replan_count=$((replan_count + 1))
+        return 1
+    fi
+
+    return 0
+}
+
 # Escalation: when automated recovery fails, stop cleanly and hand off to human.
 # Logs the escalation, marks it in IMPLEMENTATION_PLAN.md for visibility,
 # saves state, commits everything, and exits with code 3.
