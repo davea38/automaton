@@ -10,7 +10,7 @@
 ## 1. Project Scaffolding & Package Setup
 
 - [x] Create `package.json` with name, version, description, bin entry pointing to `bin/cli.js`, files array including `bin/` and `templates/`, keywords, and MIT license (WHY: npm distribution requires a valid package.json before anything else; spec-13 defines the exact schema)
-- [ ] Create `bin/cli.js` scaffolding CLI that copies templates to the user's project directory, creates `specs/` and `.automaton/` directories, makes `automaton.sh` executable, appends `.automaton/` to `.gitignore`, includes overwrite protection for user-content files (specs/, PRD.md, AGENTS.md), checks system dependencies (claude, jq, git), and prints the getting-started banner (WHY: this is the entry point users interact with first; it must exist before templates are finalized so we can test the full scaffold flow; spec-13)
+- [x] Create `bin/cli.js` scaffolding CLI that copies templates to the user's project directory, creates `specs/` and `.automaton/` directories, makes `automaton.sh` executable, appends `.automaton/` to `.gitignore`, includes overwrite protection for user-content files (specs/, PRD.md, AGENTS.md), checks system dependencies (claude, jq, git), and prints the getting-started banner (WHY: this is the entry point users interact with first; it must exist before templates are finalized so we can test the full scaffold flow; spec-13)
 
 ## 2. Configuration System
 
