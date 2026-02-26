@@ -867,3 +867,137 @@ gate_spec_completeness() {
 
     $pass
 }
+
+# Gate 2: Research Completeness — runs after Phase 1 (research).
+# Validates that research enriched the specs and resolved unknowns:
+#   - AGENTS.md grew beyond the ~22-line template (warning only)
+#   - No TBD/TODO markers remaining in specs/ (hard fail)
+#
+# On fail: orchestrator should retry research (up to max iterations),
+# then warn and continue to planning if max reached.
+# Returns: 0 (pass) or 1 (fail)
+gate_research_completeness() {
+    local pass=true
+    local warnings=0
+
+    # Check: AGENTS.md was updated (grew from template size)
+    local agents_lines
+    agents_lines=$(wc -l < AGENTS.md)
+    if [ "$agents_lines" -le 22 ]; then  # template is ~22 lines
+        log "ORCHESTRATOR" "  WARN: AGENTS.md unchanged from template"
+        warnings=$((warnings + 1))
+    fi
+
+    # Check: no TBD/TODO remaining in specs
+    local tbds
+    tbds=$(grep -ri 'TBD\|TODO' specs/ 2>/dev/null | wc -l)
+    if [ "$tbds" -gt 0 ]; then
+        log "ORCHESTRATOR" "  FAIL: $tbds TBD/TODO markers remaining in specs"
+        pass=false
+    fi
+
+    $pass
+}
+
+# Gate 3: Plan Validity — runs after Phase 2 (plan).
+# Validates that the planning phase produced a usable task list:
+#   - At least 5 unchecked tasks in IMPLEMENTATION_PLAN.md
+#   - Plan is longer than 10 lines
+#   - Tasks reference specs (heuristic, warning only)
+#
+# On fail: orchestrator should retry planning (up to max iterations),
+# then escalate if max reached.
+# Returns: 0 (pass) or 1 (fail)
+gate_plan_validity() {
+    local pass=true
+
+    # Check: at least 5 unchecked tasks
+    local unchecked
+    unchecked=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    if [ "$unchecked" -lt 5 ]; then
+        log "ORCHESTRATOR" "  FAIL: Only $unchecked unchecked tasks (minimum 5)"
+        pass=false
+    fi
+
+    # Check: plan is non-trivial
+    local plan_lines
+    plan_lines=$(wc -l < IMPLEMENTATION_PLAN.md)
+    if [ "$plan_lines" -le 10 ]; then
+        log "ORCHESTRATOR" "  FAIL: Plan too short ($plan_lines lines)"
+        pass=false
+    fi
+
+    # Check: tasks reference specs (heuristic, warning only)
+    local spec_refs
+    spec_refs=$(grep -ci 'spec' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    if [ "$spec_refs" -eq 0 ]; then
+        log "ORCHESTRATOR" "  WARN: No spec references found in plan"
+        # Warning only, don't fail
+    fi
+
+    $pass
+}
+
+# Gate 4: Build Completion — runs after Phase 3 (build).
+# Validates that all tasks are complete and code was actually produced:
+#   - Zero unchecked tasks in IMPLEMENTATION_PLAN.md (hard fail)
+#   - Git commits exist during the run (warning only)
+#   - Test files exist (warning only)
+#
+# On fail: orchestrator should continue building (return to build loop).
+# Returns: 0 (pass) or 1 (fail)
+gate_build_completion() {
+    local pass=true
+
+    # Check: all tasks complete
+    local unchecked
+    unchecked=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    if [ "$unchecked" -gt 0 ]; then
+        log "ORCHESTRATOR" "  FAIL: $unchecked tasks still incomplete"
+        pass=false
+    fi
+
+    # Check: code changes exist (uses run_started_at set by orchestrator)
+    local total_changes
+    total_changes=$(git log --oneline --since="${run_started_at:-1970-01-01}" | wc -l)
+    if [ "$total_changes" -eq 0 ]; then
+        log "ORCHESTRATOR" "  WARN: No git commits during build phase"
+    fi
+
+    # Check: tests exist (heuristic)
+    local test_files
+    test_files=$(find . -name "*test*" -o -name "*spec*" | grep -v node_modules | grep -v .automaton | wc -l)
+    if [ "$test_files" -eq 0 ]; then
+        log "ORCHESTRATOR" "  WARN: No test files found"
+    fi
+
+    $pass
+}
+
+# Gate 5: Review Pass — runs after Phase 4 (review).
+# Validates that the review agent found no remaining issues:
+#   - No unchecked tasks in IMPLEMENTATION_PLAN.md (reviewer may have added new ones)
+#   - No ESCALATION markers in IMPLEMENTATION_PLAN.md
+#
+# On fail: orchestrator should return to Phase 3 (build) to address new tasks.
+# After 2 review iterations that both fail, escalate.
+# Returns: 0 (pass) or 1 (fail)
+gate_review_pass() {
+    local pass=true
+
+    # Check: no new unchecked tasks were added by reviewer
+    local unchecked
+    unchecked=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    if [ "$unchecked" -gt 0 ]; then
+        log "ORCHESTRATOR" "  FAIL: Review created $unchecked new tasks"
+        pass=false
+    fi
+
+    # Check: no ESCALATION markers
+    if grep -q 'ESCALATION:' IMPLEMENTATION_PLAN.md 2>/dev/null; then
+        log "ORCHESTRATOR" "  FAIL: Escalation marker found"
+        pass=false
+    fi
+
+    $pass
+}
