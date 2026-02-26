@@ -629,3 +629,25 @@ check_pacing() {
 
     return 0
 }
+
+# ---------------------------------------------------------------------------
+# Error Handling & Recovery
+# ---------------------------------------------------------------------------
+
+# Classifies whether agent output indicates an API rate limit error.
+# Checks for known Anthropic rate limit signatures in the output text.
+# Usage: if is_rate_limit "$agent_output"; then ...
+# Returns: 0 if rate limit detected, 1 otherwise
+is_rate_limit() {
+    local output="${1:-}"
+    echo "$output" | grep -qi 'rate_limit\|rate limit\|429\|overloaded'
+}
+
+# Classifies whether agent output indicates a network/connectivity error.
+# Checks for known network failure signatures in the output text.
+# Usage: if is_network_error "$agent_output"; then ...
+# Returns: 0 if network error detected, 1 otherwise
+is_network_error() {
+    local output="${1:-}"
+    echo "$output" | grep -qi 'network\|connection\|timeout\|ECONNREFUSED\|ETIMEDOUT\|ENOTFOUND\|EHOSTUNREACH\|getaddrinfo'
+}

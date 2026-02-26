@@ -40,7 +40,7 @@
 
 ## 6. Error Handling & Recovery
 
-- [ ] Write `is_rate_limit()` and `is_network_error()` classification helpers that grep agent output for known error signatures (WHY: error classification determines which recovery path to take; must exist before the main iteration loop; spec-09)
+- [x] Write `is_rate_limit()` and `is_network_error()` classification helpers that grep agent output for known error signatures (WHY: error classification determines which recovery path to take; must exist before the main iteration loop; spec-09)
 - [ ] Write the CLI crash handler: increment consecutive_failures on non-zero exit that is not a rate limit or network error, retry with delay up to max_consecutive_failures, then save state and exit 1 (WHY: transient CLI crashes should not abort the entire run; spec-09)
 - [ ] Write stall detection: after each build iteration, check `git diff --stat HEAD~1` for emptiness, increment stall_count if empty, reset on changes, force re-plan after stall_threshold consecutive stalls, escalate after 2 re-plans (WHY: stall detection catches agents that claim progress without producing code; spec-09)
 - [ ] Write plan corruption guard: checkpoint IMPLEMENTATION_PLAN.md before each iteration, verify [x] count did not decrease after, restore from checkpoint if corrupted, escalate after 2 corruptions (WHY: agents occasionally rewrite the plan and destroy completed work; this is the safety net; spec-09)
