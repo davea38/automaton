@@ -76,5 +76,5 @@
 
 ## 10. Templates Directory Finalization
 
-- [ ] Copy all scaffoldable files into `templates/`: automaton.sh, automaton.config.json, PROMPT_converse.md, PROMPT_research.md, PROMPT_plan.md, PROMPT_build.md, PROMPT_review.md, AGENTS.md, IMPLEMENTATION_PLAN.md, CLAUDE.md, PRD.md (WHY: bin/cli.js copies from templates/; every file the user gets must have a template source; spec-13)
+- [x] Copy all scaffoldable files into `templates/`: automaton.sh, automaton.config.json, PROMPT_converse.md, PROMPT_research.md, PROMPT_plan.md, PROMPT_build.md, PROMPT_review.md, AGENTS.md, IMPLEMENTATION_PLAN.md, CLAUDE.md, PRD.md (WHY: bin/cli.js copies from templates/; every file the user gets must have a template source; spec-13)
 - [ ] Update `templates/AGENTS.md` to replace "thesis-map" with a generic placeholder like "your-project" and set language/framework to "(to be filled by conversation phase)" (WHY: the template should not reference a specific project; it is a blank starting point for any new user; spec-02)
