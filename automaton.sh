@@ -1611,9 +1611,80 @@ run_orchestration() {
     exit 0
 }
 
-# --- Dry-run guard (full implementation deferred to task 9.9) ---
+# --- Dry-run mode ---
+# Loads config, runs Gate 1, displays resolved settings and phase plan, exits 0.
+# No agents are invoked and no state files are created.
 if [ "$ARG_DRY_RUN" = "true" ]; then
-    echo "Dry-run mode not yet fully implemented (see task 9.9)."
+    # Determine starting phase based on flags
+    local_start_phase="research"
+    if [ "$FLAG_SKIP_RESEARCH" = "true" ]; then
+        local_start_phase="plan"
+    fi
+
+    # Print banner
+    print_banner "$local_start_phase"
+
+    # Run Gate 1
+    echo ""
+    echo "Gate 1 (spec completeness):"
+    if gate_spec_completeness; then
+        echo "  PASS"
+    else
+        echo "  FAIL — Run the conversation phase first."
+    fi
+
+    # Show resolved settings
+    echo ""
+    echo "Resolved settings:"
+    echo "  Config file:     ${CONFIG_FILE_USED}"
+    echo "  Models:"
+    echo "    research:      ${MODEL_RESEARCH}"
+    echo "    planning:      ${MODEL_PLANNING}"
+    echo "    building:      ${MODEL_BUILDING}"
+    echo "    review:        ${MODEL_REVIEW}"
+    echo "    subagent:      ${MODEL_SUBAGENT_DEFAULT}"
+    echo "  Budget:"
+    echo "    max tokens:    ${BUDGET_MAX_TOKENS}"
+    echo "    max cost:      \$${BUDGET_MAX_USD}"
+    echo "    per-iteration: ${BUDGET_ITER_WARNING} tokens (warning)"
+    echo "    per-phase:     research=${BUDGET_PHASE_RESEARCH}, plan=${BUDGET_PHASE_PLAN}, build=${BUDGET_PHASE_BUILD}, review=${BUDGET_PHASE_REVIEW}"
+    echo "  Rate limits:"
+    echo "    tokens/min:    ${RATE_TOKENS_PER_MIN}"
+    echo "    cooldown:      ${RATE_COOLDOWN_SEC}s (backoff: x${RATE_BACKOFF_MULT}, max: ${RATE_MAX_BACKOFF_SEC}s)"
+    echo "  Execution:"
+    echo "    max iterations: research=${EXEC_MAX_ITER_RESEARCH}, plan=${EXEC_MAX_ITER_PLAN}, build=${EXEC_MAX_ITER_BUILD}, review=${EXEC_MAX_ITER_REVIEW}"
+
+    # Show phase plan
+    echo ""
+    echo "Phase sequence:"
+    phases_to_run=""
+    if [ "$FLAG_SKIP_RESEARCH" = "true" ]; then
+        phases_to_run="  1. plan (research skipped)"
+    else
+        phases_to_run="  1. research (max ${EXEC_MAX_ITER_RESEARCH} iterations)"
+        phases_to_run="${phases_to_run}
+  2. plan (max ${EXEC_MAX_ITER_PLAN} iterations)"
+    fi
+    if [ "$FLAG_SKIP_RESEARCH" = "true" ]; then
+        next_num=2
+    else
+        next_num=3
+    fi
+    build_max_display=$([ "$EXEC_MAX_ITER_BUILD" -eq 0 ] && echo "unlimited" || echo "${EXEC_MAX_ITER_BUILD}")
+    phases_to_run="${phases_to_run}
+  ${next_num}. build (max ${build_max_display} iterations)"
+    next_num=$((next_num + 1))
+    if [ "$FLAG_SKIP_REVIEW" = "true" ]; then
+        phases_to_run="${phases_to_run}
+  ${next_num}. (review skipped)"
+    else
+        phases_to_run="${phases_to_run}
+  ${next_num}. review (max ${EXEC_MAX_ITER_REVIEW} iterations)"
+    fi
+    echo "$phases_to_run"
+
+    echo ""
+    echo "Dry run complete. No agents were invoked."
     exit 0
 fi
 

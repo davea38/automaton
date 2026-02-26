@@ -72,7 +72,7 @@
 - [x] Write the phase sequence controller: a loop that progresses through research, plan, build, review with gate checks at each transition, handles --skip-research and --skip-review, transitions back to build on review failure, and declares COMPLETE when Gate 5 passes (WHY: this is the core orchestration logic that ties all modules together; spec-01)
 - [x] Write the per-iteration post-processing pipeline: extract tokens, update budget, check budget limits, check pacing, detect stalls (build phase only), check plan integrity (build phase only), write state, write agent history, log iteration summary, emit one-line stdout status, and push to git if configured (WHY: this pipeline runs after every agent invocation and integrates all subsystems; spec-01, spec-05, spec-07, spec-08, spec-09, spec-10)
 - [x] Wire the `--resume` path: read state, restore counters, skip to the saved phase, log RESUMED, and enter the phase sequence loop at the correct point (WHY: resume support is essential for long-running autonomous sessions that may be interrupted; spec-10)
-- [ ] Implement `--dry-run` mode: load config, run Gate 1, display the startup banner with all resolved settings, show which phases would run, and exit 0 without invoking any agents (WHY: dry-run lets users verify configuration before committing to a potentially expensive autonomous run; spec-01)
+- [x] Implement `--dry-run` mode: load config, run Gate 1, display the startup banner with all resolved settings, show which phases would run, and exit 0 without invoking any agents (WHY: dry-run lets users verify configuration before committing to a potentially expensive autonomous run; spec-01)
 
 ## 10. Templates Directory Finalization
 
