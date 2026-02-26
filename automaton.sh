@@ -812,3 +812,26 @@ escalate() {
 
     exit 3
 }
+
+# ---------------------------------------------------------------------------
+# Quality Gates
+# ---------------------------------------------------------------------------
+
+# Uniform gate invocation wrapper. Calls the named gate function (gate_$name),
+# logs PASS/FAIL, and returns the gate's exit code. The orchestrator uses this
+# at every phase transition to enforce quality requirements.
+#
+# Usage: gate_check "spec_completeness"
+# Returns: 0 if gate passes, 1 if gate fails
+gate_check() {
+    local gate_name="$1"
+    log "ORCHESTRATOR" "Gate: $gate_name..."
+
+    if "gate_$gate_name"; then
+        log "ORCHESTRATOR" "Gate: $gate_name... PASS"
+        return 0
+    else
+        log "ORCHESTRATOR" "Gate: $gate_name... FAIL"
+        return 1
+    fi
+}
