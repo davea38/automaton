@@ -50,7 +50,7 @@
 ## 7. Quality Gates
 
 - [x] Write `gate_check()` wrapper that calls the named gate function, logs PASS/FAIL, and returns the gate's exit code (WHY: uniform gate invocation with logging; called at every phase transition; spec-11)
-- [ ] Write `gate_spec_completeness()` checking for at least one spec file, non-empty PRD.md, and AGENTS.md without placeholder values (WHY: Gate 1 prevents starting autonomous work on incomplete inputs; spec-11)
+- [x] Write `gate_spec_completeness()` checking for at least one spec file, non-empty PRD.md, and AGENTS.md without placeholder values (WHY: Gate 1 prevents starting autonomous work on incomplete inputs; spec-11)
 - [ ] Write `gate_research_completeness()` checking AGENTS.md growth and absence of TBD/TODO in specs (WHY: Gate 2 ensures research actually resolved unknowns before planning begins; spec-11)
 - [ ] Write `gate_plan_validity()` checking for at least 5 unchecked tasks, plan length over 10 lines, and heuristic spec references (WHY: Gate 3 ensures the plan is substantive enough to drive a build phase; spec-11)
 - [ ] Write `gate_build_completion()` checking for zero unchecked tasks, git commit existence, and test file presence (WHY: Gate 4 confirms the build phase actually produced complete work; spec-11)

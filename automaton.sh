@@ -835,3 +835,35 @@ gate_check() {
         return 1
     fi
 }
+
+# Gate 1: Spec Completeness — runs before Phase 1 (research).
+# Validates that the conversation phase produced usable specs:
+#   - At least one spec file in specs/
+#   - PRD.md exists and is non-empty
+#   - AGENTS.md does not still contain the template placeholder
+#
+# On fail: orchestrator should refuse to start autonomous work.
+# Returns: 0 (pass) or 1 (fail)
+gate_spec_completeness() {
+    local pass=true
+
+    # Check: at least one spec file exists
+    if ! ls specs/*.md >/dev/null 2>&1; then
+        log "ORCHESTRATOR" "  FAIL: No spec files found in specs/"
+        pass=false
+    fi
+
+    # Check: PRD.md exists and is non-empty
+    if [ ! -s "PRD.md" ]; then
+        log "ORCHESTRATOR" "  FAIL: PRD.md missing or empty"
+        pass=false
+    fi
+
+    # Check: AGENTS.md has a real project name (not the template placeholder)
+    if grep -q "(to be determined)" AGENTS.md 2>/dev/null; then
+        log "ORCHESTRATOR" "  FAIL: AGENTS.md still has placeholder project name"
+        pass=false
+    fi
+
+    $pass
+}
