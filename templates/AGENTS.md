@@ -6,15 +6,15 @@
 
 ## Project
 
-- Project: thesis-map
-- Language: (to be determined)
-- Framework: (to be determined)
+- Project: your-project
+- Language: (to be filled by conversation phase)
+- Framework: (to be filled by conversation phase)
 
 ## Commands
 
-- Build: (to be determined)
-- Test: (to be determined)
-- Lint: (to be determined)
+- Build: (to be filled by conversation phase)
+- Test: (to be filled by conversation phase)
+- Lint: (to be filled by conversation phase)
 
 ## Learnings
 
