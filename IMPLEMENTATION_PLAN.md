@@ -58,7 +58,7 @@
 
 ## 8. Prompt Files
 
-- [ ] Write `PROMPT_converse.md` for Phase 0: instruct Claude to interview the user, challenge vague requirements, write numbered spec files with Purpose/Requirements/Acceptance Criteria/Dependencies sections, write PRD.md, update AGENTS.md with project name and tech fields, and signal handoff when specs are complete (WHY: the conversation phase prompt defines the entire requirements-gathering UX; spec-02)
+- [x] Write `PROMPT_converse.md` for Phase 0: instruct Claude to interview the user, challenge vague requirements, write numbered spec files with Purpose/Requirements/Acceptance Criteria/Dependencies sections, write PRD.md, update AGENTS.md with project name and tech fields, and signal handoff when specs are complete (WHY: the conversation phase prompt defines the entire requirements-gathering UX; spec-02)
 - [ ] Write `PROMPT_research.md` for Phase 1: instruct Claude to read all specs and PRD.md, identify TBD/TODO/unknown markers, web search to resolve them, enrich specs with concrete technology decisions and rationale, update AGENTS.md with language/framework/commands, and output COMPLETE when done (WHY: the research prompt drives autonomous technology decision-making; spec-03)
 - [ ] Write `PROMPT_review.md` for Phase 4: instruct Claude to read all specs, run the full validation suite (test/lint/typecheck/build from AGENTS.md), perform spec coverage analysis, check code quality, and either output COMPLETE or create new [ ] tasks in IMPLEMENTATION_PLAN.md (WHY: the review prompt is the independent verification that closes the loop; spec-06)
 
