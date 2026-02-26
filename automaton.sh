@@ -1183,3 +1183,359 @@ fi
 if [ "$ARG_SKIP_REVIEW" = "true" ]; then
     FLAG_SKIP_REVIEW="true"
 fi
+
+# ---------------------------------------------------------------------------
+# Phase Sequence Controller
+# ---------------------------------------------------------------------------
+
+# Returns the prompt file for a given phase.
+get_phase_prompt() {
+    case "$1" in
+        research) echo "PROMPT_research.md" ;;
+        plan)     echo "PROMPT_plan.md" ;;
+        build)    echo "PROMPT_build.md" ;;
+        review)   echo "PROMPT_review.md" ;;
+    esac
+}
+
+# Returns the configured model for a given phase.
+get_phase_model() {
+    case "$1" in
+        research) echo "$MODEL_RESEARCH" ;;
+        plan)     echo "$MODEL_PLANNING" ;;
+        build)    echo "$MODEL_BUILDING" ;;
+        review)   echo "$MODEL_REVIEW" ;;
+    esac
+}
+
+# Returns max iterations for a given phase (0 = unlimited).
+get_phase_max_iterations() {
+    case "$1" in
+        research) echo "$EXEC_MAX_ITER_RESEARCH" ;;
+        plan)     echo "$EXEC_MAX_ITER_PLAN" ;;
+        build)    echo "$EXEC_MAX_ITER_BUILD" ;;
+        review)   echo "$EXEC_MAX_ITER_REVIEW" ;;
+    esac
+}
+
+# Checks whether the agent output contains the COMPLETE signal.
+agent_signaled_complete() {
+    echo "$AGENT_RESULT" | grep -q 'COMPLETE</promise>'
+}
+
+# Emits a one-line inter-iteration status per spec-01 format.
+emit_status_line() {
+    local model="$1" iter_cost="$2"
+    local phase_upper max_iter iter_display remaining_budget
+
+    phase_upper=$(echo "$current_phase" | tr '[:lower:]' '[:upper:]')
+    max_iter=$(get_phase_max_iterations "$current_phase")
+
+    if [ "$max_iter" -eq 0 ]; then
+        iter_display="${phase_iteration}"
+    else
+        iter_display="${phase_iteration}/${max_iter}"
+    fi
+
+    remaining_budget=$(jq -r '(.limits.max_cost_usd - .used.estimated_cost_usd) * 100 | floor / 100' \
+        "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
+
+    echo "[${phase_upper} ${iter_display}] ${current_phase} iteration ${phase_iteration} | ${LAST_INPUT_TOKENS:-0} input / ${LAST_OUTPUT_TOKENS:-0} output (~\$${iter_cost}) | budget: \$${remaining_budget} remaining"
+}
+
+# Set by post_iteration to communicate why a forced phase transition occurred.
+# Values: "" (normal), "budget" (phase budget exceeded), "stall" (re-plan needed)
+TRANSITION_REASON=""
+
+# Post-iteration pipeline: runs after every agent invocation. Extracts tokens,
+# updates budget, checks limits, detects stalls/corruption, writes state/history,
+# emits status, and pushes to git if configured.
+#
+# Args: model prompt_file iter_start_epoch
+# Returns: 0 = continue normally, 1 = force phase transition (see TRANSITION_REASON)
+post_iteration() {
+    local model="$1" prompt_file="$2" iter_start_epoch="$3"
+    local iter_end_epoch duration
+    iter_end_epoch=$(date +%s)
+    duration=$((iter_end_epoch - iter_start_epoch))
+    TRANSITION_REASON=""
+
+    # 1. Extract tokens from stream-json output
+    extract_tokens "$AGENT_RESULT"
+
+    # 2. Estimate cost for this iteration
+    local iter_cost
+    iter_cost=$(estimate_cost "$model" "$LAST_INPUT_TOKENS" "$LAST_OUTPUT_TOKENS" \
+        "$LAST_CACHE_CREATE" "$LAST_CACHE_READ")
+
+    # 3. Task description and status
+    local task_desc status
+    task_desc="${current_phase} iteration ${phase_iteration}"
+    if [ "$AGENT_EXIT_CODE" -eq 0 ]; then
+        status="success"
+    else
+        status="error"
+    fi
+
+    # 4. Update budget tracking
+    update_budget "$model" "$LAST_INPUT_TOKENS" "$LAST_OUTPUT_TOKENS" \
+        "$LAST_CACHE_CREATE" "$LAST_CACHE_READ" \
+        "$iter_cost" "$duration" "$task_desc" "$status"
+
+    # 5. Check budget limits (may exit 2 for hard stops, return 1 for phase force)
+    local budget_rc=0
+    check_budget "$LAST_INPUT_TOKENS" "$LAST_OUTPUT_TOKENS" || budget_rc=$?
+
+    # 6. Proactive pacing (may sleep to avoid rate limits)
+    check_pacing
+
+    # 7. Build-phase-only: stall detection and plan corruption guard
+    local stall_rc=0
+    if [ "$current_phase" = "build" ]; then
+        check_stall || stall_rc=$?
+        check_plan_integrity
+    fi
+
+    # 8. Persist state
+    write_state
+
+    # 9. Write per-agent history file
+    local agent_start_ts agent_end_ts files_changed git_commit
+    agent_start_ts=$(date -u -d "@$iter_start_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
+    agent_end_ts=$(date -u -d "@$iter_end_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
+    files_changed=$(git diff --name-only HEAD~1 2>/dev/null | jq -R -s 'split("\n") | map(select(. != ""))' 2>/dev/null || echo '[]')
+    git_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "null")
+
+    write_agent_history "$model" "$prompt_file" "$agent_start_ts" "$agent_end_ts" \
+        "$duration" "$AGENT_EXIT_CODE" \
+        "$LAST_INPUT_TOKENS" "$LAST_OUTPUT_TOKENS" \
+        "$LAST_CACHE_CREATE" "$LAST_CACHE_READ" \
+        "$iter_cost" "$task_desc" "$status" "$files_changed" "$git_commit"
+
+    # 10. Emit one-line status to stdout
+    emit_status_line "$model" "$iter_cost"
+
+    # 11. Git push if configured
+    if [ "${GIT_AUTO_PUSH:-false}" = "true" ]; then
+        git push 2>/dev/null || log "ORCHESTRATOR" "WARN: git push failed"
+    fi
+
+    # Signal forced transition if needed
+    if [ "$stall_rc" -ne 0 ]; then
+        TRANSITION_REASON="stall"
+        return 1
+    fi
+    if [ "$budget_rc" -ne 0 ]; then
+        TRANSITION_REASON="budget"
+        return 1
+    fi
+    return 0
+}
+
+# Records a completed phase in phase_history and transitions to a new one.
+transition_to_phase() {
+    local new_phase="$1"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    phase_history=$(echo "$phase_history" | jq -c \
+        --arg p "$current_phase" --arg t "$now" \
+        '. + [{"phase": $p, "completed_at": $t}]')
+
+    current_phase="$new_phase"
+    phase_iteration=0
+    PHASE_START_TIME=$(date +%s)
+
+    log "ORCHESTRATOR" "Phase transition → $new_phase"
+    write_state
+}
+
+# Main orchestration loop: drives the research → plan → build → review
+# phase sequence with gate checks at every transition, error recovery,
+# budget enforcement, stall detection, and the review→build feedback loop.
+run_orchestration() {
+    # --- Gate 1: specs must exist before autonomous work ---
+    if ! gate_check "spec_completeness"; then
+        echo "Gate 1 (spec completeness) failed. Run the conversation phase first."
+        exit 1
+    fi
+
+    # --- Determine starting state (fresh or resumed) ---
+    if [ "$ARG_RESUME" = "true" ]; then
+        read_state
+        log "ORCHESTRATOR" "RESUMED: phase=$current_phase iteration=$iteration"
+    else
+        initialize
+        if [ "$FLAG_SKIP_RESEARCH" = "true" ]; then
+            current_phase="plan"
+            log "ORCHESTRATOR" "Skipping research (--skip-research)"
+        fi
+    fi
+
+    # Used by gate_build_completion to check for commits during this run
+    run_started_at="$started_at"
+    PHASE_START_TIME=$(date +%s)
+    log "ORCHESTRATOR" "Starting: phase=$current_phase"
+
+    # Track review iterations for the review→build feedback loop (spec-06)
+    local review_attempts=0
+
+    # === Outer phase loop ===
+    while [ "$current_phase" != "COMPLETE" ]; do
+        local prompt_file model max_iter
+        prompt_file=$(get_phase_prompt "$current_phase")
+        model=$(get_phase_model "$current_phase")
+        max_iter=$(get_phase_max_iterations "$current_phase")
+
+        # Handle --skip-review
+        if [ "$current_phase" = "review" ] && [ "$FLAG_SKIP_REVIEW" = "true" ]; then
+            log "ORCHESTRATOR" "Skipping review (--skip-review)"
+            transition_to_phase "COMPLETE"
+            continue
+        fi
+
+        log "ORCHESTRATOR" "Phase: $current_phase (max: $([ "$max_iter" -eq 0 ] && echo 'unlimited' || echo "$max_iter"))"
+
+        # === Inner iteration loop ===
+        while true; do
+            phase_iteration=$((phase_iteration + 1))
+            iteration=$((iteration + 1))
+
+            # Enforce max iterations for this phase
+            if [ "$max_iter" -gt 0 ] && [ "$phase_iteration" -gt "$max_iter" ]; then
+                log "ORCHESTRATOR" "Max iterations reached for $current_phase ($max_iter)"
+                phase_iteration=$((phase_iteration - 1))
+                iteration=$((iteration - 1))
+                break
+            fi
+
+            # Phase timeout check
+            if ! check_phase_timeout; then
+                break
+            fi
+
+            # Checkpoint plan before each build iteration (corruption guard)
+            if [ "$current_phase" = "build" ]; then
+                checkpoint_plan
+            fi
+
+            # --- Invoke the agent ---
+            local iter_start_epoch
+            iter_start_epoch=$(date +%s)
+            run_agent "$prompt_file" "$model"
+
+            # --- Error classification and recovery ---
+            if [ "$AGENT_EXIT_CODE" -ne 0 ]; then
+                if is_rate_limit "$AGENT_RESULT" || is_network_error "$AGENT_RESULT"; then
+                    if ! handle_rate_limit run_agent "$prompt_file" "$model"; then
+                        # All retries exhausted (inc. 10-min pause); retry iteration
+                        phase_iteration=$((phase_iteration - 1))
+                        iteration=$((iteration - 1))
+                        continue
+                    fi
+                    # Successful retry — AGENT_RESULT/AGENT_EXIT_CODE updated
+                else
+                    # Generic CLI crash — retry with backoff
+                    handle_cli_crash "$AGENT_EXIT_CODE" "$AGENT_RESULT"
+                    # Returns 0 to retry, or exits 1 on max failures
+                    phase_iteration=$((phase_iteration - 1))
+                    iteration=$((iteration - 1))
+                    continue
+                fi
+            fi
+
+            reset_failure_count
+
+            # --- Post-iteration pipeline ---
+            if ! post_iteration "$model" "$prompt_file" "$iter_start_epoch"; then
+                case "$TRANSITION_REASON" in
+                    stall)
+                        # Stall-triggered re-plan: jump to plan phase
+                        transition_to_phase "plan"
+                        continue 2
+                        ;;
+                    budget)
+                        # Phase budget exceeded: force to next phase (spec-07)
+                        case "$current_phase" in
+                            research) transition_to_phase "plan" ;;
+                            plan)     transition_to_phase "build" ;;
+                            build)    transition_to_phase "review" ;;
+                            review)   transition_to_phase "COMPLETE" ;;
+                        esac
+                        continue 2
+                        ;;
+                esac
+            fi
+
+            # Check if agent signaled COMPLETE
+            if agent_signaled_complete; then
+                log "ORCHESTRATOR" "Agent signaled COMPLETE for $current_phase"
+                break
+            fi
+        done
+        # === End inner iteration loop ===
+
+        # --- Gate checks and phase transitions ---
+        case "$current_phase" in
+            research)
+                # Gate 2: research completeness. On fail: warn, proceed to plan (spec-03)
+                if gate_check "research_completeness"; then
+                    transition_to_phase "plan"
+                else
+                    log "ORCHESTRATOR" "Research gate failed after max iterations. Proceeding to plan."
+                    transition_to_phase "plan"
+                fi
+                ;;
+
+            plan)
+                # Gate 3: plan validity. On fail: escalate (spec-04)
+                if gate_check "plan_validity"; then
+                    transition_to_phase "build"
+                else
+                    escalate "Plan phase failed to produce a valid implementation plan."
+                fi
+                ;;
+
+            build)
+                # Gate 4: build completion. On fail: continue building (spec-05)
+                if gate_check "build_completion"; then
+                    transition_to_phase "review"
+                else
+                    if [ "$max_iter" -gt 0 ] && [ "$phase_iteration" -ge "$max_iter" ]; then
+                        escalate "Build exhausted $max_iter iterations with incomplete tasks."
+                    fi
+                    log "ORCHESTRATOR" "Build incomplete. Continuing."
+                    phase_iteration=0
+                fi
+                ;;
+
+            review)
+                # Gate 5: review pass. On fail: back to build. After 2 failures: escalate (spec-06)
+                if gate_check "review_pass"; then
+                    transition_to_phase "COMPLETE"
+                else
+                    review_attempts=$((review_attempts + 1))
+                    if [ "$review_attempts" -ge 2 ]; then
+                        escalate "Review failed after $review_attempts attempts."
+                    fi
+                    log "ORCHESTRATOR" "Review failed ($review_attempts/2). Returning to build."
+                    stall_count=0
+                    transition_to_phase "build"
+                fi
+                ;;
+        esac
+    done
+    # === End outer phase loop ===
+
+    write_state
+    log "ORCHESTRATOR" "Run complete."
+    exit 0
+}
+
+# --- Dry-run guard (full implementation deferred to task 9.9) ---
+if [ "$ARG_DRY_RUN" = "true" ]; then
+    echo "Dry-run mode not yet fully implemented (see task 9.9)."
+    exit 0
+fi
+
+run_orchestration
