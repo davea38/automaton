@@ -1185,6 +1185,29 @@ if [ "$ARG_SKIP_REVIEW" = "true" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Signal Handlers
+# ---------------------------------------------------------------------------
+
+# Graceful shutdown handler for SIGINT (Ctrl+C) and SIGTERM.
+# Saves state so the run can be resumed with --resume, logs the interruption,
+# and exits with code 130 (standard for SIGINT-terminated processes).
+_handle_shutdown() {
+    local signal="$1"
+    # Guard: only attempt state save if initialization has run (state vars exist)
+    if [ -n "${started_at:-}" ]; then
+        write_state 2>/dev/null || true
+        log "ORCHESTRATOR" "Interrupted by user (SIG${signal}). State saved for --resume." 2>/dev/null || true
+    else
+        echo "[ORCHESTRATOR] Interrupted before initialization (SIG${signal})." >&2
+    fi
+    exit 130
+}
+
+trap '_handle_shutdown INT' INT
+trap '_handle_shutdown TERM' TERM
+trap '' HUP
+
+# ---------------------------------------------------------------------------
 # Phase Sequence Controller
 # ---------------------------------------------------------------------------
 
