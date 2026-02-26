@@ -1,0 +1,57 @@
+{
+  "models": {
+    "primary": "opus",
+    "research": "sonnet",
+    "planning": "opus",
+    "building": "sonnet",
+    "review": "opus",
+    "subagent_default": "sonnet"
+  },
+  "budget": {
+    "max_total_tokens": 10000000,
+    "max_cost_usd": 50.00,
+    "per_phase": {
+      "research": 500000,
+      "plan": 1000000,
+      "build": 7000000,
+      "review": 1500000
+    },
+    "per_iteration": 500000
+  },
+  "rate_limits": {
+    "tokens_per_minute": 80000,
+    "requests_per_minute": 50,
+    "cooldown_seconds": 60,
+    "backoff_multiplier": 2,
+    "max_backoff_seconds": 300
+  },
+  "execution": {
+    "max_iterations": {
+      "research": 3,
+      "plan": 2,
+      "build": 0,
+      "review": 2
+    },
+    "parallel_builders": 1,
+    "stall_threshold": 3,
+    "max_consecutive_failures": 3,
+    "retry_delay_seconds": 10,
+    "phase_timeout_seconds": {
+      "research": 0,
+      "plan": 0,
+      "build": 0,
+      "review": 0
+    }
+  },
+  "git": {
+    "auto_push": true,
+    "auto_commit": true,
+    "branch_prefix": "automaton/"
+  },
+  "flags": {
+    "dangerously_skip_permissions": true,
+    "verbose": true,
+    "skip_research": false,
+    "skip_review": false
+  }
+}

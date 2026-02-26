@@ -14,7 +14,7 @@
 
 ## 2. Configuration System
 
-- [ ] Create `automaton.config.json` template with the full default schema covering models, budget, rate_limits, execution, git, and flags sections (WHY: every module reads config values; the template must exist before any bash function can reference it; spec-12 defines the complete schema)
+- [x] Create `automaton.config.json` template with the full default schema covering models, budget, rate_limits, execution, git, and flags sections (WHY: every module reads config values; the template must exist before any bash function can reference it; spec-12 defines the complete schema)
 - [ ] Write the `load_config()` bash function that reads `automaton.config.json` with jq, falls back to hardcoded defaults for every missing key, and stores values in shell variables (WHY: this is the first function called by automaton.sh on startup; all other modules depend on config variables being populated; spec-12)
 
 ## 3. State Management
