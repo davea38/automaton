@@ -1,0 +1,22 @@
+{
+  "name": "automaton",
+  "version": "0.1.0",
+  "description": "Multi-agent orchestration for autonomous software delivery",
+  "bin": {
+    "automaton": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "templates/"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "multi-agent",
+    "orchestration",
+    "autonomous",
+    "ai",
+    "coding"
+  ],
+  "license": "MIT"
+}
