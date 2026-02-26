@@ -19,11 +19,11 @@
 
 ## 3. State Management
 
-- [ ] Write the `initialize()` function that creates `.automaton/`, `.automaton/agents/`, `.automaton/worktrees/`, `.automaton/inbox/` directories, initializes `state.json` with zeroed counters, and creates an empty `session.log` (WHY: every iteration reads/writes state files; initialization must happen before the first agent runs; spec-10)
-- [ ] Write the `log()` function that appends timestamped `[ISO-8601] [COMPONENT] MESSAGE` lines to `.automaton/session.log` and echoes to stdout (WHY: every module calls log(); it must exist before anything that produces output; spec-10)
-- [ ] Write `write_state()` using atomic temp-file-then-mv pattern to update `state.json` after each iteration (WHY: crash-safe state persistence is critical for resume support; spec-10)
-- [ ] Write `read_state()` for the `--resume` path that parses `state.json` with jq and restores phase, iteration, phase_iteration, stall_count, and other counters into shell variables, resetting consecutive_failures to 0 (WHY: resume must restore exact position in the phase sequence; spec-10)
-- [ ] Write agent history file creation: after each agent invocation, write a `{phase}-{NNN}.json` file to `.automaton/agents/` recording phase, iteration, model, tokens, cost, duration, task, status, files_changed, and git_commit (WHY: per-agent history enables debugging and post-run analysis; spec-10)
+- [x] Write the `initialize()` function that creates `.automaton/`, `.automaton/agents/`, `.automaton/worktrees/`, `.automaton/inbox/` directories, initializes `state.json` with zeroed counters, and creates an empty `session.log` (WHY: every iteration reads/writes state files; initialization must happen before the first agent runs; spec-10)
+- [x] Write the `log()` function that appends timestamped `[ISO-8601] [COMPONENT] MESSAGE` lines to `.automaton/session.log` and echoes to stdout (WHY: every module calls log(); it must exist before anything that produces output; spec-10)
+- [x] Write `write_state()` using atomic temp-file-then-mv pattern to update `state.json` after each iteration (WHY: crash-safe state persistence is critical for resume support; spec-10)
+- [x] Write `read_state()` for the `--resume` path that parses `state.json` with jq and restores phase, iteration, phase_iteration, stall_count, and other counters into shell variables, resetting consecutive_failures to 0 (WHY: resume must restore exact position in the phase sequence; spec-10)
+- [x] Write agent history file creation: after each agent invocation, write a `{phase}-{NNN}.json` file to `.automaton/agents/` recording phase, iteration, model, tokens, cost, duration, task, status, files_changed, and git_commit (WHY: per-agent history enables debugging and post-run analysis; spec-10)
 
 ## 4. Token Tracking & Budget
 

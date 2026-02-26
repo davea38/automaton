@@ -121,3 +121,168 @@ load_config() {
         FLAG_SKIP_REVIEW="false"
     fi
 }
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+
+# Appends a timestamped line to session.log and echoes to stdout.
+# Usage: log "COMPONENT" "message text"
+log() {
+    local component="$1"
+    local message="$2"
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local line="[$timestamp] [$component] $message"
+    echo "$line" >> "$AUTOMATON_DIR/session.log"
+    echo "$line"
+}
+
+# ---------------------------------------------------------------------------
+# State Management
+# ---------------------------------------------------------------------------
+
+# Atomic write of state.json using temp-file-then-mv.
+# Reads from global shell variables set during execution.
+write_state() {
+    local tmp="$AUTOMATON_DIR/state.json.tmp"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    local rf_value
+    if [ "$resumed_from" = "null" ]; then
+        rf_value="null"
+    else
+        rf_value="\"$resumed_from\""
+    fi
+
+    cat > "$tmp" <<EOF
+{
+  "version": "$AUTOMATON_VERSION",
+  "phase": "$current_phase",
+  "iteration": $iteration,
+  "phase_iteration": $phase_iteration,
+  "stall_count": $stall_count,
+  "consecutive_failures": $consecutive_failures,
+  "corruption_count": $corruption_count,
+  "replan_count": $replan_count,
+  "started_at": "$started_at",
+  "last_iteration_at": "$now",
+  "parallel_builders": ${EXEC_PARALLEL_BUILDERS:-1},
+  "resumed_from": $rf_value,
+  "phase_history": ${phase_history:-[]}
+}
+EOF
+    mv "$tmp" "$AUTOMATON_DIR/state.json"
+}
+
+# Restore shell variables from a saved state.json for --resume.
+# Resets consecutive_failures to 0 (human presumably fixed the issue).
+read_state() {
+    local state_file="$AUTOMATON_DIR/state.json"
+    if [ ! -f "$state_file" ]; then
+        echo "Error: No state to resume from. Run without --resume."
+        exit 1
+    fi
+    local state
+    state=$(cat "$state_file")
+    current_phase=$(echo "$state" | jq -r '.phase')
+    iteration=$(echo "$state" | jq '.iteration')
+    phase_iteration=$(echo "$state" | jq '.phase_iteration')
+    stall_count=$(echo "$state" | jq '.stall_count')
+    consecutive_failures=0
+    corruption_count=$(echo "$state" | jq '.corruption_count')
+    replan_count=$(echo "$state" | jq '.replan_count')
+    started_at=$(echo "$state" | jq -r '.started_at')
+    resumed_from=$(echo "$state" | jq -r '.last_iteration_at')
+    phase_history=$(echo "$state" | jq -c '.phase_history')
+}
+
+# First-run initialization: create .automaton/ structure, write initial state,
+# and create an empty session log.
+# Note: initialize_budget() is called separately once budget module is wired in.
+initialize() {
+    mkdir -p "$AUTOMATON_DIR/agents" "$AUTOMATON_DIR/worktrees" "$AUTOMATON_DIR/inbox"
+
+    # Set initial state variables
+    current_phase="research"
+    iteration=0
+    phase_iteration=0
+    stall_count=0
+    consecutive_failures=0
+    corruption_count=0
+    replan_count=0
+    started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    resumed_from="null"
+    phase_history="[]"
+
+    # Write initial state.json via atomic write
+    write_state
+
+    # Create empty session.log (log() appends to this)
+    : > "$AUTOMATON_DIR/session.log"
+
+    log "ORCHESTRATOR" "Initialized $AUTOMATON_DIR/ directory"
+}
+
+# ---------------------------------------------------------------------------
+# Agent History
+# ---------------------------------------------------------------------------
+
+# Write per-agent iteration history to .automaton/agents/{phase}-{NNN}.json.
+# Uses jq for proper JSON escaping of free-text fields (e.g. task description).
+# Args: model prompt_file start end duration exit_code
+#       input_tokens output_tokens cache_create cache_read
+#       cost task status files_changed_json git_commit
+write_agent_history() {
+    local model="$1" prompt_file="$2" agent_start="$3" agent_end="$4"
+    local duration="$5" exit_code="$6"
+    local input_tokens="${7:-0}" output_tokens="${8:-0}"
+    local cache_create="${9:-0}" cache_read="${10:-0}"
+    local cost="${11:-0}" task_desc="${12:-}" status="${13:-unknown}"
+    local files_changed="${14:-[]}" git_commit="${15:-null}"
+
+    local padded
+    padded=$(printf "%03d" "$phase_iteration")
+    local filename="$AUTOMATON_DIR/agents/${current_phase}-${padded}.json"
+
+    jq -n \
+        --arg phase "$current_phase" \
+        --argjson iteration "$phase_iteration" \
+        --arg model "$model" \
+        --arg prompt_file "$prompt_file" \
+        --arg started_at "$agent_start" \
+        --arg completed_at "$agent_end" \
+        --argjson duration "$duration" \
+        --argjson exit_code "$exit_code" \
+        --argjson input_tokens "$input_tokens" \
+        --argjson output_tokens "$output_tokens" \
+        --argjson cache_create "$cache_create" \
+        --argjson cache_read "$cache_read" \
+        --argjson cost "$cost" \
+        --arg task "$task_desc" \
+        --arg status "$status" \
+        --argjson files_changed "$files_changed" \
+        --arg git_commit "$git_commit" \
+        '{
+            phase: $phase,
+            iteration: $iteration,
+            model: $model,
+            prompt_file: $prompt_file,
+            started_at: $started_at,
+            completed_at: $completed_at,
+            duration_seconds: $duration,
+            exit_code: $exit_code,
+            tokens: {
+                input: $input_tokens,
+                output: $output_tokens,
+                cache_create: $cache_create,
+                cache_read: $cache_read
+            },
+            estimated_cost: $cost,
+            task: $task,
+            status: $status,
+            files_changed: $files_changed,
+            git_commit: (if $git_commit == "null" then null else $git_commit end)
+        }' > "$filename"
+}
