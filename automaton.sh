@@ -692,3 +692,33 @@ is_network_error() {
     local output="${1:-}"
     echo "$output" | grep -qi 'network\|connection\|timeout\|ECONNREFUSED\|ETIMEDOUT\|ENOTFOUND\|EHOSTUNREACH\|getaddrinfo'
 }
+
+# Escalation: when automated recovery fails, stop cleanly and hand off to human.
+# Logs the escalation, marks it in IMPLEMENTATION_PLAN.md for visibility,
+# saves state, commits everything, and exits with code 3.
+#
+# Usage: escalate "description of what went wrong"
+# Exits: always exits with code 3 (human intervention required)
+escalate() {
+    local description="$1"
+    log "ORCHESTRATOR" "ESCALATION: $description"
+
+    # Mark the escalation in the plan file for human visibility
+    {
+        echo ""
+        echo "## ESCALATION"
+        echo ""
+        echo "ESCALATION: $description"
+        echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "Phase: $current_phase, Iteration: $iteration"
+    } >> IMPLEMENTATION_PLAN.md
+
+    # Persist current state for --resume
+    write_state
+
+    # Commit state and plan so no work is lost on exit
+    git add IMPLEMENTATION_PLAN.md "$AUTOMATON_DIR/state.json" "$AUTOMATON_DIR/session.log" "$AUTOMATON_DIR/budget.json" 2>/dev/null || true
+    git commit -m "automaton: escalation - $description" 2>/dev/null || true
+
+    exit 3
+}
