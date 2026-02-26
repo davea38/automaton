@@ -1289,6 +1289,36 @@ emit_status_line() {
     echo "[${phase_upper} ${iter_display}] ${current_phase} iteration ${phase_iteration} | ${LAST_INPUT_TOKENS:-0} input / ${LAST_OUTPUT_TOKENS:-0} output (~\$${iter_cost}) | budget: \$${remaining_budget} remaining"
 }
 
+# Prints the startup banner showing version, phase, budget, config, and branch.
+# Called once at the start of run_orchestration() after state is determined.
+print_banner() {
+    local phase="$1"
+    local max_tokens_display max_cost_display git_branch
+
+    # Format token budget for human readability (e.g., 10000000 → "10M")
+    if [ "$BUDGET_MAX_TOKENS" -ge 1000000 ] 2>/dev/null; then
+        max_tokens_display="$((BUDGET_MAX_TOKENS / 1000000))M"
+    elif [ "$BUDGET_MAX_TOKENS" -ge 1000 ] 2>/dev/null; then
+        max_tokens_display="$((BUDGET_MAX_TOKENS / 1000))K"
+    else
+        max_tokens_display="$BUDGET_MAX_TOKENS"
+    fi
+
+    # Format cost with two decimal places using printf
+    max_cost_display=$(printf '%.2f' "$BUDGET_MAX_USD")
+
+    # Get the current git branch
+    git_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo " automaton v${AUTOMATON_VERSION}"
+    echo " Phase:   ${phase}"
+    echo " Budget:  \$${max_cost_display} max | ${max_tokens_display} tokens max"
+    echo " Config:  ${CONFIG_FILE_USED}"
+    echo " Branch:  ${git_branch}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+}
+
 # Set by post_iteration to communicate why a forced phase transition occurred.
 # Values: "" (normal), "budget" (phase budget exceeded), "stall" (re-plan needed)
 TRANSITION_REASON=""
@@ -1417,6 +1447,9 @@ run_orchestration() {
             log "ORCHESTRATOR" "Skipping research (--skip-research)"
         fi
     fi
+
+    # --- Display startup banner ---
+    print_banner "$current_phase"
 
     # Used by gate_build_completion to check for commits during this run
     run_started_at="$started_at"
