@@ -1001,3 +1001,131 @@ gate_review_pass() {
 
     $pass
 }
+
+# ---------------------------------------------------------------------------
+# Phase Timeout
+# ---------------------------------------------------------------------------
+
+# Optional phase timeout check: compares elapsed wallclock time against
+# phase_timeout_seconds from config. If the timeout is exceeded, logs
+# the event and returns 1 to signal the orchestrator to force a phase
+# transition. A timeout of 0 means "no timeout" (the default).
+#
+# Requires PHASE_START_TIME to be set (epoch seconds) when a phase begins.
+#
+# Usage: check_phase_timeout
+# Returns: 0 = within time limit, 1 = timeout exceeded
+check_phase_timeout() {
+    # Look up the timeout for the current phase
+    local timeout_var="EXEC_PHASE_TIMEOUT_$(echo "$current_phase" | tr '[:lower:]' '[:upper:]')"
+    local timeout="${!timeout_var:-0}"
+
+    # 0 means no timeout configured
+    if [ "$timeout" -eq 0 ] 2>/dev/null; then
+        return 0
+    fi
+
+    # PHASE_START_TIME must be set by the orchestrator when entering a phase
+    if [ -z "${PHASE_START_TIME:-}" ]; then
+        return 0
+    fi
+
+    local now elapsed
+    now=$(date +%s)
+    elapsed=$((now - PHASE_START_TIME))
+
+    if [ "$elapsed" -ge "$timeout" ]; then
+        log "ORCHESTRATOR" "Phase timeout: ${current_phase} exceeded ${timeout}s (elapsed: ${elapsed}s). Forcing transition."
+        return 1
+    fi
+
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# CLI Argument Parsing & Main Entry Point
+# ---------------------------------------------------------------------------
+
+# Defaults for CLI flags (may be overridden by arguments below)
+ARG_RESUME=false
+ARG_SKIP_RESEARCH=false
+ARG_SKIP_REVIEW=false
+ARG_CONFIG_FILE=""
+ARG_DRY_RUN=false
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --resume)
+            ARG_RESUME=true
+            shift
+            ;;
+        --skip-research)
+            ARG_SKIP_RESEARCH=true
+            shift
+            ;;
+        --skip-review)
+            ARG_SKIP_REVIEW=true
+            shift
+            ;;
+        --config)
+            if [ -z "${2:-}" ]; then
+                echo "Error: --config requires a file path argument." >&2
+                exit 1
+            fi
+            if [ ! -f "$2" ]; then
+                echo "Error: Config file not found: $2" >&2
+                exit 1
+            fi
+            ARG_CONFIG_FILE="$2"
+            shift 2
+            ;;
+        --dry-run)
+            ARG_DRY_RUN=true
+            shift
+            ;;
+        --help|-h)
+            cat <<'USAGE'
+Usage: automaton.sh [OPTIONS]
+
+Multi-phase orchestrator for autonomous Claude agent workflows.
+
+Options:
+  --resume          Resume from saved state (.automaton/state.json)
+  --skip-research   Skip Phase 1 (research), start at Phase 2 (plan)
+  --skip-review     Skip Phase 4 (review), mark COMPLETE after build
+  --config FILE     Use an alternate config file (default: automaton.config.json)
+  --dry-run         Load config, run Gate 1, show settings, then exit
+  --help, -h        Show this help message
+
+Exit codes:
+  0   All phases complete, review passed
+  1   General error or max consecutive failures
+  2   Budget exhausted (resumable with --resume)
+  3   Escalation required (human intervention needed)
+  130 Interrupted by user (resumable with --resume)
+USAGE
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown argument: $1" >&2
+            echo "Run './automaton.sh --help' for usage." >&2
+            exit 1
+            ;;
+    esac
+done
+
+# --- Apply --config before loading configuration ---
+if [ -n "$ARG_CONFIG_FILE" ]; then
+    CONFIG_FILE="$ARG_CONFIG_FILE"
+fi
+
+# --- Load configuration (uses CONFIG_FILE if set, else automaton.config.json) ---
+load_config
+
+# --- Override config flags with CLI arguments ---
+if [ "$ARG_SKIP_RESEARCH" = "true" ]; then
+    FLAG_SKIP_RESEARCH="true"
+fi
+if [ "$ARG_SKIP_REVIEW" = "true" ]; then
+    FLAG_SKIP_REVIEW="true"
+fi

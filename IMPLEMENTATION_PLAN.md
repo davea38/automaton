@@ -45,7 +45,7 @@
 - [x] Write stall detection: after each build iteration, check `git diff --stat HEAD~1` for emptiness, increment stall_count if empty, reset on changes, force re-plan after stall_threshold consecutive stalls, escalate after 2 re-plans (WHY: stall detection catches agents that claim progress without producing code; spec-09)
 - [x] Write plan corruption guard: checkpoint IMPLEMENTATION_PLAN.md before each iteration, verify [x] count did not decrease after, restore from checkpoint if corrupted, escalate after 2 corruptions (WHY: agents occasionally rewrite the plan and destroy completed work; this is the safety net; spec-09)
 - [x] Write `escalate()` function that logs the escalation, appends an ESCALATION section to IMPLEMENTATION_PLAN.md, saves state, commits, and exits with code 3 (WHY: when automated recovery fails, the system must stop cleanly and hand off to a human; spec-09)
-- [ ] Write optional phase timeout check: compare elapsed wallclock time against phase_timeout_seconds from config, force phase transition if exceeded (WHY: safety net for unattended runs where a phase might loop indefinitely; spec-09)
+- [x] Write optional phase timeout check: compare elapsed wallclock time against phase_timeout_seconds from config, force phase transition if exceeded (WHY: safety net for unattended runs where a phase might loop indefinitely; spec-09)
 
 ## 7. Quality Gates
 
@@ -64,7 +64,7 @@
 
 ## 9. Orchestrator Main Script (automaton.sh)
 
-- [ ] Write CLI argument parsing for `--resume`, `--skip-research`, `--skip-review`, `--config FILE`, and `--dry-run`, storing flags in variables (WHY: argument parsing is the entry point; it determines which code paths execute; spec-01)
+- [x] Write CLI argument parsing for `--resume`, `--skip-research`, `--skip-review`, `--config FILE`, and `--dry-run`, storing flags in variables (WHY: argument parsing is the entry point; it determines which code paths execute; spec-01)
 - [ ] Write system dependency checks for claude, jq, and git with clear install instructions on failure (WHY: automaton.sh depends on all three; failing fast with a helpful message prevents confusing errors later; spec-13)
 - [ ] Write signal handlers for SIGINT (save state, log interruption, exit 130), SIGTERM (same as SIGINT), and SIGHUP (ignored for background execution) (WHY: graceful shutdown preserves state for resume; spec-01)
 - [ ] Write the startup banner displaying version, current phase, budget limits, config file path, and git branch (WHY: the banner orients the user at launch; spec-01)
