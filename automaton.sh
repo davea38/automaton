@@ -166,6 +166,7 @@ write_state() {
   "consecutive_failures": $consecutive_failures,
   "corruption_count": $corruption_count,
   "replan_count": $replan_count,
+  "test_failure_count": $test_failure_count,
   "started_at": "$started_at",
   "last_iteration_at": "$now",
   "parallel_builders": ${EXEC_PARALLEL_BUILDERS:-1},
@@ -193,6 +194,7 @@ read_state() {
     consecutive_failures=0
     corruption_count=$(echo "$state" | jq '.corruption_count')
     replan_count=$(echo "$state" | jq '.replan_count')
+    test_failure_count=$(echo "$state" | jq '.test_failure_count // 0')
     started_at=$(echo "$state" | jq -r '.started_at')
     resumed_from=$(echo "$state" | jq -r '.last_iteration_at')
     phase_history=$(echo "$state" | jq -c '.phase_history')
@@ -211,6 +213,7 @@ initialize() {
     consecutive_failures=0
     corruption_count=0
     replan_count=0
+    test_failure_count=0
     started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     resumed_from="null"
     phase_history="[]"
@@ -693,6 +696,15 @@ is_network_error() {
     echo "$output" | grep -qi 'network\|connection\|timeout\|ECONNREFUSED\|ETIMEDOUT\|ENOTFOUND\|EHOSTUNREACH\|getaddrinfo'
 }
 
+# Classifies whether agent output indicates a test failure.
+# Checks for common test failure patterns across popular test frameworks.
+# Usage: if is_test_failure "$agent_output"; then ...
+# Returns: 0 if test failure detected, 1 otherwise
+is_test_failure() {
+    local output="${1:-}"
+    echo "$output" | grep -qi 'tests\? failed\|test.*fail\|FAIL:\|failing tests\|assertion.*error\|AssertionError\|expected.*but.*received\|npm test.*exit code\|jest.*failed\|pytest.*failed\|test suite failed'
+}
+
 # Plan corruption guard: checkpoint IMPLEMENTATION_PLAN.md before each iteration
 # so we can detect if an agent rewrites the plan and destroys completed work.
 # Sets PLAN_CHECKPOINT_COMPLETED_COUNT for post-iteration comparison.
@@ -777,6 +789,38 @@ check_stall() {
         log "ORCHESTRATOR" "$EXEC_STALL_THRESHOLD consecutive stalls. Forcing re-plan."
         stall_count=0
         replan_count=$((replan_count + 1))
+        return 1
+    fi
+
+    return 0
+}
+
+# Repeated test failure detection (spec-09, Error #8): tracks consecutive build
+# iterations where the agent output indicates test failures. If the same failure
+# pattern persists across 3 iterations, the agent is stuck and we escalate to
+# the review phase for independent diagnosis.
+#
+# Resets test_failure_count on iterations without test failure indicators.
+#
+# Usage: check_test_failures "$agent_output"
+# Returns: 0 = continue normally, 1 = force transition to review phase
+check_test_failures() {
+    local agent_output="${1:-}"
+
+    if is_test_failure "$agent_output"; then
+        test_failure_count=$((test_failure_count + 1))
+        log "ORCHESTRATOR" "Test failure detected ($test_failure_count/3). Agent output contains test failure indicators."
+    else
+        if [ "$test_failure_count" -gt 0 ]; then
+            log "ORCHESTRATOR" "Test failures cleared after $test_failure_count iteration(s)."
+        fi
+        test_failure_count=0
+        return 0
+    fi
+
+    if [ "$test_failure_count" -ge 3 ]; then
+        log "ORCHESTRATOR" "Repeated test failures across 3 iterations. Escalating to review phase."
+        test_failure_count=0
         return 1
     fi
 
@@ -1365,10 +1409,11 @@ post_iteration() {
     # 6. Proactive pacing (may sleep to avoid rate limits)
     check_pacing
 
-    # 7. Build-phase-only: stall detection and plan corruption guard
-    local stall_rc=0
+    # 7. Build-phase-only: stall detection, test failure tracking, plan corruption guard
+    local stall_rc=0 test_fail_rc=0
     if [ "$current_phase" = "build" ]; then
         check_stall || stall_rc=$?
+        check_test_failures "$AGENT_RESULT" || test_fail_rc=$?
         check_plan_integrity
     fi
 
@@ -1399,6 +1444,10 @@ post_iteration() {
     # Signal forced transition if needed
     if [ "$stall_rc" -ne 0 ]; then
         TRANSITION_REASON="stall"
+        return 1
+    fi
+    if [ "$test_fail_rc" -ne 0 ]; then
+        TRANSITION_REASON="test_failure"
         return 1
     fi
     if [ "$budget_rc" -ne 0 ]; then
@@ -1531,6 +1580,11 @@ run_orchestration() {
                     stall)
                         # Stall-triggered re-plan: jump to plan phase
                         transition_to_phase "plan"
+                        continue 2
+                        ;;
+                    test_failure)
+                        # Repeated test failure (spec-09, Error #8): escalate to review
+                        transition_to_phase "review"
                         continue 2
                         ;;
                     budget)

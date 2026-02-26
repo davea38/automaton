@@ -46,6 +46,7 @@
 - [x] Write plan corruption guard: checkpoint IMPLEMENTATION_PLAN.md before each iteration, verify [x] count did not decrease after, restore from checkpoint if corrupted, escalate after 2 corruptions (WHY: agents occasionally rewrite the plan and destroy completed work; this is the safety net; spec-09)
 - [x] Write `escalate()` function that logs the escalation, appends an ESCALATION section to IMPLEMENTATION_PLAN.md, saves state, commits, and exits with code 3 (WHY: when automated recovery fails, the system must stop cleanly and hand off to a human; spec-09)
 - [x] Write optional phase timeout check: compare elapsed wallclock time against phase_timeout_seconds from config, force phase transition if exceeded (WHY: safety net for unattended runs where a phase might loop indefinitely; spec-09)
+- [x] Write repeated test failure detection (Error #8): add `is_test_failure()` classifier and `check_test_failures()` that tracks consecutive build iterations with test failure indicators, forces transition to review phase after 3 consecutive failures, persists `test_failure_count` in state.json (WHY: spec-09 Error #8 defines this as a distinct error category; without it the build phase could loop indefinitely on the same broken test; spec-09)
 
 ## 7. Quality Gates
 
@@ -79,3 +80,13 @@
 - [x] Copy all scaffoldable files into `templates/`: automaton.sh, automaton.config.json, PROMPT_converse.md, PROMPT_research.md, PROMPT_plan.md, PROMPT_build.md, PROMPT_review.md, AGENTS.md, IMPLEMENTATION_PLAN.md, CLAUDE.md, PRD.md (WHY: bin/cli.js copies from templates/; every file the user gets must have a template source; spec-13)
 - [x] Update `templates/AGENTS.md` to replace "thesis-map" with a generic placeholder like "your-project" and set language/framework to "(to be filled by conversation phase)" (WHY: the template should not reference a specific project; it is a blank starting point for any new user; spec-02)
 - [x] Fix 5 stale variable names in `--dry-run` display block: BUDGET_ITER_WARNING→BUDGET_PER_ITERATION, RATE_TOKENS_PER_MIN→RATE_TOKENS_PER_MINUTE, RATE_COOLDOWN_SEC→RATE_COOLDOWN_SECONDS, RATE_BACKOFF_MULT→RATE_BACKOFF_MULTIPLIER, RATE_MAX_BACKOFF_SEC→RATE_MAX_BACKOFF_SECONDS (WHY: dry-run was displaying blank values for budget and rate-limit settings; fixed in both automaton.sh and templates/automaton.sh)
+
+## Deferred / Future Work
+
+<!-- These are spec requirements that are explicitly deferred or represent minor gaps. Not blocking completion. -->
+
+- Parallel builder execution logic (spec-05): infrastructure exists (config vars, worktree dirs, pacing adjustment) but spawn/merge logic is deferred as noted at top of plan
+- `requests_per_minute` RPM enforcement (spec-08): variable loaded but never enforced; `check_pacing()` token velocity is the active rate limit mechanism
+- `git.branch_prefix` config (spec-12): loaded but only meaningful for parallel builders (deferred)
+- `models.primary` fallback (spec-12): phase-specific models are used directly; `models.primary` is loaded but not used as a fallback when phase models are unset
+- `.automaton/` gitignore runtime check (spec-10): only enforced at scaffold time by bin/cli.js; `initialize()` does not verify .gitignore
