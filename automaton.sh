@@ -552,3 +552,80 @@ handle_rate_limit() {
 
     return 1
 }
+
+# Proactive pacing: calculates token velocity over the last 3 iterations from
+# budget.json history and sleeps if velocity exceeds 80% of tokens_per_minute.
+# This avoids rate limits by slowing down before hitting them.
+# When parallel_builders > 1, the per-builder share of TPM is used as the limit.
+#
+# Returns: 0 always (pacing is advisory, never fatal)
+check_pacing() {
+    local budget_file="$AUTOMATON_DIR/budget.json"
+    if [ ! -f "$budget_file" ]; then
+        return 0
+    fi
+
+    local history_len
+    history_len=$(jq '.history | length' "$budget_file")
+    if [ "$history_len" -lt 1 ]; then
+        return 0
+    fi
+
+    # Use last 3 iterations (or fewer if not enough history)
+    local window=3
+    if [ "$history_len" -lt "$window" ]; then
+        window="$history_len"
+    fi
+
+    # Sum tokens and duration over the window
+    local recent
+    recent=$(jq --argjson w "$window" '
+        .history[-$w:] |
+        {
+            tokens: (map(.input_tokens + .output_tokens) | add),
+            duration: (map(.duration_seconds) | add)
+        }
+    ' "$budget_file")
+
+    local recent_tokens recent_duration
+    recent_tokens=$(echo "$recent" | jq '.tokens')
+    recent_duration=$(echo "$recent" | jq '.duration')
+
+    # Guard against zero/null duration (avoid division by zero)
+    if [ -z "$recent_duration" ] || [ "$recent_duration" = "null" ] || [ "$recent_duration" = "0" ]; then
+        return 0
+    fi
+
+    # Adjust limit for parallel builders
+    local effective_tpm="$RATE_TOKENS_PER_MINUTE"
+    if [ "${EXEC_PARALLEL_BUILDERS:-1}" -gt 1 ]; then
+        effective_tpm=$((RATE_TOKENS_PER_MINUTE / EXEC_PARALLEL_BUILDERS))
+    fi
+
+    # Calculate velocity and 80% threshold using awk for floating-point math
+    local should_pace cooldown_secs velocity_display
+    read -r should_pace cooldown_secs velocity_display < <(
+        awk -v tokens="$recent_tokens" -v dur="$recent_duration" \
+            -v tpm="$effective_tpm" \
+            'BEGIN {
+                velocity = tokens * 60 / dur
+                threshold = tpm * 0.80
+                if (velocity > threshold) {
+                    # Time needed to consume these tokens at the TPM limit
+                    needed = tokens * 60 / tpm
+                    cooldown = needed - dur
+                    if (cooldown < 1) cooldown = 1
+                    printf "yes %.0f %.0f\n", cooldown, velocity
+                } else {
+                    printf "no 0 %.0f\n", velocity
+                }
+            }'
+    )
+
+    if [ "$should_pace" = "yes" ]; then
+        log "ORCHESTRATOR" "Proactive pacing: velocity ${velocity_display} TPM, waiting ${cooldown_secs}s."
+        sleep "$cooldown_secs"
+    fi
+
+    return 0
+}
