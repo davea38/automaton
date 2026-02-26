@@ -1168,6 +1168,29 @@ USAGE
     esac
 done
 
+# --- Check system dependencies (claude, jq, git) ---
+# automaton.sh requires all three; fail fast with install instructions if missing.
+_dep_missing=false
+for _dep_entry in \
+    "claude|Install: https://docs.anthropic.com/en/docs/claude-code" \
+    "jq|Install: sudo apt install jq  (Debian/Ubuntu)
+           brew install jq      (macOS)" \
+    "git|Install: sudo apt install git (Debian/Ubuntu)
+           brew install git     (macOS)"; do
+    _dep_name="${_dep_entry%%|*}"
+    _dep_hint="${_dep_entry#*|}"
+    if ! command -v "$_dep_name" >/dev/null 2>&1; then
+        echo "Error: '${_dep_name}' is required but not installed." >&2
+        echo "  ${_dep_hint}" >&2
+        echo "" >&2
+        _dep_missing=true
+    fi
+done
+if [ "$_dep_missing" = "true" ]; then
+    echo "automaton.sh requires claude, jq, and git. Install missing dependencies and retry." >&2
+    exit 1
+fi
+
 # --- Apply --config before loading configuration ---
 if [ -n "$ARG_CONFIG_FILE" ]; then
     CONFIG_FILE="$ARG_CONFIG_FILE"

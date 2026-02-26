@@ -65,7 +65,7 @@
 ## 9. Orchestrator Main Script (automaton.sh)
 
 - [x] Write CLI argument parsing for `--resume`, `--skip-research`, `--skip-review`, `--config FILE`, and `--dry-run`, storing flags in variables (WHY: argument parsing is the entry point; it determines which code paths execute; spec-01)
-- [ ] Write system dependency checks for claude, jq, and git with clear install instructions on failure (WHY: automaton.sh depends on all three; failing fast with a helpful message prevents confusing errors later; spec-13)
+- [x] Write system dependency checks for claude, jq, and git with clear install instructions on failure (WHY: automaton.sh depends on all three; failing fast with a helpful message prevents confusing errors later; spec-13)
 - [x] Write signal handlers for SIGINT (save state, log interruption, exit 130), SIGTERM (same as SIGINT), and SIGHUP (ignored for background execution) (WHY: graceful shutdown preserves state for resume; spec-01)
 - [ ] Write the startup banner displaying version, current phase, budget limits, config file path, and git branch (WHY: the banner orients the user at launch; spec-01)
 - [x] Write the `run_agent()` function that invokes `claude -p` with the appropriate prompt file, model, --dangerously-skip-permissions, --output-format=stream-json, and --verbose flags, captures the result, and returns the exit code (WHY: centralizes agent invocation so token extraction, error handling, and logging happen consistently; spec-01)
