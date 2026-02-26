@@ -199,8 +199,7 @@ read_state() {
 }
 
 # First-run initialization: create .automaton/ structure, write initial state,
-# and create an empty session log.
-# Note: initialize_budget() is called separately once budget module is wired in.
+# initialize budget tracking, and create an empty session log.
 initialize() {
     mkdir -p "$AUTOMATON_DIR/agents" "$AUTOMATON_DIR/worktrees" "$AUTOMATON_DIR/inbox"
 
@@ -218,6 +217,9 @@ initialize() {
 
     # Write initial state.json via atomic write
     write_state
+
+    # Create budget.json with limits from config and zeroed counters
+    initialize_budget
 
     # Create empty session.log (log() appends to this)
     : > "$AUTOMATON_DIR/session.log"
@@ -285,4 +287,221 @@ write_agent_history() {
             files_changed: $files_changed,
             git_commit: (if $git_commit == "null" then null else $git_commit end)
         }' > "$filename"
+}
+
+# ---------------------------------------------------------------------------
+# Token Tracking & Budget
+# ---------------------------------------------------------------------------
+
+# Creates .automaton/budget.json with limits from config and zeroed usage.
+# Called once during initialize(). On --resume, the existing file is kept.
+initialize_budget() {
+    local tmp="$AUTOMATON_DIR/budget.json.tmp"
+
+    jq -n \
+        --argjson max_tokens "$BUDGET_MAX_TOKENS" \
+        --argjson max_usd "$BUDGET_MAX_USD" \
+        --argjson phase_research "$BUDGET_PHASE_RESEARCH" \
+        --argjson phase_plan "$BUDGET_PHASE_PLAN" \
+        --argjson phase_build "$BUDGET_PHASE_BUILD" \
+        --argjson phase_review "$BUDGET_PHASE_REVIEW" \
+        --argjson per_iteration "$BUDGET_PER_ITERATION" \
+        '{
+            limits: {
+                max_total_tokens: $max_tokens,
+                max_cost_usd: $max_usd,
+                per_phase: {
+                    research: $phase_research,
+                    plan: $phase_plan,
+                    build: $phase_build,
+                    review: $phase_review
+                },
+                per_iteration: $per_iteration
+            },
+            used: {
+                total_input: 0,
+                total_output: 0,
+                total_cache_create: 0,
+                total_cache_read: 0,
+                by_phase: {
+                    research: { input: 0, output: 0 },
+                    plan: { input: 0, output: 0 },
+                    build: { input: 0, output: 0 },
+                    review: { input: 0, output: 0 }
+                },
+                estimated_cost_usd: 0.00
+            },
+            history: []
+        }' > "$tmp"
+    mv "$tmp" "$AUTOMATON_DIR/budget.json"
+}
+
+# Extracts token usage from Claude CLI stream-json output.
+# Parses the final "type":"result" line for input, output, cache_create, cache_read.
+# Sets global variables: LAST_INPUT_TOKENS, LAST_OUTPUT_TOKENS,
+#   LAST_CACHE_CREATE, LAST_CACHE_READ
+extract_tokens() {
+    local result_output="$1"
+    local usage_line
+    usage_line=$(echo "$result_output" | grep '"type":"result"' | tail -1 || true)
+
+    if [ -z "$usage_line" ]; then
+        LAST_INPUT_TOKENS=0
+        LAST_OUTPUT_TOKENS=0
+        LAST_CACHE_CREATE=0
+        LAST_CACHE_READ=0
+        return
+    fi
+
+    LAST_INPUT_TOKENS=$(echo "$usage_line" | jq -r '.usage.input_tokens // 0')
+    LAST_OUTPUT_TOKENS=$(echo "$usage_line" | jq -r '.usage.output_tokens // 0')
+    LAST_CACHE_CREATE=$(echo "$usage_line" | jq -r '.usage.cache_creation_input_tokens // 0')
+    LAST_CACHE_READ=$(echo "$usage_line" | jq -r '.usage.cache_read_input_tokens // 0')
+}
+
+# Returns estimated USD cost for a given model and token counts.
+# Uses the pricing table from spec-07.
+# Usage: cost=$(estimate_cost "sonnet" 112000 24000 5000 80000)
+estimate_cost() {
+    local model="$1"
+    local input="${2:-0}" output="${3:-0}" cache_create="${4:-0}" cache_read="${5:-0}"
+
+    local input_rate output_rate cache_write_rate cache_read_rate
+    case "$model" in
+        opus)
+            input_rate=15.00
+            output_rate=75.00
+            cache_write_rate=18.75
+            cache_read_rate=1.50
+            ;;
+        sonnet)
+            input_rate=3.00
+            output_rate=15.00
+            cache_write_rate=3.75
+            cache_read_rate=0.30
+            ;;
+        haiku)
+            input_rate=0.80
+            output_rate=4.00
+            cache_write_rate=1.00
+            cache_read_rate=0.08
+            ;;
+        *)
+            input_rate=3.00
+            output_rate=15.00
+            cache_write_rate=3.75
+            cache_read_rate=0.30
+            ;;
+    esac
+
+    awk -v inp="$input" -v out="$output" -v cc="$cache_create" -v cr="$cache_read" \
+        -v ir="$input_rate" -v or_rate="$output_rate" -v cwr="$cache_write_rate" -v crr="$cache_read_rate" \
+        'BEGIN { printf "%.4f", (inp*ir + out*or_rate + cc*cwr + cr*crr) / 1000000 }'
+}
+
+# Adds iteration token usage to cumulative totals in budget.json.
+# Appends a history entry and recalculates estimated_cost_usd.
+# Uses atomic write to prevent corruption.
+update_budget() {
+    local model="$1" input_tokens="$2" output_tokens="$3"
+    local cache_create="$4" cache_read="$5"
+    local iter_cost="$6" duration="$7" task_desc="$8" status="$9"
+
+    local budget_file="$AUTOMATON_DIR/budget.json"
+    local tmp="$AUTOMATON_DIR/budget.json.tmp"
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    local total_iter_tokens=$((input_tokens + output_tokens))
+
+    jq \
+        --argjson input_tokens "$input_tokens" \
+        --argjson output_tokens "$output_tokens" \
+        --argjson cache_create "$cache_create" \
+        --argjson cache_read "$cache_read" \
+        --argjson iter_cost "$iter_cost" \
+        --arg phase "$current_phase" \
+        --argjson iteration "$iteration" \
+        --arg model "$model" \
+        --argjson duration "$duration" \
+        --arg task "$task_desc" \
+        --arg status "$status" \
+        --arg timestamp "$timestamp" \
+        '
+        .used.total_input += $input_tokens |
+        .used.total_output += $output_tokens |
+        .used.total_cache_create += $cache_create |
+        .used.total_cache_read += $cache_read |
+        .used.by_phase[$phase].input += $input_tokens |
+        .used.by_phase[$phase].output += $output_tokens |
+        .used.estimated_cost_usd = ((.used.estimated_cost_usd + $iter_cost) * 100 | round / 100) |
+        .history += [{
+            iteration: $iteration,
+            phase: $phase,
+            model: $model,
+            input_tokens: $input_tokens,
+            output_tokens: $output_tokens,
+            cache_create: $cache_create,
+            cache_read: $cache_read,
+            estimated_cost: $iter_cost,
+            duration_seconds: $duration,
+            task: $task,
+            status: $status,
+            timestamp: $timestamp
+        }]
+        ' "$budget_file" > "$tmp"
+    mv "$tmp" "$budget_file"
+}
+
+# Enforces four budget rules after each iteration. Returns 0 to continue,
+# 1 to force phase transition, or exits with code 2 for hard stops.
+# Logs the appropriate message for each triggered rule.
+check_budget() {
+    local input_tokens="$1" output_tokens="$2"
+    local budget_file="$AUTOMATON_DIR/budget.json"
+    local total_iter_tokens=$((input_tokens + output_tokens))
+
+    # Rule 1: Per-iteration warning (advisory only)
+    if [ "$total_iter_tokens" -gt "$BUDGET_PER_ITERATION" ]; then
+        log "ORCHESTRATOR" "WARNING: Iteration used ${total_iter_tokens} tokens, exceeding per-iteration limit of ${BUDGET_PER_ITERATION}"
+    fi
+
+    # Read cumulative totals from budget.json
+    local total_input total_output total_cost
+    total_input=$(jq '.used.total_input' "$budget_file")
+    total_output=$(jq '.used.total_output' "$budget_file")
+    total_cost=$(jq '.used.estimated_cost_usd' "$budget_file")
+    local cumulative_tokens=$((total_input + total_output))
+
+    # Rule 3: Total token hard stop (check before phase limit so hard stop takes priority)
+    if [ "$cumulative_tokens" -gt "$BUDGET_MAX_TOKENS" ]; then
+        log "ORCHESTRATOR" "Total token budget exhausted (${cumulative_tokens}/${BUDGET_MAX_TOKENS}). Run --resume after adjusting budget."
+        write_state
+        exit 2
+    fi
+
+    # Rule 4: Cost hard stop
+    local cost_exceeded
+    cost_exceeded=$(awk -v cost="$total_cost" -v limit="$BUDGET_MAX_USD" \
+        'BEGIN { print (cost > limit) ? "yes" : "no" }')
+    if [ "$cost_exceeded" = "yes" ]; then
+        log "ORCHESTRATOR" "Cost budget exhausted (\$${total_cost}/\$${BUDGET_MAX_USD}). Run --resume after adjusting budget."
+        write_state
+        exit 2
+    fi
+
+    # Rule 2: Per-phase force transition
+    local phase_limit_var="BUDGET_PHASE_$(echo "$current_phase" | tr '[:lower:]' '[:upper:]')"
+    local phase_limit="${!phase_limit_var}"
+    local phase_input phase_output
+    phase_input=$(jq --arg p "$current_phase" '.used.by_phase[$p].input' "$budget_file")
+    phase_output=$(jq --arg p "$current_phase" '.used.by_phase[$p].output' "$budget_file")
+    local phase_tokens=$((phase_input + phase_output))
+
+    if [ "$phase_tokens" -gt "$phase_limit" ]; then
+        log "ORCHESTRATOR" "Phase budget exhausted for ${current_phase} (${phase_tokens}/${phase_limit}). Transitioning to next phase."
+        return 1
+    fi
+
+    return 0
 }

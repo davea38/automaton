@@ -27,11 +27,11 @@
 
 ## 4. Token Tracking & Budget
 
-- [ ] Write `initialize_budget()` that creates `.automaton/budget.json` from config limits with zeroed usage counters and an empty history array (WHY: budget tracking starts on first iteration; the file must exist before any agent runs; spec-07)
-- [ ] Write `extract_tokens()` that parses the stream-json result string to find the `"type":"result"` line and extracts input_tokens, output_tokens, cache_creation_input_tokens, and cache_read_input_tokens using jq (WHY: this is the raw data source for all cost tracking; called after every agent invocation; spec-07)
-- [ ] Write `estimate_cost()` that takes a model name and four token counts, applies the pricing table (opus/sonnet/haiku rates from spec-07), and returns the estimated USD cost (WHY: cost estimation feeds into budget enforcement and display; spec-07)
-- [ ] Write `update_budget()` that adds iteration tokens to cumulative totals in budget.json, appends a history entry, and recalculates estimated_cost_usd using atomic write (WHY: budget.json is the single source of truth for cost tracking across the entire run; spec-07)
-- [ ] Write `check_budget()` that enforces four rules: per-iteration warning, per-phase force-transition, total-token hard stop (exit 2), and cost-USD hard stop (exit 2), logging the appropriate message for each (WHY: budget enforcement prevents runaway costs; the four tiers ensure graceful degradation rather than abrupt failure; spec-07)
+- [x] Write `initialize_budget()` that creates `.automaton/budget.json` from config limits with zeroed usage counters and an empty history array (WHY: budget tracking starts on first iteration; the file must exist before any agent runs; spec-07)
+- [x] Write `extract_tokens()` that parses the stream-json result string to find the `"type":"result"` line and extracts input_tokens, output_tokens, cache_creation_input_tokens, and cache_read_input_tokens using jq (WHY: this is the raw data source for all cost tracking; called after every agent invocation; spec-07)
+- [x] Write `estimate_cost()` that takes a model name and four token counts, applies the pricing table (opus/sonnet/haiku rates from spec-07), and returns the estimated USD cost (WHY: cost estimation feeds into budget enforcement and display; spec-07)
+- [x] Write `update_budget()` that adds iteration tokens to cumulative totals in budget.json, appends a history entry, and recalculates estimated_cost_usd using atomic write (WHY: budget.json is the single source of truth for cost tracking across the entire run; spec-07)
+- [x] Write `check_budget()` that enforces four rules: per-iteration warning, per-phase force-transition, total-token hard stop (exit 2), and cost-USD hard stop (exit 2), logging the appropriate message for each (WHY: budget enforcement prevents runaway costs; the four tiers ensure graceful degradation rather than abrupt failure; spec-07)
 
 ## 5. Rate Limiting
 
