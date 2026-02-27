@@ -200,9 +200,9 @@
 
 ## 21. Conductor - tmux Session Management (spec-15)
 
-- [ ] Write `start_tmux_session()` that creates a tmux session named `$TMUX_SESSION_NAME` with a "conductor" window (or attaches to an existing session if already inside tmux), then creates a "dashboard" window running `watch -n2 cat .automaton/dashboard.txt` if `PARALLEL_DASHBOARD` is true (WHY: the tmux session is the container for all parallel windows; it must exist before builders can be spawned; spec-15)
+- [x] Write `start_tmux_session()` that creates a tmux session named `$TMUX_SESSION_NAME` with a "conductor" window (or attaches to an existing session if already inside tmux), then creates a "dashboard" window running `watch -n2 cat .automaton/dashboard.txt` if `PARALLEL_DASHBOARD` is true (WHY: the tmux session is the container for all parallel windows; it must exist before builders can be spawned; spec-15)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `cleanup_tmux_session()` that kills any remaining builder windows and the dashboard window within the tmux session, without killing the session itself (WHY: cleanup on exit prevents orphaned tmux windows; the session is preserved because the conductor may still be running in window 0; spec-15)
+- [x] Write `cleanup_tmux_session()` that kills any remaining builder windows and the dashboard window within the tmux session, without killing the session itself (WHY: cleanup on exit prevents orphaned tmux windows; the session is preserved because the conductor may still be running in window 0; spec-15)
   <!-- files: automaton.sh, templates/automaton.sh -->
 
 ## 22. Conductor - Builder Spawning and Monitoring (spec-15)

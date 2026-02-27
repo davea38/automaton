@@ -1374,6 +1374,10 @@ _handle_shutdown() {
     local signal="$1"
     # Clean up any temp plan prompt file (spec-18)
     cleanup_parallel_plan_prompt 2>/dev/null || true
+    # Clean up tmux builder/dashboard windows (spec-15)
+    if [ "${PARALLEL_ENABLED:-false}" = "true" ]; then
+        cleanup_tmux_session 2>/dev/null || true
+    fi
     # Guard: only attempt state save if initialization has run (state vars exist)
     if [ -n "${started_at:-}" ]; then
         write_state 2>/dev/null || true
@@ -1387,6 +1391,54 @@ _handle_shutdown() {
 trap '_handle_shutdown INT' INT
 trap '_handle_shutdown TERM' TERM
 trap '' HUP
+
+# ---------------------------------------------------------------------------
+# Conductor - tmux Session Management (spec-15)
+# ---------------------------------------------------------------------------
+
+# Creates a tmux session for parallel builds.  The session hosts the conductor
+# in window 0 and optionally a live dashboard in a second window.  If the
+# script is already running inside tmux, the existing session is reused.
+# Called once after dependency checks when PARALLEL_ENABLED is true.
+start_tmux_session() {
+    local session="$TMUX_SESSION_NAME"
+
+    # If we are already inside a tmux session, reuse it
+    if [ -n "${TMUX:-}" ]; then
+        log "CONDUCTOR" "Already in tmux session. Using current session."
+    elif tmux has-session -t "$session" 2>/dev/null; then
+        log "CONDUCTOR" "Attaching to existing tmux session: $session"
+    else
+        tmux new-session -d -s "$session" -n "conductor"
+        log "CONDUCTOR" "Created tmux session: $session"
+    fi
+
+    # Create dashboard window if configured
+    if [ "$PARALLEL_DASHBOARD" = "true" ]; then
+        # Kill stale dashboard window from a previous run, if any
+        tmux kill-window -t "$session:dashboard" 2>/dev/null || true
+        tmux new-window -t "$session" -n "dashboard" \
+            "watch -n2 cat .automaton/dashboard.txt"
+        log "CONDUCTOR" "Dashboard window created (watch -n2)"
+    fi
+}
+
+# Tears down builder and dashboard windows inside the tmux session.
+# The session itself is preserved because the conductor may still be running
+# in window 0.  Called from _handle_shutdown() and on clean exit.
+cleanup_tmux_session() {
+    local session="$TMUX_SESSION_NAME"
+
+    # Kill any remaining builder windows
+    for i in $(seq 1 "$MAX_BUILDERS"); do
+        tmux kill-window -t "$session:builder-$i" 2>/dev/null || true
+    done
+
+    # Kill dashboard window
+    tmux kill-window -t "$session:dashboard" 2>/dev/null || true
+
+    log "CONDUCTOR" "Cleaned up tmux session: $session"
+}
 
 # ---------------------------------------------------------------------------
 # Parallel Planning Prompt Extension (spec-18)
