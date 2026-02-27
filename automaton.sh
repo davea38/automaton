@@ -1599,6 +1599,275 @@ log_partition_quality() {
 }
 
 # ---------------------------------------------------------------------------
+# Builder Wrapper Script (spec-17)
+# ---------------------------------------------------------------------------
+
+# Generates .automaton/wave/builder-wrapper.sh before each wave.
+# The wrapper is the executable that runs in each tmux builder window.
+# It reads its assignment from assignments.json, generates a task-specific
+# prompt header prepended to PROMPT_build.md, runs claude -p, extracts tokens
+# from stream-json output, determines status (success/error/rate_limited/partial),
+# captures git commit and files_changed, calculates duration, and writes a result
+# JSON to .automaton/wave/results/builder-N.json.
+# WHY: The builder wrapper must be generated fresh each wave because assignments
+# change and config values are baked in at generation time.
+generate_builder_wrapper() {
+    local wrapper="$AUTOMATON_DIR/wave/builder-wrapper.sh"
+
+    # Determine optional claude CLI flags at generation time
+    local skip_perms_flag=""
+    local verbose_flag=""
+    if [ "$FLAG_DANGEROUSLY_SKIP_PERMISSIONS" = "true" ]; then
+        skip_perms_flag="--dangerously-skip-permissions"
+    fi
+    if [ "$FLAG_VERBOSE" = "true" ]; then
+        verbose_flag="--verbose"
+    fi
+
+    # Write the script template (single-quoted heredoc = no variable expansion).
+    # Config values are injected via sed after the heredoc.
+    cat > "$wrapper" << 'WRAPPER'
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ---- Arguments from conductor ----
+BUILDER_NUM="$1"
+WAVE_NUM="$2"
+PROJECT_ROOT="$3"
+
+# ---- Config values (baked in at generation time via sed) ----
+BUILDER_MODEL="__CLAUDE_MODEL__"
+SKIP_PERMS_FLAG="__SKIP_PERMS_FLAG__"
+VERBOSE_FLAG="__VERBOSE_FLAG__"
+
+# ---- Derived paths ----
+ASSIGNMENTS_FILE="$PROJECT_ROOT/.automaton/wave/assignments.json"
+RESULT_FILE="$PROJECT_ROOT/.automaton/wave/results/builder-${BUILDER_NUM}.json"
+
+# ---- Read assignment from assignments.json ----
+assignment=$(jq ".assignments[$((BUILDER_NUM - 1))]" "$ASSIGNMENTS_FILE")
+task=$(echo "$assignment" | jq -r '.task')
+task_line=$(echo "$assignment" | jq -r '.task_line')
+files_owned=$(echo "$assignment" | jq -r '.files_owned | join(", ")')
+
+# ---- Generate task-specific prompt header (spec-17) ----
+HEADER=$(cat <<PROMPT_HEADER
+# Builder $BUILDER_NUM — Wave $WAVE_NUM
+
+## Your Assignment
+You are builder $BUILDER_NUM in a parallel build wave. You have ONE task:
+
+**Task:** $task
+
+## File Ownership
+You may ONLY create or modify these files (and their test files):
+$files_owned
+
+Do NOT modify any other files. If your task requires changes to files outside your ownership, note this in your commit message with the prefix "NEEDS:" and complete what you can.
+
+## Rules
+- Complete this ONE task fully. No placeholders, no TODOs, no stubs.
+- Only modify files in your ownership list.
+- Run tests for the files you changed.
+- Mark the task as [x] in IMPLEMENTATION_PLAN.md.
+- Commit all changes with a descriptive message.
+- Output <promise>COMPLETE</promise> when done.
+
+---
+PROMPT_HEADER
+)
+
+# ---- Prepend header to the standard build prompt ----
+PROMPT_FILE=$(mktemp)
+echo "$HEADER" > "$PROMPT_FILE"
+cat "$PROJECT_ROOT/PROMPT_build.md" >> "$PROMPT_FILE"
+
+# ---- Record start time ----
+started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# ---- Build claude command flags ----
+claude_args=("-p" "--output-format" "stream-json" "--model" "$BUILDER_MODEL")
+if [ -n "$SKIP_PERMS_FLAG" ]; then
+    claude_args+=("$SKIP_PERMS_FLAG")
+fi
+if [ -n "$VERBOSE_FLAG" ]; then
+    claude_args+=("$VERBOSE_FLAG")
+fi
+
+# ---- Run Claude agent in the worktree ----
+set +e
+AGENT_RESULT=$(claude "${claude_args[@]}" < "$PROMPT_FILE" 2>&1)
+exit_code=$?
+set -e
+
+completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# ---- Extract token usage from stream-json output ----
+usage=$(echo "$AGENT_RESULT" | grep '"type":"result"' | tail -1 || echo '{}')
+input_tokens=$(echo "$usage" | jq -r '.usage.input_tokens // 0' 2>/dev/null || echo 0)
+output_tokens=$(echo "$usage" | jq -r '.usage.output_tokens // 0' 2>/dev/null || echo 0)
+cache_create=$(echo "$usage" | jq -r '.usage.cache_creation_input_tokens // 0' 2>/dev/null || echo 0)
+cache_read=$(echo "$usage" | jq -r '.usage.cache_read_input_tokens // 0' 2>/dev/null || echo 0)
+
+# ---- Determine status ----
+status="success"
+if [ "$exit_code" -ne 0 ]; then
+    if echo "$AGENT_RESULT" | grep -qi 'rate_limit\|429\|overloaded'; then
+        status="rate_limited"
+    else
+        status="error"
+    fi
+elif ! echo "$AGENT_RESULT" | grep -q '<promise>COMPLETE</promise>'; then
+    status="partial"
+fi
+
+# ---- Get git info from the worktree ----
+git_commit=$(git rev-parse HEAD 2>/dev/null || echo "none")
+files_changed=$(git diff --name-only HEAD~1 2>/dev/null | jq -R -s 'split("\n") | map(select(. != ""))' 2>/dev/null || echo '[]')
+
+# ---- Calculate duration ----
+start_epoch=$(date -d "$started_at" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$started_at" +%s 2>/dev/null || echo 0)
+end_epoch=$(date -d "$completed_at" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$completed_at" +%s 2>/dev/null || echo 0)
+duration=$((end_epoch - start_epoch))
+
+# ---- Calculate cost estimate (simplified — conductor recalculates with correct pricing) ----
+estimated_cost=$(echo "scale=4; ($input_tokens * 3 + $output_tokens * 15) / 1000000" | bc 2>/dev/null || echo "0")
+
+# ---- Write result file (this signals completion to the conductor) ----
+cat > "$RESULT_FILE" << RESULT_EOF
+{
+  "builder": $BUILDER_NUM,
+  "wave": $WAVE_NUM,
+  "status": "$status",
+  "task": $(echo "$task" | jq -R .),
+  "task_line": $task_line,
+  "started_at": "$started_at",
+  "completed_at": "$completed_at",
+  "duration_seconds": $duration,
+  "exit_code": $exit_code,
+  "tokens": {
+    "input": $input_tokens,
+    "output": $output_tokens,
+    "cache_create": $cache_create,
+    "cache_read": $cache_read
+  },
+  "estimated_cost": $estimated_cost,
+  "git_commit": "$git_commit",
+  "files_changed": $files_changed,
+  "promise_complete": $(echo "$AGENT_RESULT" | grep -q '<promise>COMPLETE</promise>' && echo "true" || echo "false")
+}
+RESULT_EOF
+
+# ---- Clean up temp prompt file ----
+rm -f "$PROMPT_FILE"
+WRAPPER
+
+    # Bake in config values by replacing placeholders
+    sed -i "s|__CLAUDE_MODEL__|${MODEL_BUILDING}|g" "$wrapper"
+    sed -i "s|__SKIP_PERMS_FLAG__|${skip_perms_flag}|g" "$wrapper"
+    sed -i "s|__VERBOSE_FLAG__|${verbose_flag}|g" "$wrapper"
+
+    chmod +x "$wrapper"
+    log "CONDUCTOR" "Generated builder wrapper: $wrapper"
+}
+
+# Checks whether a builder modified files outside its assigned ownership list.
+# Compares files_changed from the builder's result file against files_owned
+# from assignments.json.
+# Returns 0 if no violations, 1 if violations found.
+# WHY: File ownership is a soft constraint enforced by prompt; post-build
+# checking catches violations before merge.
+check_ownership() {
+    local builder=$1
+    local assignment owned changed violations
+
+    assignment=$(jq ".assignments[$((builder - 1))]" "$AUTOMATON_DIR/wave/assignments.json")
+    owned=$(echo "$assignment" | jq -r '.files_owned[]')
+    changed=$(jq -r '.files_changed[]' "$AUTOMATON_DIR/wave/results/builder-${builder}.json")
+
+    violations=""
+    for file in $changed; do
+        if ! echo "$owned" | grep -qF "$file"; then
+            violations="$violations $file"
+        fi
+    done
+
+    if [ -n "$violations" ]; then
+        log "CONDUCTOR" "Builder $builder ownership violation:$violations"
+        return 1
+    fi
+    return 0
+}
+
+# Handles ownership violations for a builder by checking whether violated files
+# conflict with other builders' actual changes in the same wave.
+# If no conflict: allows the change (builder needed a file not in initial estimate).
+# If conflict: identifies conflicting files and signals re-queue.
+# Sets global REQUEUE_BUILDER (true/false) and VIOLATION_CONFLICT_FILES (space-separated).
+# Returns 0 if no conflicting violations, 1 if conflicts require re-queue.
+# WHY: Ownership violations must be handled gracefully to avoid silent merge
+# corruption; the policy preserves the assigned owner's version on conflict.
+handle_ownership_violations() {
+    local builder=$1
+    local assignments_file="$AUTOMATON_DIR/wave/assignments.json"
+    local result_file="$AUTOMATON_DIR/wave/results/builder-${builder}.json"
+
+    REQUEUE_BUILDER=false
+    VIOLATION_CONFLICT_FILES=""
+
+    # Get this builder's owned and changed files
+    local owned changed
+    owned=$(jq -r ".assignments[$((builder - 1))].files_owned[]" "$assignments_file" 2>/dev/null)
+    changed=$(jq -r '.files_changed[]' "$result_file" 2>/dev/null)
+
+    # Find violations (files changed but not owned)
+    local violations=""
+    for file in $changed; do
+        if ! echo "$owned" | grep -qF "$file"; then
+            violations="$violations $file"
+        fi
+    done
+
+    # Trim leading space
+    violations="${violations# }"
+    if [ -z "$violations" ]; then
+        return 0
+    fi
+
+    log "CONDUCTOR" "Builder $builder ownership violations: $violations"
+
+    # Check each violated file against other builders' actual changes in this wave
+    local builder_count has_conflicts=false
+    builder_count=$(jq '.assignments | length' "$assignments_file")
+
+    for file in $violations; do
+        for ((other=1; other<=builder_count; other++)); do
+            [ "$other" -eq "$builder" ] && continue
+            local other_result="$AUTOMATON_DIR/wave/results/builder-${other}.json"
+            [ ! -f "$other_result" ] && continue
+
+            # Check if the other builder also modified this file
+            if jq -e --arg f "$file" '.files_changed[] | select(. == $f)' "$other_result" >/dev/null 2>&1; then
+                log "CONDUCTOR" "Conflict: builder $builder and builder $other both modified $file"
+                VIOLATION_CONFLICT_FILES="$VIOLATION_CONFLICT_FILES $file"
+                has_conflicts=true
+            fi
+        done
+    done
+
+    VIOLATION_CONFLICT_FILES="${VIOLATION_CONFLICT_FILES# }"
+
+    if [ "$has_conflicts" = true ]; then
+        log "CONDUCTOR" "Builder $builder has conflicting ownership violations — task will be re-queued"
+        REQUEUE_BUILDER=true
+        return 1
+    fi
+
+    log "CONDUCTOR" "Builder $builder ownership violations are non-conflicting — allowing changes"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Phase Sequence Controller
 # ---------------------------------------------------------------------------
 
