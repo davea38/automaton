@@ -221,6 +221,34 @@ read_state() {
 initialize() {
     mkdir -p "$AUTOMATON_DIR/agents" "$AUTOMATON_DIR/worktrees" "$AUTOMATON_DIR/inbox"
 
+    # Create parallel-mode directories and files when parallel is enabled
+    if [ "${PARALLEL_ENABLED:-false}" = "true" ]; then
+        mkdir -p "$AUTOMATON_DIR/wave/results" "$AUTOMATON_DIR/wave-history"
+
+        # Dashboard file — watched by the tmux dashboard window
+        cat > "$AUTOMATON_DIR/dashboard.txt" <<'DASH'
+╔══════════════════════════════════════════════════════════════╗
+║  automaton — parallel build                                  ║
+║  Initializing...                                             ║
+╚══════════════════════════════════════════════════════════════╝
+DASH
+
+        # Rate-tracking file — read by the conductor for pacing decisions
+        local now_ts
+        now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        cat > "$AUTOMATON_DIR/rate.json" <<RATE
+{
+  "window_start": "$now_ts",
+  "window_tokens": 0,
+  "window_requests": 0,
+  "builders_active": 0,
+  "last_rate_limit": null,
+  "backoff_until": null,
+  "history": []
+}
+RATE
+    fi
+
     # Set initial state variables
     current_phase="research"
     iteration=0

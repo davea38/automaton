@@ -104,13 +104,13 @@
 
 ## 13. Parallel State Infrastructure (spec-14, spec-10)
 
-- [ ] Extend `initialize()` to create `.automaton/wave/` and `.automaton/wave/results/` directories when `PARALLEL_ENABLED` is `true` (WHY: wave execution writes assignments and results to these directories; they must exist before the first wave; spec-14, spec-10)
+- [x] Extend `initialize()` to create `.automaton/wave/` and `.automaton/wave/results/` directories when `PARALLEL_ENABLED` is `true` (WHY: wave execution writes assignments and results to these directories; they must exist before the first wave; spec-14, spec-10)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Extend `initialize()` to create `.automaton/wave-history/` directory when `PARALLEL_ENABLED` is `true` (WHY: cleanup_wave archives wave data here for post-run debugging; spec-16)
+- [x] Extend `initialize()` to create `.automaton/wave-history/` directory when `PARALLEL_ENABLED` is `true` (WHY: cleanup_wave archives wave data here for post-run debugging; spec-16)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Create `.automaton/dashboard.txt` with a placeholder message during `initialize()` when `PARALLEL_ENABLED` is `true` (WHY: the dashboard window runs `watch cat .automaton/dashboard.txt`; the file must exist before the watch command starts; spec-14, spec-21)
+- [x] Create `.automaton/dashboard.txt` with a placeholder message during `initialize()` when `PARALLEL_ENABLED` is `true` (WHY: the dashboard window runs `watch cat .automaton/dashboard.txt`; the file must exist before the watch command starts; spec-14, spec-21)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Create `.automaton/rate.json` with zeroed initial state (window_start, window_tokens=0, window_requests=0, builders_active=0, last_rate_limit=null, backoff_until=null, history=[]) during `initialize()` when `PARALLEL_ENABLED` is `true` (WHY: the conductor reads rate.json for pacing decisions; it must exist before the first wave; spec-20)
+- [x] Create `.automaton/rate.json` with zeroed initial state (window_start, window_tokens=0, window_requests=0, builders_active=0, last_rate_limit=null, backoff_until=null, history=[]) during `initialize()` when `PARALLEL_ENABLED` is `true` (WHY: the conductor reads rate.json for pacing decisions; it must exist before the first wave; spec-20)
   <!-- files: automaton.sh, templates/automaton.sh -->
 
 ## 14. Extended State for Waves (spec-15, spec-10)
