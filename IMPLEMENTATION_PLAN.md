@@ -144,17 +144,17 @@
 
 ## 17. Merge Protocol (spec-19)
 
-- [ ] Write `create_worktree()` that removes any stale worktree at the path, deletes any stale branch, then runs `git worktree add` to create `.automaton/worktrees/builder-N` on branch `automaton/wave-{W}-builder-{N}` from HEAD (WHY: each builder needs an isolated working copy; stale cleanup prevents errors from interrupted previous runs; spec-19)
+- [x] Write `create_worktree()` that removes any stale worktree at the path, deletes any stale branch, then runs `git worktree add` to create `.automaton/worktrees/builder-N` on branch `automaton/wave-{W}-builder-{N}` from HEAD (WHY: each builder needs an isolated working copy; stale cleanup prevents errors from interrupted previous runs; spec-19)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `cleanup_worktree()` that runs `git worktree remove --force`, `git branch -D` for the builder branch, and `git worktree prune` (WHY: worktrees and branches must be cleaned up after each wave to avoid disk/ref accumulation; spec-19)
+- [x] Write `cleanup_worktree()` that runs `git worktree remove --force`, `git branch -D` for the builder branch, and `git worktree prune` (WHY: worktrees and branches must be cleaned up after each wave to avoid disk/ref accumulation; spec-19)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `handle_coordination_conflict()` for IMPLEMENTATION_PLAN.md: on conflict, take ours, then extract `[x]` marked tasks from the builder's branch version and apply those checkbox changes to ours, then `git add` the file (WHY: multiple builders marking different tasks [x] is the most common merge conflict; auto-resolving it is essential for parallelism; spec-19)
+- [x] Write `handle_coordination_conflict()` for IMPLEMENTATION_PLAN.md: on conflict, take ours, then extract `[x]` marked tasks from the builder's branch version and apply those checkbox changes to ours, then `git add` the file (WHY: multiple builders marking different tasks [x] is the most common merge conflict; auto-resolving it is essential for parallelism; spec-19)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `handle_coordination_conflict()` for AGENTS.md: on conflict, take ours, append the builder's new additions, then `git add` the file (WHY: builders may append operational learnings to AGENTS.md; the append-both strategy preserves all content; spec-19)
+- [x] Write `handle_coordination_conflict()` for AGENTS.md: on conflict, take ours, append the builder's new additions, then `git add` the file (WHY: builders may append operational learnings to AGENTS.md; the append-both strategy preserves all content; spec-19)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `handle_source_conflict()` that aborts the merge, marks the builder's task for re-queue in assignments.json, and logs the conflicting files (WHY: real source conflicts mean the task partitioning missed a file overlap; the task must be re-queued for single-builder execution to resolve it; spec-19)
+- [x] Write `handle_source_conflict()` that aborts the merge, marks the builder's task for re-queue in assignments.json, and logs the conflicting files (WHY: real source conflicts mean the task partitioning missed a file overlap; the task must be re-queued for single-builder execution to resolve it; spec-19)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `merge_wave()` implementing the three-tier strategy: iterate builders in order, skip non-success/partial, attempt `git merge --no-ff`, on conflict check each file with `handle_coordination_conflict()`, fall through to `handle_source_conflict()` for real conflicts, log tier and counts (WHY: merge_wave is called after every wave and is the highest-risk operation; the three tiers ensure maximal work preservation; spec-19)
+- [x] Write `merge_wave()` implementing the three-tier strategy: iterate builders in order, skip non-success/partial, attempt `git merge --no-ff`, on conflict check each file with `handle_coordination_conflict()`, fall through to `handle_source_conflict()` for real conflicts, log tier and counts (WHY: merge_wave is called after every wave and is the highest-risk operation; the three tiers ensure maximal work preservation; spec-19)
   <!-- files: automaton.sh, templates/automaton.sh -->
 
 ## 18. Parallel Budget Management (spec-20)

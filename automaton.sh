@@ -1868,6 +1868,221 @@ handle_ownership_violations() {
 }
 
 # ---------------------------------------------------------------------------
+# Merge Protocol (spec-19)
+# ---------------------------------------------------------------------------
+
+# Creates an isolated git worktree for a builder.
+# Each builder works in its own worktree to enable parallel builds.
+# Cleans up stale worktrees/branches from interrupted previous runs.
+# WHY: each builder needs an isolated working copy; stale cleanup prevents
+# errors from interrupted previous runs; spec-19
+create_worktree() {
+    local builder=$1
+    local wave=$2
+    local worktree_path="$AUTOMATON_DIR/worktrees/builder-$builder"
+    local branch="automaton/wave-${wave}-builder-${builder}"
+
+    # Remove stale worktree if exists
+    if [ -d "$worktree_path" ]; then
+        git worktree remove "$worktree_path" --force 2>/dev/null || true
+    fi
+
+    # Remove stale branch if exists
+    git branch -D "$branch" 2>/dev/null || true
+
+    # Create worktree from current HEAD
+    git worktree add "$worktree_path" -b "$branch" HEAD
+
+    log "CONDUCTOR" "Created worktree: $worktree_path (branch: $branch)"
+}
+
+# Removes a builder's worktree and branch after a wave completes.
+# WHY: worktrees and branches must be cleaned up after each wave to avoid
+# disk/ref accumulation; spec-19
+cleanup_worktree() {
+    local builder=$1
+    local wave=$2
+    local worktree_path="$AUTOMATON_DIR/worktrees/builder-$builder"
+    local branch="automaton/wave-${wave}-builder-${builder}"
+
+    # Remove worktree
+    git worktree remove "$worktree_path" --force 2>/dev/null || true
+
+    # Delete the builder branch (it's been merged or abandoned)
+    git branch -D "$branch" 2>/dev/null || true
+
+    # Prune stale worktree references
+    git worktree prune
+}
+
+# Auto-resolves merge conflicts in coordination files that multiple builders
+# are expected to modify concurrently (IMPLEMENTATION_PLAN.md, AGENTS.md).
+# For IMPLEMENTATION_PLAN.md: takes ours, then applies [x] checkbox changes from builder.
+# For AGENTS.md: takes ours, then appends builder's new additions.
+# Returns 0 if file was handled (coordination file), 1 if not a coordination file.
+# WHY: multiple builders marking different tasks [x] is the most common merge
+# conflict; auto-resolving it is essential for parallelism; spec-19
+handle_coordination_conflict() {
+    local file="$1"
+    local wave=$2
+    local builder=$3
+    local builder_branch="automaton/wave-${wave}-builder-${builder}"
+
+    case "$file" in
+        IMPLEMENTATION_PLAN.md)
+            # Strategy: take ours, then apply their checkbox changes
+            git checkout --ours "$file"
+
+            # Extract tasks marked [x] by this builder (from their branch)
+            local their_completed
+            their_completed=$(git show "$builder_branch:$file" | grep '\[x\]' || true)
+
+            # For each task they completed, mark it in ours
+            while IFS= read -r line; do
+                [ -z "$line" ] && continue
+                # Extract the task text (everything after "[x] ")
+                local task_text="${line#*\[x\] }"
+                # Find the matching [ ] line by fixed-string search (no regex escaping needed)
+                local line_num
+                line_num=$(grep -nF "[ ] $task_text" "$file" | head -1 | cut -d: -f1)
+                if [ -n "$line_num" ]; then
+                    # Replace only on the matched line — simple and safe
+                    sed -i "${line_num}s/\[ \]/[x]/" "$file"
+                fi
+            done <<< "$their_completed"
+
+            git add "$file"
+            log "CONDUCTOR" "Wave $wave: auto-resolved IMPLEMENTATION_PLAN.md conflict (builder-$builder)"
+            return 0
+            ;;
+        AGENTS.md)
+            # Strategy: take ours, then append builder's new additions
+            git checkout --ours "$file"
+
+            # Find what the builder added relative to the merge base
+            local merge_base their_additions
+            merge_base=$(git merge-base HEAD "$builder_branch" 2>/dev/null || echo "HEAD")
+            their_additions=$(git diff "$merge_base" "$builder_branch" -- "$file" \
+                | grep '^+' | grep -v '^+++' | sed 's/^+//' || true)
+
+            if [ -n "$their_additions" ]; then
+                printf '%s\n' "$their_additions" >> "$file"
+                git add "$file"
+            fi
+
+            log "CONDUCTOR" "Wave $wave: auto-resolved AGENTS.md conflict (builder-$builder)"
+            return 0
+            ;;
+    esac
+
+    return 1  # not a coordination file
+}
+
+# Handles real source file conflicts by aborting the merge and marking the
+# builder's task for re-queue. Re-queued tasks run as single-builder waves
+# in the next iteration to avoid the conflict.
+# WHY: real source conflicts mean the task partitioning missed a file overlap;
+# the task must be re-queued for single-builder execution to resolve it; spec-19
+handle_source_conflict() {
+    local wave=$1
+    local builder=$2
+    local conflicting_files="$3"
+
+    log "CONDUCTOR" "Wave $wave: builder-$builder has source conflicts: $conflicting_files"
+
+    # Abort this builder's merge
+    git merge --abort
+
+    # Mark this builder's task for re-queue in assignments.json
+    jq ".assignments[$((builder - 1))].requeue = true" \
+        "$AUTOMATON_DIR/wave/assignments.json" > "$AUTOMATON_DIR/wave/assignments.json.tmp" \
+        && mv "$AUTOMATON_DIR/wave/assignments.json.tmp" "$AUTOMATON_DIR/wave/assignments.json"
+
+    log "CONDUCTOR" "Wave $wave: builder-$builder task re-queued for single-builder execution"
+    return 0
+}
+
+# Implements the three-tier merge strategy for all builders in a wave.
+# Tier 1: Clean merge (no conflicts) — auto-proceed.
+# Tier 2: Coordination file conflicts (IMPLEMENTATION_PLAN.md, AGENTS.md) — auto-resolve.
+# Tier 3: Source file conflicts — abort and re-queue task for single-builder execution.
+# Merges builders in order (builder-1 first); only merges success/partial builders.
+# Uses --no-ff to preserve builder commit history for debugging.
+# WHY: merge_wave is called after every wave and is the highest-risk operation;
+# the three tiers ensure maximal work preservation; spec-19
+merge_wave() {
+    local wave=$1
+    local builder_count
+    builder_count=$(jq '.assignments | length' "$AUTOMATON_DIR/wave/assignments.json")
+    local merged=0
+    local failed=0
+    local skipped=0
+
+    for ((i=1; i<=builder_count; i++)); do
+        local status result_file branch
+        result_file="$AUTOMATON_DIR/wave/results/builder-${i}.json"
+
+        # Check result file exists
+        if [ ! -f "$result_file" ]; then
+            log "CONDUCTOR" "Wave $wave: skipping builder-$i (no result file)"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        status=$(jq -r '.status' "$result_file")
+        branch="automaton/wave-${wave}-builder-${i}"
+
+        # Skip failed/timed-out builders
+        if [ "$status" != "success" ] && [ "$status" != "partial" ]; then
+            log "CONDUCTOR" "Wave $wave: skipping builder-$i (status: $status)"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        # Verify branch exists before attempting merge
+        if ! git rev-parse --verify "$branch" >/dev/null 2>&1; then
+            log "CONDUCTOR" "Wave $wave: skipping builder-$i (branch $branch not found)"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        # Tier 1: Attempt clean merge
+        if git merge --no-ff "$branch" -m "automaton: merge wave $wave builder $i" 2>/dev/null; then
+            merged=$((merged + 1))
+            log "CONDUCTOR" "Wave $wave: builder-$i merged (tier 1: clean)"
+            continue
+        fi
+
+        # Merge had conflicts — check which files conflict
+        local conflicting
+        conflicting=$(git diff --name-only --diff-filter=U)
+        local tier2_resolved=true
+
+        for file in $conflicting; do
+            if handle_coordination_conflict "$file" "$wave" "$i"; then
+                continue  # Tier 2 handled this file
+            else
+                tier2_resolved=false
+                break
+            fi
+        done
+
+        if $tier2_resolved; then
+            # All conflicts were coordination files — complete the merge
+            git commit --no-edit
+            merged=$((merged + 1))
+            log "CONDUCTOR" "Wave $wave: builder-$i merged (tier 2: coordination files)"
+        else
+            # Real source conflict — Tier 3
+            handle_source_conflict "$wave" "$i" "$conflicting"
+            failed=$((failed + 1))
+        fi
+    done
+
+    log "CONDUCTOR" "Wave $wave: merge complete ($merged merged, $failed conflicts, $skipped skipped)"
+}
+
+# ---------------------------------------------------------------------------
 # Phase Sequence Controller
 # ---------------------------------------------------------------------------
 
