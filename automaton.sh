@@ -1656,6 +1656,178 @@ write_assignments() {
     done
 }
 
+# Reads and validates all builder result files from .automaton/wave/results/.
+# Checks for required fields (builder, wave, status, tokens, exit_code) in each
+# result file. Returns aggregated results as JSON to stdout, including a summary
+# with counts by status and total tokens.
+# WHY: result collection is the handoff point between builder execution and merge;
+# validation catches corrupt or missing result files. (spec-16)
+collect_results() {
+    local wave=$1
+    local assignments_file="$AUTOMATON_DIR/wave/assignments.json"
+    local results_dir="$AUTOMATON_DIR/wave/results"
+
+    if [ ! -f "$assignments_file" ]; then
+        log "CONDUCTOR" "Wave $wave: ERROR — assignments.json not found"
+        echo '{"wave":'"$wave"',"results":[],"summary":{"total":0,"success":0,"error":0,"rate_limited":0,"timeout":0,"partial":0,"missing":0}}'
+        return 1
+    fi
+
+    local builder_count
+    builder_count=$(jq '.assignments | length' "$assignments_file")
+
+    local results="[]"
+    local success_count=0
+    local error_count=0
+    local rate_limited_count=0
+    local timeout_count=0
+    local partial_count=0
+    local missing_count=0
+
+    for ((i=1; i<=builder_count; i++)); do
+        local result_file="$results_dir/builder-${i}.json"
+
+        if [ ! -f "$result_file" ]; then
+            log "CONDUCTOR" "Wave $wave: builder-$i result file missing"
+            missing_count=$((missing_count + 1))
+            # Add a synthetic missing result so downstream consumers have complete data
+            results=$(echo "$results" | jq \
+                --argjson builder "$i" \
+                --argjson wave "$wave" \
+                '. + [{
+                    "builder": $builder,
+                    "wave": $wave,
+                    "status": "missing",
+                    "task": "",
+                    "task_line": 0,
+                    "started_at": "",
+                    "completed_at": "",
+                    "duration_seconds": 0,
+                    "exit_code": -1,
+                    "tokens": {"input": 0, "output": 0, "cache_create": 0, "cache_read": 0},
+                    "estimated_cost": 0,
+                    "git_commit": "none",
+                    "files_changed": [],
+                    "promise_complete": false,
+                    "valid": false,
+                    "validation_error": "result file missing"
+                }]')
+            continue
+        fi
+
+        # Validate required fields
+        local valid=true
+        local validation_error=""
+
+        # Check JSON is parseable
+        if ! jq '.' "$result_file" >/dev/null 2>&1; then
+            valid=false
+            validation_error="invalid JSON"
+        else
+            # Check required fields exist and have correct types
+            local has_builder has_wave has_status has_tokens has_exit_code
+            has_builder=$(jq 'has("builder") and (.builder | type == "number")' "$result_file")
+            has_wave=$(jq 'has("wave") and (.wave | type == "number")' "$result_file")
+            has_status=$(jq 'has("status") and (.status | type == "string")' "$result_file")
+            has_tokens=$(jq 'has("tokens") and (.tokens | type == "object")' "$result_file")
+            has_exit_code=$(jq 'has("exit_code") and (.exit_code | type == "number")' "$result_file")
+
+            if [ "$has_builder" != "true" ]; then
+                valid=false
+                validation_error="missing or invalid 'builder' field"
+            elif [ "$has_wave" != "true" ]; then
+                valid=false
+                validation_error="missing or invalid 'wave' field"
+            elif [ "$has_status" != "true" ]; then
+                valid=false
+                validation_error="missing or invalid 'status' field"
+            elif [ "$has_tokens" != "true" ]; then
+                valid=false
+                validation_error="missing or invalid 'tokens' field"
+            elif [ "$has_exit_code" != "true" ]; then
+                valid=false
+                validation_error="missing or invalid 'exit_code' field"
+            fi
+        fi
+
+        if [ "$valid" = "false" ]; then
+            log "CONDUCTOR" "Wave $wave: builder-$i result INVALID — $validation_error"
+            error_count=$((error_count + 1))
+            results=$(echo "$results" | jq \
+                --argjson builder "$i" \
+                --argjson wave "$wave" \
+                --arg verr "$validation_error" \
+                '. + [{
+                    "builder": $builder,
+                    "wave": $wave,
+                    "status": "error",
+                    "task": "",
+                    "task_line": 0,
+                    "started_at": "",
+                    "completed_at": "",
+                    "duration_seconds": 0,
+                    "exit_code": -1,
+                    "tokens": {"input": 0, "output": 0, "cache_create": 0, "cache_read": 0},
+                    "estimated_cost": 0,
+                    "git_commit": "none",
+                    "files_changed": [],
+                    "promise_complete": false,
+                    "valid": false,
+                    "validation_error": $verr
+                }]')
+            continue
+        fi
+
+        # Valid result — add it with validation metadata
+        local status
+        status=$(jq -r '.status' "$result_file")
+        results=$(echo "$results" | jq \
+            --slurpfile r "$result_file" \
+            '. + [$r[0] + {"valid": true, "validation_error": ""}]')
+
+        # Count by status
+        case "$status" in
+            success)      success_count=$((success_count + 1)) ;;
+            error)        error_count=$((error_count + 1)) ;;
+            rate_limited) rate_limited_count=$((rate_limited_count + 1)) ;;
+            timeout)      timeout_count=$((timeout_count + 1)) ;;
+            partial)      partial_count=$((partial_count + 1)) ;;
+            *)            error_count=$((error_count + 1)) ;;
+        esac
+
+        local duration
+        duration=$(jq '.duration_seconds // 0' "$result_file")
+        log "CONDUCTOR" "Wave $wave: builder-$i result collected (status: $status, ${duration}s)"
+    done
+
+    # Build the aggregated output
+    local total=$((success_count + error_count + rate_limited_count + timeout_count + partial_count + missing_count))
+    echo "$results" | jq \
+        --argjson wave "$wave" \
+        --argjson total "$total" \
+        --argjson success "$success_count" \
+        --argjson error "$error_count" \
+        --argjson rate_limited "$rate_limited_count" \
+        --argjson timeout "$timeout_count" \
+        --argjson partial "$partial_count" \
+        --argjson missing "$missing_count" \
+        '{
+            "wave": $wave,
+            "results": .,
+            "summary": {
+                "total": $total,
+                "success": $success,
+                "error": $error,
+                "rate_limited": $rate_limited,
+                "timeout": $timeout,
+                "partial": $partial,
+                "missing": $missing
+            }
+        }'
+
+    log "CONDUCTOR" "Wave $wave: collected $total results ($success_count success, $partial_count partial, $error_count error, $rate_limited_count rate_limited, $timeout_count timeout, $missing_count missing)"
+}
+
 # ---------------------------------------------------------------------------
 # Builder Wrapper Script (spec-17)
 # ---------------------------------------------------------------------------

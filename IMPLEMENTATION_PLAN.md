@@ -189,7 +189,7 @@
 
 - [x] Write `write_assignments()` that creates `.automaton/wave/assignments.json` with wave number, created_at timestamp, and an assignments array containing builder number, task text, task_line, files_owned, worktree path, and branch name for each selected task (WHY: assignments.json is the contract between conductor and builders; builders read it to get their task; spec-16)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `collect_results()` that reads and validates all builder result files from `.automaton/wave/results/`, checks for required fields (builder, wave, status, tokens, exit_code), and returns aggregated results as JSON (WHY: result collection is the handoff point between builder execution and merge; validation catches corrupt or missing result files; spec-16)
+- [x] Write `collect_results()` that reads and validates all builder result files from `.automaton/wave/results/`, checks for required fields (builder, wave, status, tokens, exit_code), and returns aggregated results as JSON (WHY: result collection is the handoff point between builder execution and merge; validation catches corrupt or missing result files; spec-16)
   <!-- files: automaton.sh, templates/automaton.sh -->
 - [ ] Write `verify_wave()` that runs post-merge checks: execute build command if configured, grep for unresolved conflict markers (`<<<<<<<`) in source files, verify completed task count did not decrease (plan integrity); return false if any check fails (WHY: post-wave verification catches merge corruption before the next wave builds on top of it; spec-16)
   <!-- files: automaton.sh, templates/automaton.sh -->
