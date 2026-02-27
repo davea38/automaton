@@ -144,6 +144,10 @@ load_config() {
 
 # Appends a timestamped line to session.log and echoes to stdout.
 # Usage: log "COMPONENT" "message text"
+# In parallel mode (spec-21), callers use structured component tags:
+#   CONDUCTOR     — wave management decisions
+#   BUILD:WN:BN   — builder N in wave N (e.g., BUILD:W3:B1)
+#   MERGE:WN      — merge operations for wave N (e.g., MERGE:W3)
 log() {
     local component="$1"
     local message="$2"
@@ -2333,6 +2337,278 @@ aggregate_wave_budget() {
     mv "$tmp" "$rate_file"
 
     log "CONDUCTOR" "Wave $wave: budget aggregated from $builder_count builders"
+}
+
+# ---------------------------------------------------------------------------
+# Observability — Dashboard, progress estimation, wave status (spec-21)
+# ---------------------------------------------------------------------------
+
+# The existing log() function already supports the parallel component tag format:
+#   log "CONDUCTOR" "Wave 3: starting with 3 builders"
+#   log "BUILD:W3:B1" "Task: Implement JWT auth"
+#   log "MERGE:W3" "builder-1 merged cleanly"
+# No code change is needed — callers just pass the appropriate tag string.
+
+# Estimates the number of remaining waves based on incomplete tasks and max builders.
+# WHY: gives humans a sense of progress and expected completion; +1 accounts for
+# rounding and re-queued tasks. (spec-21)
+estimate_remaining_waves() {
+    local remaining_tasks
+    remaining_tasks=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+
+    if [ "$remaining_tasks" -eq 0 ]; then
+        echo "0"
+        return
+    fi
+
+    # Estimate: tasks_per_wave ≈ max_builders (optimistic)
+    # Add 1 for rounding and re-queued tasks
+    local estimated=$(( remaining_tasks / MAX_BUILDERS + 1 ))
+    echo "$estimated"
+}
+
+# Formats per-builder status lines for the dashboard.
+# Reads the current wave's assignments.json and any available result files to
+# produce formatted status lines for each builder (running with elapsed time,
+# DONE with duration, ERROR, etc.).
+# WHY: builder status bars are the core visual element of the dashboard. (spec-21)
+format_builder_status() {
+    local assignments_file="$AUTOMATON_DIR/wave/assignments.json"
+
+    if [ ! -f "$assignments_file" ]; then
+        echo "  (no active wave)"
+        return
+    fi
+
+    local builder_count
+    builder_count=$(jq '.assignments | length' "$assignments_file" 2>/dev/null || echo 0)
+
+    if [ "$builder_count" -eq 0 ]; then
+        echo "  (no builders assigned)"
+        return
+    fi
+
+    local now_epoch
+    now_epoch=$(date +%s)
+    local wave_created
+    wave_created=$(jq -r '.created_at // ""' "$assignments_file")
+
+    for i in $(seq 1 "$builder_count"); do
+        local task_text
+        task_text=$(jq -r ".assignments[$((i-1))].task // \"unknown\"" "$assignments_file")
+        # Truncate task text for display (max 25 chars)
+        if [ "${#task_text}" -gt 25 ]; then
+            task_text="${task_text:0:22}..."
+        fi
+
+        local result_file="$AUTOMATON_DIR/wave/results/builder-${i}.json"
+
+        if [ -f "$result_file" ]; then
+            # Builder has completed — show status and duration
+            local status duration
+            status=$(jq -r '.status // "unknown"' "$result_file")
+            duration=$(jq '.duration_seconds // 0' "$result_file")
+
+            local duration_display
+            duration_display="$((duration / 60))m$((duration % 60))s"
+
+            local status_upper
+            status_upper=$(echo "$status" | tr '[:lower:]' '[:upper:]')
+
+            printf "  builder-%-2d  %-7s  %6s  %s\n" "$i" "$status_upper" "$duration_display" "$task_text"
+        else
+            # Builder still running — show elapsed time
+            local elapsed="?"
+            if [ -n "$wave_created" ] && [ "$wave_created" != "null" ]; then
+                local wave_epoch
+                wave_epoch=$(date -d "$wave_created" +%s 2>/dev/null || echo "$now_epoch")
+                local elapsed_sec=$((now_epoch - wave_epoch))
+                elapsed="$((elapsed_sec / 60))m$((elapsed_sec % 60))s"
+            fi
+
+            printf "  builder-%-2d  running  %6s  %s\n" "$i" "$elapsed" "$task_text"
+        fi
+    done
+}
+
+# Generates .automaton/dashboard.txt with box-drawing format showing: phase, wave
+# number, estimated total waves, budget remaining, per-builder status bars, task
+# completion counts, token and cost summary, and the 6 most recent session.log events.
+# WHY: the dashboard is the primary human interface during parallel builds; it must
+# be updated after every significant event. (spec-21)
+write_dashboard() {
+    local dash="$AUTOMATON_DIR/dashboard.txt"
+    local tmp="${dash}.tmp"
+
+    # Collect current state
+    local phase
+    phase=$(echo "${current_phase:-build}" | tr '[:lower:]' '[:upper:]')
+    local wave="${wave_number:-0}"
+    local estimated_waves
+    estimated_waves=$(estimate_remaining_waves)
+
+    # Budget info from budget.json
+    local budget_file="$AUTOMATON_DIR/budget.json"
+    local remaining_usd="?" cost_used="?" cost_limit="?" tokens_used="?"
+    if [ -f "$budget_file" ]; then
+        remaining_usd=$(jq -r '(.limits.max_cost_usd - .used.estimated_cost_usd) * 100 | floor / 100' \
+            "$budget_file" 2>/dev/null || echo "?")
+        cost_used=$(jq -r '.used.estimated_cost_usd * 100 | floor / 100' \
+            "$budget_file" 2>/dev/null || echo "?")
+        cost_limit=$(jq -r '.limits.max_cost_usd' "$budget_file" 2>/dev/null || echo "?")
+
+        local total_tokens
+        total_tokens=$(jq '(.used.total_input + .used.total_output)' "$budget_file" 2>/dev/null || echo 0)
+        if [ "$total_tokens" -ge 1000000 ] 2>/dev/null; then
+            tokens_used="$(awk -v t="$total_tokens" 'BEGIN{printf "%.1fM", t/1000000}')"
+        elif [ "$total_tokens" -ge 1000 ] 2>/dev/null; then
+            tokens_used="$(awk -v t="$total_tokens" 'BEGIN{printf "%.1fK", t/1000}')"
+        else
+            tokens_used="$total_tokens"
+        fi
+    fi
+
+    # Task counts from IMPLEMENTATION_PLAN.md
+    local total_tasks completed_tasks
+    total_tasks=$(grep -c '\[ \]\|\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    completed_tasks=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+
+    # Remaining waves
+    local remaining_waves=0
+    if [ "$estimated_waves" -gt "$wave" ] 2>/dev/null; then
+        remaining_waves=$((estimated_waves - wave))
+    fi
+
+    # Builder status lines
+    local builder_status
+    builder_status=$(format_builder_status)
+
+    # Recent events (last 6 lines of session.log, reversed for newest-first)
+    local recent_events=""
+    if [ -f "$AUTOMATON_DIR/session.log" ]; then
+        recent_events=$(tail -6 "$AUTOMATON_DIR/session.log" 2>/dev/null | tac | while IFS= read -r line; do
+            # Extract time (HH:MM:SS) and rest of line after timestamp+component
+            local time_part rest
+            time_part=$(echo "$line" | sed -n 's/^\[\([^]]*\)T\([0-9:]*\)Z\].*/\2/p')
+            rest=$(echo "$line" | sed 's/^\[[^]]*\] //')
+            if [ -n "$time_part" ]; then
+                printf "  %s  %s\n" "$time_part" "$rest"
+            fi
+        done)
+    fi
+    [ -z "$recent_events" ] && recent_events="  (no events yet)"
+
+    # Generate the dashboard with box-drawing separators
+    local sep
+    sep=$(printf '═%.0s' $(seq 1 62))
+
+    cat > "$tmp" <<EOF
+╔${sep}╗
+  automaton v${AUTOMATON_VERSION} — parallel build
+╠${sep}╣
+  Phase: ${phase}  │  Wave: ${wave}/~${estimated_waves}  │  Budget: \$${remaining_usd} remaining
+╠${sep}╣
+
+  Wave ${wave} Progress
+  $(printf '─%.0s' $(seq 1 14))
+${builder_status}
+
+╠${sep}╣
+  Tasks: ${completed_tasks}/${total_tasks} complete  │  Waves: ${wave} done, ~${remaining_waves} remaining
+  Tokens: ${tokens_used} used  │  Cost: \$${cost_used} / \$${cost_limit}
+╠${sep}╣
+  Recent Events
+  $(printf '─%.0s' $(seq 1 13))
+${recent_events}
+╚${sep}╝
+EOF
+
+    mv "$tmp" "$dash"
+}
+
+# Emits a one-line wave status to stdout for non-tmux mode.
+# Called by the conductor after builder completion and wave completion events.
+# WHY: users not in tmux still need progress visibility; this is the wave-level
+# equivalent of per-iteration stdout output. (spec-21)
+#
+# Usage:
+#   emit_wave_status "spawn"           — after all builders spawned
+#   emit_wave_status "builder_done" N  — after builder N completes
+#   emit_wave_status "complete"        — after wave completes
+emit_wave_status() {
+    local event="$1"
+    local wave="${wave_number:-0}"
+    local estimated_waves
+    estimated_waves=$(estimate_remaining_waves)
+
+    local remaining_budget
+    remaining_budget=$(jq -r '(.limits.max_cost_usd - .used.estimated_cost_usd) * 100 | floor / 100' \
+        "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
+
+    local assignments_file="$AUTOMATON_DIR/wave/assignments.json"
+    local builder_count
+    builder_count=$(jq '.assignments | length' "$assignments_file" 2>/dev/null || echo 0)
+
+    case "$event" in
+        spawn)
+            # Show all builder assignments
+            local summaries=""
+            for i in $(seq 1 "$builder_count"); do
+                local task
+                task=$(jq -r ".assignments[$((i-1))].task // \"unknown\"" "$assignments_file")
+                # Truncate to 20 chars
+                if [ "${#task}" -gt 20 ]; then
+                    task="${task:0:17}..."
+                fi
+                if [ -n "$summaries" ]; then
+                    summaries="${summaries} | builder-${i}: ${task}"
+                else
+                    summaries="builder-${i}: ${task}"
+                fi
+            done
+            echo "[WAVE ${wave}/~${estimated_waves}] ${builder_count} builders | ${summaries}"
+            ;;
+
+        builder_done)
+            local builder_num="${2:-?}"
+            local result_file="$AUTOMATON_DIR/wave/results/builder-${builder_num}.json"
+            local status="?" duration="?" cost="?"
+            if [ -f "$result_file" ]; then
+                status=$(jq -r '.status // "?"' "$result_file")
+                duration=$(jq '.duration_seconds // 0' "$result_file")
+                cost=$(jq -r '.cost // "0.00"' "$result_file")
+                duration="${duration}s"
+            fi
+
+            # Count remaining running builders
+            local done_count=0
+            for i in $(seq 1 "$builder_count"); do
+                [ -f "$AUTOMATON_DIR/wave/results/builder-${i}.json" ] && done_count=$((done_count + 1))
+            done
+            local remaining=$((builder_count - done_count))
+
+            local status_upper
+            status_upper=$(echo "$status" | tr '[:lower:]' '[:upper:]')
+            echo "[WAVE ${wave}/~${estimated_waves}] builder-${builder_num} ${status_upper} (${duration}, ~\$${cost}) | ${remaining} remaining"
+            ;;
+
+        complete)
+            # Show wave completion summary
+            local success_count=0 total_cost=0
+            for i in $(seq 1 "$builder_count"); do
+                local rf="$AUTOMATON_DIR/wave/results/builder-${i}.json"
+                if [ -f "$rf" ]; then
+                    local s
+                    s=$(jq -r '.status // ""' "$rf")
+                    [ "$s" = "success" ] || [ "$s" = "partial" ] && success_count=$((success_count + 1))
+                    local c
+                    c=$(jq '.cost // 0' "$rf" 2>/dev/null || echo 0)
+                    total_cost=$(awk -v a="$total_cost" -v b="$c" 'BEGIN{printf "%.2f", a+b}')
+                fi
+            done
+            echo "[WAVE ${wave}/~${estimated_waves}] COMPLETE: ${success_count}/${builder_count} merged | ~\$${total_cost} | budget: \$${remaining_budget} remaining"
+            ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------

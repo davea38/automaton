@@ -174,15 +174,15 @@
 
 ## 19. Observability (spec-21)
 
-- [ ] Write `write_dashboard()` that generates `.automaton/dashboard.txt` with box-drawing format showing: phase, wave number, estimated total waves, budget remaining, per-builder status bars (running/done/error with elapsed time and task name), task completion counts, token and cost summary, and the 6 most recent session.log events (WHY: the dashboard is the primary human interface during parallel builds; it must be updated after every significant event; spec-21)
+- [x] Write `write_dashboard()` that generates `.automaton/dashboard.txt` with box-drawing format showing: phase, wave number, estimated total waves, budget remaining, per-builder status bars (running/done/error with elapsed time and task name), task completion counts, token and cost summary, and the 6 most recent session.log events (WHY: the dashboard is the primary human interface during parallel builds; it must be updated after every significant event; spec-21)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `format_builder_status()` helper that reads the current wave's assignments.json and any available result files to produce formatted status lines for each builder (running with elapsed time, DONE with duration, ERROR, etc.) (WHY: builder status bars are the core of the dashboard; they require combining assignment data with result data; spec-21)
+- [x] Write `format_builder_status()` helper that reads the current wave's assignments.json and any available result files to produce formatted status lines for each builder (running with elapsed time, DONE with duration, ERROR, etc.) (WHY: builder status bars are the core of the dashboard; they require combining assignment data with result data; spec-21)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `estimate_remaining_waves()` that calculates `remaining_tasks / max_builders + 1` (WHY: the wave estimate gives humans a sense of progress and expected completion; the +1 accounts for rounding and re-queued tasks; spec-21)
+- [x] Write `estimate_remaining_waves()` that calculates `remaining_tasks / max_builders + 1` (WHY: the wave estimate gives humans a sense of progress and expected completion; the +1 accounts for rounding and re-queued tasks; spec-21)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Extend the `log()` function to support the enhanced component tag format for parallel mode: `CONDUCTOR`, `BUILD:WN:BN`, `MERGE:WN` (WHY: structured tags enable filtering by wave, builder, or operation type in session.log; spec-21)
+- [x] Extend the `log()` function to support the enhanced component tag format for parallel mode: `CONDUCTOR`, `BUILD:WN:BN`, `MERGE:WN` (WHY: structured tags enable filtering by wave, builder, or operation type in session.log; spec-21)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write stdout one-line wave status output for non-tmux mode: emit `[WAVE N/~M] builder summaries` to stdout after each builder completion and wave completion (WHY: users not in tmux still need progress visibility; this is the wave-level equivalent of per-iteration stdout output; spec-21)
+- [x] Write stdout one-line wave status output for non-tmux mode: emit `[WAVE N/~M] builder summaries` to stdout after each builder completion and wave completion (WHY: users not in tmux still need progress visibility; this is the wave-level equivalent of per-iteration stdout output; spec-21)
   <!-- files: automaton.sh, templates/automaton.sh -->
 
 ## 20. Wave Execution Lifecycle (spec-16)
