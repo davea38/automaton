@@ -159,17 +159,17 @@
 
 ## 18. Parallel Budget Management (spec-20)
 
-- [ ] Write per-builder TPM/RPM allocation logic: calculate `per_builder_tpm = RATE_TOKENS_PER_MINUTE / active_builder_count` and `per_builder_rpm = RATE_REQUESTS_PER_MINUTE / active_builder_count`, pass these to the builder wrapper as environment variables (WHY: N builders sharing the same rate limit must each consume only 1/N of the allocation to avoid 429 errors; spec-20)
+- [x] Write per-builder TPM/RPM allocation logic: calculate `per_builder_tpm = RATE_TOKENS_PER_MINUTE / active_builder_count` and `per_builder_rpm = RATE_REQUESTS_PER_MINUTE / active_builder_count`, pass these to the builder wrapper as environment variables (WHY: N builders sharing the same rate limit must each consume only 1/N of the allocation to avoid 429 errors; spec-20)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `check_wave_budget()` that estimates whether the budget can sustain N builders (N * BUDGET_PER_ITERATION tokens, N * estimated_cost), reduces builder count if budget is tight but can afford at least 2, returns 1 if budget is insufficient for even 1 builder (WHY: launching a wave that will exhaust the budget wastes tokens and leaves partial work; pre-wave checks prevent this; spec-20, spec-16)
+- [x] Write `check_wave_budget()` that estimates whether the budget can sustain N builders (N * BUDGET_PER_ITERATION tokens, N * estimated_cost), reduces builder count if budget is tight but can afford at least 2, returns 1 if budget is insufficient for even 1 builder (WHY: launching a wave that will exhaust the budget wastes tokens and leaves partial work; pre-wave checks prevent this; spec-20, spec-16)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `handle_wave_rate_limit()` that detects rate-limited builders from result files, sets `backoff_until` in rate.json, sleeps for the cooldown period, then clears the backoff (WHY: rate limits during a wave affect the entire API account; the next wave must wait for the backoff period; spec-20)
+- [x] Write `handle_wave_rate_limit()` that detects rate-limited builders from result files, sets `backoff_until` in rate.json, sleeps for the cooldown period, then clears the backoff (WHY: rate limits during a wave affect the entire API account; the next wave must wait for the backoff period; spec-20)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `handle_midwave_budget_exhaustion()` that lets running builders finish, collects and merges their results, then saves state and exits with code 2 (WHY: already-spent tokens should not be wasted; collecting completed work before stopping preserves maximum value; spec-20)
+- [x] Write `handle_midwave_budget_exhaustion()` that lets running builders finish, collects and merges their results, then saves state and exits with code 2 (WHY: already-spent tokens should not be wasted; collecting completed work before stopping preserves maximum value; spec-20)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `check_wave_pacing()` that calculates aggregate TPM from the last wave's total token consumption and duration, sleeps if velocity exceeds 80% of RATE_TOKENS_PER_MINUTE (WHY: inter-wave pacing prevents rate limits across consecutive waves; this is the wave-level equivalent of per-iteration check_pacing; spec-20)
+- [x] Write `check_wave_pacing()` that calculates aggregate TPM from the last wave's total token consumption and duration, sleeps if velocity exceeds 80% of RATE_TOKENS_PER_MINUTE (WHY: inter-wave pacing prevents rate limits across consecutive waves; this is the wave-level equivalent of per-iteration check_pacing; spec-20)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `aggregate_wave_budget()` that iterates all builder result files for a wave, extracts token counts and cost from each, calls `update_budget()` for each builder, and copies result files to agent history as `build-{NNN}-builder-{M}.json` (WHY: builder tokens must be aggregated into the shared budget.json so total/phase budget enforcement works correctly; spec-20)
+- [x] Write `aggregate_wave_budget()` that iterates all builder result files for a wave, extracts token counts and cost from each, calls `update_budget()` for each builder, and copies result files to agent history as `build-{NNN}-builder-{M}.json` (WHY: builder tokens must be aggregated into the shared budget.json so total/phase budget enforcement works correctly; spec-20)
   <!-- files: automaton.sh, templates/automaton.sh -->
 
 ## 19. Observability (spec-21)

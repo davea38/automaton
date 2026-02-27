@@ -1639,6 +1639,8 @@ PROJECT_ROOT="$3"
 BUILDER_MODEL="__CLAUDE_MODEL__"
 SKIP_PERMS_FLAG="__SKIP_PERMS_FLAG__"
 VERBOSE_FLAG="__VERBOSE_FLAG__"
+PER_BUILDER_TPM="__PER_BUILDER_TPM__"
+PER_BUILDER_RPM="__PER_BUILDER_RPM__"
 
 # ---- Derived paths ----
 ASSIGNMENTS_FILE="$PROJECT_ROOT/.automaton/wave/assignments.json"
@@ -1766,6 +1768,8 @@ WRAPPER
     sed -i "s|__CLAUDE_MODEL__|${MODEL_BUILDING}|g" "$wrapper"
     sed -i "s|__SKIP_PERMS_FLAG__|${skip_perms_flag}|g" "$wrapper"
     sed -i "s|__VERBOSE_FLAG__|${verbose_flag}|g" "$wrapper"
+    sed -i "s|__PER_BUILDER_TPM__|${PER_BUILDER_TPM:-0}|g" "$wrapper"
+    sed -i "s|__PER_BUILDER_RPM__|${PER_BUILDER_RPM:-0}|g" "$wrapper"
 
     chmod +x "$wrapper"
     log "CONDUCTOR" "Generated builder wrapper: $wrapper"
@@ -2080,6 +2084,255 @@ merge_wave() {
     done
 
     log "CONDUCTOR" "Wave $wave: merge complete ($merged merged, $failed conflicts, $skipped skipped)"
+}
+
+# ---------------------------------------------------------------------------
+# Parallel Budget Management (spec-20)
+# ---------------------------------------------------------------------------
+
+# Calculates per-builder TPM/RPM allocations and injects them into the
+# builder wrapper as environment variables. Called by generate_builder_wrapper()
+# or by the conductor before spawning builders.
+# The builder wrapper itself doesn't enforce these (the API does), but they
+# are available for logging and the wrapper's cost estimate.
+# Sets: PER_BUILDER_TPM, PER_BUILDER_RPM (global variables for the conductor
+# to pass to builders via environment or baked-in wrapper values).
+calculate_builder_rate_allocation() {
+    local active_builders=$1
+
+    if [ "$active_builders" -le 0 ]; then
+        active_builders=1
+    fi
+
+    PER_BUILDER_TPM=$((RATE_TOKENS_PER_MINUTE / active_builders))
+    PER_BUILDER_RPM=$((RATE_REQUESTS_PER_MINUTE / active_builders))
+
+    log "CONDUCTOR" "Rate allocation: ${PER_BUILDER_TPM} TPM, ${PER_BUILDER_RPM} RPM per builder ($active_builders builders)"
+}
+
+# Pre-wave budget checkpoint. Verifies the budget can sustain N builders.
+# Echoes the actual number of builders to spawn (may be reduced).
+# Returns 0 if at least 1 builder is affordable, 1 if budget is exhausted.
+# WHY: launching a wave that will exhaust the budget wastes tokens and leaves
+# partial work; pre-wave checks prevent this. (spec-20, spec-16)
+check_wave_budget() {
+    local builder_count=$1
+    local budget_file="$AUTOMATON_DIR/budget.json"
+
+    # Read current budget state
+    local total_input total_output total_cost
+    total_input=$(jq '.used.total_input' "$budget_file")
+    total_output=$(jq '.used.total_output' "$budget_file")
+    total_cost=$(jq '.used.estimated_cost_usd' "$budget_file")
+    local cumulative_tokens=$((total_input + total_output))
+    local remaining_tokens=$((BUDGET_MAX_TOKENS - cumulative_tokens))
+
+    # Estimate tokens per builder (use per-iteration budget as estimate)
+    local estimated_tokens_per_builder=$BUDGET_PER_ITERATION
+    local wave_tokens=$((builder_count * estimated_tokens_per_builder))
+
+    # Check token budget
+    if [ "$wave_tokens" -gt "$remaining_tokens" ]; then
+        local affordable=$((remaining_tokens / estimated_tokens_per_builder))
+        if [ "$affordable" -ge 2 ]; then
+            log "CONDUCTOR" "Budget: reducing wave to $affordable builders (token limit)"
+            echo "$affordable"
+            return 0
+        fi
+        if [ "$affordable" -ge 1 ]; then
+            log "CONDUCTOR" "Budget: single-builder only (token limit)"
+            echo "1"
+            return 0
+        fi
+        log "CONDUCTOR" "Budget: insufficient for any builder (${remaining_tokens} tokens remaining, need ${estimated_tokens_per_builder} per builder)"
+        return 1
+    fi
+
+    # Estimate cost per builder
+    local estimated_cost_per_builder
+    estimated_cost_per_builder=$(estimate_cost "$MODEL_BUILDING" "$estimated_tokens_per_builder" 0 0 0)
+    local wave_cost
+    wave_cost=$(awk -v n="$builder_count" -v c="$estimated_cost_per_builder" 'BEGIN { printf "%.4f", n * c }')
+
+    # Check cost budget
+    local remaining_usd
+    remaining_usd=$(awk -v total="$total_cost" -v limit="$BUDGET_MAX_USD" 'BEGIN { printf "%.4f", limit - total }')
+    local cost_exceeded
+    cost_exceeded=$(awk -v wc="$wave_cost" -v rem="$remaining_usd" 'BEGIN { print (wc > rem) ? "yes" : "no" }')
+
+    if [ "$cost_exceeded" = "yes" ]; then
+        local affordable
+        affordable=$(awk -v rem="$remaining_usd" -v c="$estimated_cost_per_builder" 'BEGIN { printf "%d", rem / c }')
+        if [ "$affordable" -ge 2 ]; then
+            log "CONDUCTOR" "Budget: reducing wave to $affordable builders (cost limit)"
+            echo "$affordable"
+            return 0
+        fi
+        if [ "$affordable" -ge 1 ]; then
+            log "CONDUCTOR" "Budget: single-builder only (cost limit)"
+            echo "1"
+            return 0
+        fi
+        log "CONDUCTOR" "Budget: insufficient for any builder (\$${remaining_usd} remaining, need \$${estimated_cost_per_builder} per builder)"
+        return 1
+    fi
+
+    echo "$builder_count"
+    return 0
+}
+
+# Handles rate-limit events detected from builder result files.
+# Updates rate.json with backoff_until, sleeps for cooldown, then clears.
+# WHY: rate limits during a wave affect the entire API account; the next wave
+# must wait for the backoff period. (spec-20)
+handle_wave_rate_limit() {
+    local wave=$1
+    local builder=$2
+
+    log "CONDUCTOR" "Wave $wave: builder-$builder hit rate limit. Pausing before next wave."
+
+    local backoff="$RATE_COOLDOWN_SECONDS"
+
+    # Calculate backoff_until (portable across GNU and BSD date)
+    local backoff_until
+    backoff_until=$(date -u -d "+${backoff} seconds" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+        date -u -v "+${backoff}S" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+        date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Update rate state
+    local rate_file="$AUTOMATON_DIR/rate.json"
+    local tmp="${rate_file}.tmp"
+    jq --arg until "$backoff_until" \
+       '.backoff_until = $until | .last_rate_limit = (now | todate)' \
+       "$rate_file" > "$tmp"
+    mv "$tmp" "$rate_file"
+
+    # Wait for the backoff period
+    log "CONDUCTOR" "Rate limit backoff: waiting ${backoff}s"
+    sleep "$backoff"
+
+    # Clear backoff
+    jq '.backoff_until = null' "$rate_file" > "$tmp"
+    mv "$tmp" "$rate_file"
+
+    log "CONDUCTOR" "Rate limit backoff complete."
+}
+
+# Handles budget exhaustion detected while builders are running.
+# Lets running builders finish, then saves state and exits with code 2.
+# WHY: already-spent tokens should not be wasted; collecting completed work
+# before stopping preserves maximum value. (spec-20)
+handle_midwave_budget_exhaustion() {
+    local wave=$1
+
+    log "CONDUCTOR" "Wave $wave: budget exhaustion detected mid-wave"
+
+    # Do NOT kill running builders — they've already consumed tokens.
+    # Let them finish their current work.
+    # The caller (poll_builders/run_parallel_build) should wait for builders
+    # to complete, then collect and merge results normally.
+
+    # After all builders complete, collect and merge their results
+    # (same as normal wave completion — handled by caller before we reach here)
+
+    # Then stop — don't start another wave
+    log "CONDUCTOR" "Budget exhausted. Saving state for resume."
+    write_state
+    exit 2
+}
+
+# Proactive velocity limiting between waves. Sums tokens from the last wave
+# and sleeps if aggregate TPM exceeds 80% of the configured limit.
+# WHY: inter-wave pacing prevents rate limits across consecutive waves; this
+# is the wave-level equivalent of per-iteration check_pacing. (spec-20)
+check_wave_pacing() {
+    local rate_file="$AUTOMATON_DIR/rate.json"
+
+    # Read last wave's aggregate token usage from rate.json history
+    local wave_tokens wave_duration
+    wave_tokens=$(jq '[.history[].tokens] | add // 0' "$rate_file" 2>/dev/null || echo 0)
+    wave_duration=$(jq '
+        if (.history | length) > 0
+        then ((.history | last).duration_seconds // 60)
+        else 60
+        end' "$rate_file" 2>/dev/null || echo 60)
+
+    # Ensure non-zero duration to avoid division by zero
+    if [ "$wave_duration" -le 0 ]; then
+        wave_duration=1
+    fi
+
+    # Calculate aggregate TPM
+    local velocity=$((wave_tokens * 60 / wave_duration))
+    local threshold=$((RATE_TOKENS_PER_MINUTE * 80 / 100))
+
+    if [ "$velocity" -gt "$threshold" ]; then
+        local cooldown=$((60 - wave_duration))
+        if [ "$cooldown" -gt 0 ]; then
+            log "CONDUCTOR" "Proactive pacing: aggregate velocity ${velocity} TPM exceeds 80% threshold (${threshold}), waiting ${cooldown}s"
+            sleep "$cooldown"
+        fi
+    fi
+}
+
+# Aggregates token usage from all builder result files into budget.json
+# after a wave completes. Each builder's tokens count against the shared
+# phase and total budgets.
+# WHY: builder tokens must be aggregated into the shared budget.json so
+# total/phase budget enforcement works correctly. (spec-20)
+aggregate_wave_budget() {
+    local wave=$1
+    local assignments_file="$AUTOMATON_DIR/wave/assignments.json"
+    local builder_count
+    builder_count=$(jq '.assignments | length' "$assignments_file")
+
+    local rate_file="$AUTOMATON_DIR/rate.json"
+    local rate_history="[]"
+
+    for i in $(seq 1 "$builder_count"); do
+        local result="$AUTOMATON_DIR/wave/results/builder-${i}.json"
+        if [ ! -f "$result" ]; then continue; fi
+
+        local input output cache_create cache_read cost duration task_text status_val
+        input=$(jq '.tokens.input // 0' "$result")
+        output=$(jq '.tokens.output // 0' "$result")
+        cache_create=$(jq '.tokens.cache_create // 0' "$result")
+        cache_read=$(jq '.tokens.cache_read // 0' "$result")
+        duration=$(jq '.duration_seconds // 0' "$result")
+        task_text=$(jq -r '.task // "unknown"' "$result")
+        status_val=$(jq -r '.status // "unknown"' "$result")
+
+        # Recalculate cost with correct pricing (builder estimate is simplified)
+        cost=$(estimate_cost "$MODEL_BUILDING" "$input" "$output" "$cache_create" "$cache_read")
+
+        # Update shared budget.json via the existing update_budget function
+        update_budget "$MODEL_BUILDING" "$input" "$output" \
+            "$cache_create" "$cache_read" \
+            "$cost" "$duration" "wave-${wave} builder-${i}: ${task_text}" "$status_val"
+
+        # Copy result to agent history directory
+        local history_num
+        history_num=$(printf '%03d' "$iteration")
+        cp "$result" "$AUTOMATON_DIR/agents/build-${history_num}-builder-${i}.json"
+
+        # Accumulate rate history entry
+        local total_builder_tokens=$((input + output))
+        rate_history=$(echo "$rate_history" | jq \
+            --argjson builder "$i" \
+            --argjson tokens "$total_builder_tokens" \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '. + [{"timestamp": $ts, "builder": $builder, "tokens": $tokens, "requests": 1}]')
+    done
+
+    # Update rate.json with this wave's consumption history
+    local tmp="${rate_file}.tmp"
+    jq --argjson hist "$rate_history" \
+       --arg ws "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       '.window_start = $ws | .history = $hist | .window_tokens = ($hist | map(.tokens) | add // 0) | .window_requests = ($hist | length)' \
+       "$rate_file" > "$tmp"
+    mv "$tmp" "$rate_file"
+
+    log "CONDUCTOR" "Wave $wave: budget aggregated from $builder_count builders"
 }
 
 # ---------------------------------------------------------------------------
