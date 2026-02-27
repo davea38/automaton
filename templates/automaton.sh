@@ -3196,6 +3196,144 @@ emit_wave_status() {
 }
 
 # ---------------------------------------------------------------------------
+# Conductor - Wave Error Handling (spec-15, spec-09)
+# ---------------------------------------------------------------------------
+
+# V1 single-builder fallback for when parallel wave dispatch fails.
+# Runs one build iteration using PROMPT_build.md with MODEL_BUILDING, identical
+# to the v1 inner iteration loop body: invoke agent, handle errors (rate limit,
+# network, CLI crash), run post-iteration pipeline (tokens, budget, stall,
+# plan integrity, state, history).
+#
+# WHY: when parallelism fails, the system must still make forward progress;
+# this is the proven single-builder path. (spec-15)
+#
+# Returns: 0 = iteration succeeded, 1 = iteration failed or forced transition
+# May exit: 1 via handle_cli_crash, 2 via check_budget
+run_single_builder_iteration() {
+    local prompt_file="PROMPT_build.md"
+    local model="$MODEL_BUILDING"
+
+    phase_iteration=$((phase_iteration + 1))
+    iteration=$((iteration + 1))
+
+    log "CONDUCTOR" "Single-builder fallback: iteration $phase_iteration"
+
+    # Checkpoint plan before build iteration (corruption guard)
+    checkpoint_plan
+
+    # Invoke the agent
+    local iter_start_epoch
+    iter_start_epoch=$(date +%s)
+    run_agent "$prompt_file" "$model"
+
+    # Error classification and recovery
+    if [ "$AGENT_EXIT_CODE" -ne 0 ]; then
+        if is_rate_limit "$AGENT_RESULT" || is_network_error "$AGENT_RESULT"; then
+            if ! handle_rate_limit run_agent "$prompt_file" "$model"; then
+                # All retries exhausted
+                phase_iteration=$((phase_iteration - 1))
+                iteration=$((iteration - 1))
+                return 1
+            fi
+            # Successful retry — AGENT_RESULT/AGENT_EXIT_CODE updated
+        else
+            # Generic CLI crash — handle_cli_crash may exit 1 on max failures
+            handle_cli_crash "$AGENT_EXIT_CODE" "$AGENT_RESULT"
+            phase_iteration=$((phase_iteration - 1))
+            iteration=$((iteration - 1))
+            return 1
+        fi
+    fi
+
+    reset_failure_count
+
+    # Post-iteration pipeline (may exit 2 for budget hard stop)
+    local post_rc=0
+    post_iteration "$model" "$prompt_file" "$iter_start_epoch" || post_rc=$?
+
+    if [ "$post_rc" -ne 0 ]; then
+        log "CONDUCTOR" "Single-builder fallback: forced transition (reason: $TRANSITION_REASON)"
+        return 1
+    fi
+
+    # Check if agent signaled COMPLETE
+    if agent_signaled_complete; then
+        log "CONDUCTOR" "Single-builder fallback: agent signaled COMPLETE"
+    fi
+
+    return 0
+}
+
+# Analyzes wave results and handles error conditions per the wave error taxonomy.
+# Handles three scenarios:
+#   1. At least one builder succeeded → reset consecutive_wave_failures, proceed to merge
+#   2. All builders failed → fall back to single-builder for 1 iteration
+#   3. Three consecutive wave failures → escalate to human (exit 3)
+#
+# Rate-limited builders trigger a backoff pause regardless of which scenario applies.
+#
+# WHY: wave errors are distinct from v1 iteration errors; the system must
+# degrade gracefully from parallel to single-builder before escalating. (spec-15, spec-09)
+#
+# Args: $1=wave number, $2=collected results JSON (from collect_results)
+# Returns: 0 = at least one builder succeeded; proceed to merge
+#          1 = all builders failed; single-builder fallback also failed
+#          2 = all builders failed; single-builder fallback succeeded; retry wave
+# Exits:   3 via escalate() after 3 consecutive wave failures
+handle_wave_errors() {
+    local wave=$1
+    local results_json="$2"
+
+    # Read summary counts from collected results
+    local success_count error_count rate_limited_count timeout_count partial_count
+    success_count=$(echo "$results_json" | jq '.summary.success')
+    error_count=$(echo "$results_json" | jq '.summary.error')
+    rate_limited_count=$(echo "$results_json" | jq '.summary.rate_limited')
+    timeout_count=$(echo "$results_json" | jq '.summary.timeout')
+    partial_count=$(echo "$results_json" | jq '.summary.partial')
+
+    # Builders that produced usable work (success or partial)
+    local usable_count=$((success_count + partial_count))
+
+    # Handle rate limits from any builder (pause before next wave)
+    if [ "$rate_limited_count" -gt 0 ]; then
+        local rl_builder
+        rl_builder=$(echo "$results_json" | jq -r '[.results[] | select(.status == "rate_limited")][0].builder')
+        handle_wave_rate_limit "$wave" "$rl_builder"
+    fi
+
+    # Case 1: At least one builder produced usable work
+    if [ "$usable_count" -gt 0 ]; then
+        consecutive_wave_failures=0
+        log "CONDUCTOR" "Wave $wave: $usable_count builder(s) succeeded, proceeding to merge"
+        return 0
+    fi
+
+    # Case 2: All builders failed
+    consecutive_wave_failures=$((consecutive_wave_failures + 1))
+    log "CONDUCTOR" "Wave $wave: ALL builders failed (consecutive: $consecutive_wave_failures/3)"
+    log "CONDUCTOR" "Wave $wave: breakdown — $error_count error, $rate_limited_count rate_limited, $timeout_count timeout"
+
+    # Escalate after 3 consecutive wave failures (spec-09)
+    if [ "$consecutive_wave_failures" -ge 3 ]; then
+        escalate "3 consecutive wave failures. Parallel build cannot make progress."
+        # escalate() exits — control never reaches here
+    fi
+
+    # Fall back to single-builder for 1 iteration to verify codebase sanity
+    log "CONDUCTOR" "Falling back to single-builder iteration to verify codebase health"
+    if run_single_builder_iteration; then
+        log "CONDUCTOR" "Single-builder fallback succeeded. Resetting wave failure counter."
+        consecutive_wave_failures=0
+        return 2  # signal caller to retry wave dispatch
+    else
+        log "CONDUCTOR" "Single-builder fallback also failed."
+        return 1  # signal caller that no progress was made
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Phase Sequence Controller
 # ---------------------------------------------------------------------------
 

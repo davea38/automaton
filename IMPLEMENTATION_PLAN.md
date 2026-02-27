@@ -216,9 +216,9 @@
 
 ## 23. Conductor - Wave Error Handling (spec-15, spec-09)
 
-- [ ] Write wave-level error handling: on single builder failure, merge successful builders' work and re-queue the failed task; on all-builders-fail, increment `consecutive_wave_failures`, fall back to single-builder for 1 iteration, retry wave if single-builder succeeds; escalate per spec-09 after 3 consecutive wave failures (WHY: wave errors are distinct from v1 iteration errors; the system must degrade gracefully from parallel to single-builder before escalating; spec-15, spec-09)
+- [x] Write wave-level error handling: on single builder failure, merge successful builders' work and re-queue the failed task; on all-builders-fail, increment `consecutive_wave_failures`, fall back to single-builder for 1 iteration, retry wave if single-builder succeeds; escalate per spec-09 after 3 consecutive wave failures (WHY: wave errors are distinct from v1 iteration errors; the system must degrade gracefully from parallel to single-builder before escalating; spec-15, spec-09)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `run_single_builder_iteration()` as the v1 fallback: invoke claude -p with PROMPT_build.md and MODEL_BUILDING, run standard post-iteration checks (tokens, budget, stall, plan integrity), identical to the v1 build loop body (WHY: when parallelism fails, the system must still make forward progress; this is the proven single-builder path; spec-15)
+- [x] Write `run_single_builder_iteration()` as the v1 fallback: invoke claude -p with PROMPT_build.md and MODEL_BUILDING, run standard post-iteration checks (tokens, budget, stall, plan integrity), identical to the v1 build loop body (WHY: when parallelism fails, the system must still make forward progress; this is the proven single-builder path; spec-15)
   <!-- files: automaton.sh, templates/automaton.sh -->
 
 ## 24. Conductor - Main Wave Dispatch Loop (spec-15)
