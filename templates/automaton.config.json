@@ -53,5 +53,13 @@
     "verbose": true,
     "skip_research": false,
     "skip_review": false
+  },
+  "parallel": {
+    "enabled": false,
+    "max_builders": 3,
+    "tmux_session_name": "automaton",
+    "stagger_seconds": 15,
+    "wave_timeout_seconds": 600,
+    "dashboard": true
   }
 }

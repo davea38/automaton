@@ -68,6 +68,14 @@ load_config() {
         FLAG_VERBOSE=$(jq -r '.flags.verbose // true' "$config_file")
         FLAG_SKIP_RESEARCH=$(jq -r '.flags.skip_research // false' "$config_file")
         FLAG_SKIP_REVIEW=$(jq -r '.flags.skip_review // false' "$config_file")
+
+        # -- parallel --
+        PARALLEL_ENABLED=$(jq -r '.parallel.enabled // false' "$config_file")
+        MAX_BUILDERS=$(jq -r '.parallel.max_builders // 3' "$config_file")
+        TMUX_SESSION_NAME=$(jq -r '.parallel.tmux_session_name // "automaton"' "$config_file")
+        PARALLEL_STAGGER_SECONDS=$(jq -r '.parallel.stagger_seconds // 15' "$config_file")
+        WAVE_TIMEOUT_SECONDS=$(jq -r '.parallel.wave_timeout_seconds // 600' "$config_file")
+        PARALLEL_DASHBOARD=$(jq -r '.parallel.dashboard // true' "$config_file")
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -119,6 +127,14 @@ load_config() {
         FLAG_VERBOSE="true"
         FLAG_SKIP_RESEARCH="false"
         FLAG_SKIP_REVIEW="false"
+
+        # -- parallel --
+        PARALLEL_ENABLED="false"
+        MAX_BUILDERS=3
+        TMUX_SESSION_NAME="automaton"
+        PARALLEL_STAGGER_SECONDS=15
+        WAVE_TIMEOUT_SECONDS=600
+        PARALLEL_DASHBOARD="true"
     fi
 }
 
