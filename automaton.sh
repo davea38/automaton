@@ -1603,6 +1603,60 @@ log_partition_quality() {
 }
 
 # ---------------------------------------------------------------------------
+# Wave Execution Lifecycle (spec-16)
+# ---------------------------------------------------------------------------
+
+# Creates .automaton/wave/assignments.json from selected tasks.
+# Takes the wave number and the selected tasks JSON (output of select_wave_tasks)
+# as arguments. Transforms each task into a builder assignment with sequential
+# builder numbers, worktree paths, and branch names.
+# WHY: assignments.json is the contract between conductor and builders; builders
+# read it to get their task; spec-16
+write_assignments() {
+    local wave=$1
+    local selected_json="$2"
+
+    local assignments_file="$AUTOMATON_DIR/wave/assignments.json"
+    local tmp="${assignments_file}.tmp"
+
+    # Transform the selected tasks array into the assignments format:
+    # Input:  [{line, task, files}, ...]
+    # Output: {wave, created_at, assignments: [{builder, task, task_line, files_owned, worktree, branch}, ...]}
+    echo "$selected_json" | jq \
+        --argjson wave "$wave" \
+        --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        --arg automaton_dir "$AUTOMATON_DIR" \
+        '{
+            wave: $wave,
+            created_at: $created_at,
+            assignments: [
+                to_entries[] | {
+                    builder: (.key + 1),
+                    task: .value.task,
+                    task_line: .value.line,
+                    files_owned: .value.files,
+                    worktree: ($automaton_dir + "/worktrees/builder-" + ((.key + 1) | tostring)),
+                    branch: ("automaton/wave-" + ($wave | tostring) + "-builder-" + ((.key + 1) | tostring))
+                }
+            ]
+        }' > "$tmp"
+
+    mv "$tmp" "$assignments_file"
+
+    local count
+    count=$(echo "$selected_json" | jq 'length')
+    log "CONDUCTOR" "Wave $wave: wrote assignments for $count builders"
+
+    # Log each assignment
+    local i
+    for ((i=1; i<=count; i++)); do
+        local task
+        task=$(jq -r ".assignments[$((i - 1))].task" "$assignments_file")
+        log "CONDUCTOR" "Wave $wave: builder-$i assigned \"$task\""
+    done
+}
+
+# ---------------------------------------------------------------------------
 # Builder Wrapper Script (spec-17)
 # ---------------------------------------------------------------------------
 
