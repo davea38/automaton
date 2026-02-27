@@ -191,11 +191,11 @@
   <!-- files: automaton.sh, templates/automaton.sh -->
 - [x] Write `collect_results()` that reads and validates all builder result files from `.automaton/wave/results/`, checks for required fields (builder, wave, status, tokens, exit_code), and returns aggregated results as JSON (WHY: result collection is the handoff point between builder execution and merge; validation catches corrupt or missing result files; spec-16)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `verify_wave()` that runs post-merge checks: execute build command if configured, grep for unresolved conflict markers (`<<<<<<<`) in source files, verify completed task count did not decrease (plan integrity); return false if any check fails (WHY: post-wave verification catches merge corruption before the next wave builds on top of it; spec-16)
+- [x] Write `verify_wave()` that runs post-merge checks: execute build command if configured, grep for unresolved conflict markers (`<<<<<<<`) in source files, verify completed task count did not decrease (plan integrity); return false if any check fails (WHY: post-wave verification catches merge corruption before the next wave builds on top of it; spec-16)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `cleanup_wave()` that removes worktrees via `cleanup_worktree()` for each builder, archives assignments.json and results/ to `.automaton/wave-history/wave-{N}-*`, clears the wave directory, and kills tmux builder windows (WHY: cleanup prevents disk accumulation and stale tmux windows; archived data enables post-run debugging; spec-16)
+- [x] Write `cleanup_wave()` that removes worktrees via `cleanup_worktree()` for each builder, archives assignments.json and results/ to `.automaton/wave-history/wave-{N}-*`, clears the wave directory, and kills tmux builder windows (WHY: cleanup prevents disk accumulation and stale tmux windows; archived data enables post-run debugging; spec-16)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write plan update logic after merge: for each successful builder, find the task by `task_line` in IMPLEMENTATION_PLAN.md and mark it `[x]`, incorporate any new tasks discovered by builders, commit the updated plan with message `"automaton: wave N complete (M/N tasks)"` (WHY: the plan is the single source of truth for progress; it must reflect merged work before the next wave selects tasks; spec-16)
+- [x] Write plan update logic after merge: for each successful builder, find the task by `task_line` in IMPLEMENTATION_PLAN.md and mark it `[x]`, incorporate any new tasks discovered by builders, commit the updated plan with message `"automaton: wave N complete (M/N tasks)"` (WHY: the plan is the single source of truth for progress; it must reflect merged work before the next wave selects tasks; spec-16)
   <!-- files: automaton.sh, templates/automaton.sh -->
 
 ## 21. Conductor - tmux Session Management (spec-15)

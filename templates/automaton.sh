@@ -2565,6 +2565,165 @@ aggregate_wave_budget() {
     log "CONDUCTOR" "Wave $wave: budget aggregated from $builder_count builders"
 }
 
+# Runs post-merge verification checks to ensure the wave produced valid results.
+# Checks: (1) build command passes if configured, (2) no unresolved merge conflict
+# markers in source files, (3) plan integrity (completed count did not decrease).
+# Takes $1=wave number. Expects COMPLETED_BEFORE_WAVE to be set by caller before
+# the wave's merge step. Returns 0 on pass, 1 on failure.
+# WHY: post-wave verification catches merge corruption before the next wave builds
+# on top of it; spec-16
+verify_wave() {
+    local wave=$1
+    local pass=true
+
+    # Check 1: Build check (if BUILD_COMMAND configured)
+    if [ -n "${BUILD_COMMAND:-}" ]; then
+        if ! eval "$BUILD_COMMAND" >/dev/null 2>&1; then
+            log "CONDUCTOR" "Wave $wave: post-merge build failed"
+            pass=false
+        fi
+    fi
+
+    # Check 2: No unresolved merge conflict markers in source files
+    # Search common source extensions, exclude node_modules and .automaton
+    if grep -r '<<<<<<< ' \
+        --include='*.ts' --include='*.js' --include='*.py' \
+        --include='*.sh' --include='*.rb' --include='*.go' \
+        --include='*.java' --include='*.rs' --include='*.c' --include='*.h' \
+        --include='*.cpp' --include='*.hpp' --include='*.css' --include='*.html' \
+        . 2>/dev/null | grep -v node_modules | grep -v .automaton | grep -q .; then
+        log "CONDUCTOR" "Wave $wave: unresolved merge conflict markers found"
+        pass=false
+    fi
+
+    # Check 3: Plan integrity (completed count didn't decrease)
+    local completed_after
+    completed_after=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    if [ "$completed_after" -lt "${COMPLETED_BEFORE_WAVE:-0}" ]; then
+        log "CONDUCTOR" "Wave $wave: plan corruption detected post-merge ($completed_after < $COMPLETED_BEFORE_WAVE)"
+        pass=false
+    fi
+
+    if ! $pass; then
+        log "CONDUCTOR" "Wave $wave: verification FAILED — will re-run failed tasks"
+        return 1
+    fi
+
+    log "CONDUCTOR" "Wave $wave: verification PASS"
+    return 0
+}
+
+# Removes builder worktrees, archives wave data for debugging, clears the wave
+# directory, and kills tmux builder windows. Takes $1=wave number.
+# WHY: cleanup prevents disk accumulation and stale tmux windows; archived data
+# enables post-run debugging; spec-16
+cleanup_wave() {
+    local wave=$1
+    local assignments_file="$AUTOMATON_DIR/wave/assignments.json"
+
+    # Guard against missing assignments file (wave may not have fully started)
+    if [ ! -f "$assignments_file" ]; then
+        log "CONDUCTOR" "Wave $wave: cleanup skipped — no assignments.json"
+        return
+    fi
+
+    local builder_count
+    builder_count=$(jq '.assignments | length' "$assignments_file")
+
+    # Step 1: Remove worktrees via existing cleanup_worktree()
+    for ((i=1; i<=builder_count; i++)); do
+        cleanup_worktree "$i" "$wave"
+    done
+
+    # Step 2: Archive wave data (keep for post-run debugging)
+    mkdir -p "$AUTOMATON_DIR/wave-history"
+    cp "$assignments_file" "$AUTOMATON_DIR/wave-history/wave-${wave}-assignments.json" 2>/dev/null || true
+    if [ -d "$AUTOMATON_DIR/wave/results" ]; then
+        cp -r "$AUTOMATON_DIR/wave/results" "$AUTOMATON_DIR/wave-history/wave-${wave}-results" 2>/dev/null || true
+    fi
+
+    # Step 3: Clear current wave directory for next wave
+    rm -rf "$AUTOMATON_DIR/wave/results"
+    mkdir -p "$AUTOMATON_DIR/wave/results"
+    rm -f "$AUTOMATON_DIR/wave/assignments.json"
+
+    # Step 4: Kill tmux builder windows (suppress errors for non-tmux runs)
+    local session="${TMUX_SESSION_NAME:-automaton}"
+    for ((i=1; i<=builder_count; i++)); do
+        tmux kill-window -t "$session:builder-$i" 2>/dev/null || true
+    done
+
+    log "CONDUCTOR" "Wave $wave: cleanup complete"
+}
+
+# Updates IMPLEMENTATION_PLAN.md after a successful merge: marks tasks completed
+# by successful builders as [x], then commits the updated plan.
+# Takes $1=wave number, $2=collected results JSON (from collect_results).
+# WHY: the plan is the single source of truth for progress; it must reflect
+# merged work before the next wave selects tasks; spec-16
+update_plan_after_wave() {
+    local wave=$1
+    local results_json="$2"
+    local assignments_file="$AUTOMATON_DIR/wave/assignments.json"
+    local plan_file="IMPLEMENTATION_PLAN.md"
+
+    if [ ! -f "$assignments_file" ] || [ ! -f "$plan_file" ]; then
+        log "CONDUCTOR" "Wave $wave: plan update skipped — missing files"
+        return 1
+    fi
+
+    local success_count=0
+    local total_builders
+    total_builders=$(jq '.assignments | length' "$assignments_file")
+
+    # For each builder with success or partial status, mark its task [x]
+    for ((i=0; i<total_builders; i++)); do
+        local builder_num=$((i + 1))
+        local status
+        status=$(echo "$results_json" | jq -r ".results[$i].status // \"unknown\"")
+
+        # Only mark tasks for successful or partial completions
+        if [ "$status" != "success" ] && [ "$status" != "partial" ]; then
+            continue
+        fi
+
+        local task_line
+        task_line=$(jq ".assignments[$i].task_line" "$assignments_file")
+
+        if [ -z "$task_line" ] || [ "$task_line" = "null" ] || [ "$task_line" -le 0 ] 2>/dev/null; then
+            log "CONDUCTOR" "Wave $wave: builder-$builder_num has invalid task_line, skipping plan update"
+            continue
+        fi
+
+        # Read the current content at that line to verify it's still an unchecked task
+        local line_content
+        line_content=$(sed -n "${task_line}p" "$plan_file")
+
+        if echo "$line_content" | grep -q '\[ \]'; then
+            # Replace [ ] with [x] on this specific line
+            sed -i "${task_line}s/\[ \]/[x]/" "$plan_file"
+            success_count=$((success_count + 1))
+            log "CONDUCTOR" "Wave $wave: marked builder-$builder_num task complete (line $task_line)"
+        elif echo "$line_content" | grep -q '\[x\]'; then
+            # Already marked (perhaps by the builder during merge)
+            success_count=$((success_count + 1))
+        else
+            log "CONDUCTOR" "Wave $wave: builder-$builder_num task_line $task_line is not a checkbox line, skipping"
+        fi
+    done
+
+    # Commit the plan update if any tasks were marked
+    if [ "$success_count" -gt 0 ]; then
+        git add "$plan_file"
+        git commit -m "automaton: wave $wave complete ($success_count/$total_builders tasks)" 2>/dev/null || true
+        log "CONDUCTOR" "Wave $wave: plan updated and committed ($success_count/$total_builders tasks)"
+    else
+        log "CONDUCTOR" "Wave $wave: no tasks to mark complete"
+    fi
+
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Observability — Dashboard, progress estimation, wave status (spec-21)
 # ---------------------------------------------------------------------------
