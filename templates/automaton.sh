@@ -1368,6 +1368,8 @@ fi
 # and exits with code 130 (standard for SIGINT-terminated processes).
 _handle_shutdown() {
     local signal="$1"
+    # Clean up any temp plan prompt file (spec-18)
+    cleanup_parallel_plan_prompt 2>/dev/null || true
     # Guard: only attempt state save if initialization has run (state vars exist)
     if [ -n "${started_at:-}" ]; then
         write_state 2>/dev/null || true
@@ -1381,6 +1383,57 @@ _handle_shutdown() {
 trap '_handle_shutdown INT' INT
 trap '_handle_shutdown TERM' TERM
 trap '' HUP
+
+# ---------------------------------------------------------------------------
+# Parallel Planning Prompt Extension (spec-18)
+# ---------------------------------------------------------------------------
+
+# When parallel.enabled is true, the planning agent needs to annotate tasks
+# with file-ownership hints (<!-- files: ... -->).  This function creates a
+# temp copy of PROMPT_plan.md with the annotation instructions appended so that
+# the planner produces the annotations the conductor needs for task partitioning.
+#
+# Sets PARALLEL_PLAN_PROMPT to the temp file path (caller must clean up).
+# If parallel is disabled, sets PARALLEL_PLAN_PROMPT="" (no-op).
+prepare_parallel_plan_prompt() {
+    PARALLEL_PLAN_PROMPT=""
+    if [ "${PARALLEL_ENABLED:-false}" != "true" ]; then
+        return 0
+    fi
+
+    PARALLEL_PLAN_PROMPT=$(mktemp "${TMPDIR:-/tmp}/automaton-plan-XXXXXX.md")
+    cat PROMPT_plan.md > "$PARALLEL_PLAN_PROMPT"
+
+    cat >> "$PARALLEL_PLAN_PROMPT" <<'PLAN_EXT'
+
+---
+
+## File Ownership Annotations (for parallel builds)
+
+For each task in the implementation plan, add a file ownership annotation on the
+line immediately below the task. Use this format:
+
+  - [ ] Task description (WHY: rationale)
+    <!-- files: path/to/file1.ts, path/to/file2.ts -->
+
+List all files that this task will create or modify, including test files. Be
+specific — use actual file paths, not directories. If you're unsure which files
+a task will touch, omit the annotation.
+
+These annotations enable parallel builders to work on non-conflicting tasks
+simultaneously. Better annotations = more parallelism = faster builds.
+PLAN_EXT
+
+    log "ORCHESTRATOR" "Parallel mode: augmented plan prompt with file-ownership annotations"
+}
+
+# Cleans up the temp plan prompt file created by prepare_parallel_plan_prompt().
+cleanup_parallel_plan_prompt() {
+    if [ -n "${PARALLEL_PLAN_PROMPT:-}" ] && [ -f "$PARALLEL_PLAN_PROMPT" ]; then
+        rm -f "$PARALLEL_PLAN_PROMPT"
+        PARALLEL_PLAN_PROMPT=""
+    fi
+}
 
 # ---------------------------------------------------------------------------
 # Phase Sequence Controller
@@ -1571,6 +1624,9 @@ transition_to_phase() {
     local now
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+    # Clean up temp plan prompt if leaving the plan phase (spec-18)
+    cleanup_parallel_plan_prompt
+
     phase_history=$(echo "$phase_history" | jq -c \
         --arg p "$current_phase" --arg t "$now" \
         '. + [{"phase": $p, "completed_at": $t}]')
@@ -1622,6 +1678,14 @@ run_orchestration() {
         prompt_file=$(get_phase_prompt "$current_phase")
         model=$(get_phase_model "$current_phase")
         max_iter=$(get_phase_max_iterations "$current_phase")
+
+        # Parallel mode: augment plan prompt with file-ownership annotations (spec-18)
+        if [ "$current_phase" = "plan" ]; then
+            prepare_parallel_plan_prompt
+            if [ -n "${PARALLEL_PLAN_PROMPT:-}" ]; then
+                prompt_file="$PARALLEL_PLAN_PROMPT"
+            fi
+        fi
 
         # Handle --skip-review
         if [ "$current_phase" = "review" ] && [ "$FLAG_SKIP_REVIEW" = "true" ]; then

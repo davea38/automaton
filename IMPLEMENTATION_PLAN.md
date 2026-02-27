@@ -122,7 +122,7 @@
 
 ## 15. Task Partitioning (spec-18)
 
-- [ ] Write the planning prompt extension block: when `PARALLEL_ENABLED` is `true`, append file-ownership annotation instructions to a temp copy of `PROMPT_plan.md` before running the planning agent, instructing the planner to add `<!-- files: ... -->` comments after each task (WHY: file annotations are the data source for conflict detection; without them all tasks run sequentially; spec-18)
+- [x] Write the planning prompt extension block: when `PARALLEL_ENABLED` is `true`, append file-ownership annotation instructions to a temp copy of `PROMPT_plan.md` before running the planning agent, instructing the planner to add `<!-- files: ... -->` comments after each task (WHY: file annotations are the data source for conflict detection; without them all tasks run sequentially; spec-18)
   <!-- files: automaton.sh, templates/automaton.sh -->
 - [ ] Write `build_conflict_graph()` that parses `IMPLEMENTATION_PLAN.md` using awk to extract all incomplete (`[ ]`) tasks with their `<!-- files: ... -->` annotations, then pipes through jq to produce `.automaton/wave/tasks.json` as a JSON array of `{line, task, files[]}` objects (WHY: the conflict graph is the input to task selection; it must be rebuilt before each wave since completed tasks change the set; spec-18)
   <!-- files: automaton.sh, templates/automaton.sh -->
