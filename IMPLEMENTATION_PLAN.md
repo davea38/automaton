@@ -97,9 +97,9 @@
 
 ## 12. Parallel Dependency Checks (spec-14)
 
-- [ ] Add tmux availability check in the dependency-check section: when `PARALLEL_ENABLED` is `true`, verify `tmux` is on PATH; if missing, print install instructions and exit 1 (WHY: tmux is required for multi-window mode; failing at startup is better than failing mid-build; spec-14)
+- [x] Add tmux availability check in the dependency-check section: when `PARALLEL_ENABLED` is `true`, verify `tmux` is on PATH; if missing, print install instructions and exit 1 (WHY: tmux is required for multi-window mode; failing at startup is better than failing mid-build; spec-14)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Add git worktree version check: when `PARALLEL_ENABLED` is `true`, verify `git --version` is 2.5+ (supports `git worktree`); if too old, print upgrade message and exit 1 (WHY: git worktrees are the isolation mechanism for parallel builders; older git versions lack the feature; spec-14)
+- [x] Add git worktree version check: when `PARALLEL_ENABLED` is `true`, verify `git --version` is 2.5+ (supports `git worktree`); if too old, print upgrade message and exit 1 (WHY: git worktrees are the isolation mechanism for parallel builders; older git versions lack the feature; spec-14)
   <!-- files: automaton.sh, templates/automaton.sh -->
 
 ## 13. Parallel State Infrastructure (spec-14, spec-10)

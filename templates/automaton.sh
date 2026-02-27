@@ -1267,6 +1267,45 @@ if [ "$ARG_SKIP_REVIEW" = "true" ]; then
     FLAG_SKIP_REVIEW="true"
 fi
 
+# --- Check parallel-mode dependencies (tmux, git worktree support) ---
+# When parallel.enabled is true, tmux and git 2.5+ are required.
+# Check after load_config so PARALLEL_ENABLED is resolved.
+if [ "$PARALLEL_ENABLED" = "true" ]; then
+    _par_dep_missing=false
+
+    # tmux is required for multi-window builder management
+    if ! command -v tmux >/dev/null 2>&1; then
+        echo "Error: 'tmux' is required for parallel mode but not installed." >&2
+        echo "  Install: sudo apt install tmux  (Debian/Ubuntu)" >&2
+        echo "           brew install tmux      (macOS)" >&2
+        echo "" >&2
+        _par_dep_missing=true
+    fi
+
+    # git worktree requires git 2.5+; each builder needs an isolated worktree
+    _git_version=$(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    if [ -n "$_git_version" ]; then
+        _git_major="${_git_version%%.*}"
+        _git_minor="${_git_version#*.}"
+        if [ "$_git_major" -lt 2 ] || { [ "$_git_major" -eq 2 ] && [ "$_git_minor" -lt 5 ]; }; then
+            echo "Error: parallel mode requires git 2.5+ for worktree support (found git ${_git_version})." >&2
+            echo "  Upgrade: sudo apt install git  (Debian/Ubuntu)" >&2
+            echo "           brew install git      (macOS)" >&2
+            echo "" >&2
+            _par_dep_missing=true
+        fi
+    else
+        echo "Error: could not determine git version." >&2
+        _par_dep_missing=true
+    fi
+
+    if [ "$_par_dep_missing" = "true" ]; then
+        echo "Parallel mode (parallel.enabled=true) requires tmux and git 2.5+. Install missing dependencies and retry." >&2
+        echo "Alternatively, set parallel.enabled to false in your config to use single-builder mode." >&2
+        exit 1
+    fi
+fi
+
 # ---------------------------------------------------------------------------
 # Signal Handlers
 # ---------------------------------------------------------------------------
