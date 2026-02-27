@@ -172,6 +172,17 @@ write_state() {
         rf_value="\"$resumed_from\""
     fi
 
+    # Build optional wave fields for parallel mode
+    local wave_fields=""
+    if [ "${PARALLEL_ENABLED:-false}" = "true" ]; then
+        wave_fields=$(cat <<WAVE
+  "wave_number": ${wave_number:-0},
+  "wave_history": ${wave_history:-[]},
+  "consecutive_wave_failures": ${consecutive_wave_failures:-0},
+WAVE
+)
+    fi
+
     cat > "$tmp" <<EOF
 {
   "version": "$AUTOMATON_VERSION",
@@ -187,7 +198,7 @@ write_state() {
   "last_iteration_at": "$now",
   "parallel_builders": ${EXEC_PARALLEL_BUILDERS:-1},
   "resumed_from": $rf_value,
-  "phase_history": ${phase_history:-[]}
+${wave_fields}  "phase_history": ${phase_history:-[]}
 }
 EOF
     mv "$tmp" "$AUTOMATON_DIR/state.json"
@@ -214,6 +225,13 @@ read_state() {
     started_at=$(echo "$state" | jq -r '.started_at')
     resumed_from=$(echo "$state" | jq -r '.last_iteration_at')
     phase_history=$(echo "$state" | jq -c '.phase_history')
+
+    # Restore wave state for parallel mode resume
+    if [ "${PARALLEL_ENABLED:-false}" = "true" ]; then
+        wave_number=$(echo "$state" | jq '.wave_number // 0')
+        wave_history=$(echo "$state" | jq -c '.wave_history // []')
+        consecutive_wave_failures=$(echo "$state" | jq '.consecutive_wave_failures // 0')
+    fi
 }
 
 # First-run initialization: create .automaton/ structure, write initial state,
@@ -261,6 +279,13 @@ RATE
     started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     resumed_from="null"
     phase_history="[]"
+
+    # Initialize wave state for parallel mode
+    if [ "${PARALLEL_ENABLED:-false}" = "true" ]; then
+        wave_number=0
+        wave_history="[]"
+        consecutive_wave_failures=0
+    fi
 
     # Write initial state.json via atomic write
     write_state

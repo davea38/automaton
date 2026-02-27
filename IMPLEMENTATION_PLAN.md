@@ -115,9 +115,9 @@
 
 ## 14. Extended State for Waves (spec-15, spec-10)
 
-- [ ] Extend `write_state()` to include `wave_number` and `wave_history` fields in state.json when `PARALLEL_ENABLED` is `true` (WHY: wave state must persist across interruptions for resume; the conductor reads wave_number to determine which wave to run next; spec-15)
+- [x] Extend `write_state()` to include `wave_number` and `wave_history` fields in state.json when `PARALLEL_ENABLED` is `true` (WHY: wave state must persist across interruptions for resume; the conductor reads wave_number to determine which wave to run next; spec-15)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Extend `read_state()` to restore `wave_number`, `wave_history`, and `consecutive_wave_failures` from state.json when resuming a parallel run (WHY: resume must restore wave position so the conductor continues from the correct wave; spec-15, spec-10)
+- [x] Extend `read_state()` to restore `wave_number`, `wave_history`, and `consecutive_wave_failures` from state.json when resuming a parallel run (WHY: resume must restore wave position so the conductor continues from the correct wave; spec-15, spec-10)
   <!-- files: automaton.sh, templates/automaton.sh -->
 
 ## 15. Task Partitioning (spec-18)
