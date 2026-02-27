@@ -1441,6 +1441,153 @@ cleanup_tmux_session() {
 }
 
 # ---------------------------------------------------------------------------
+# Conductor - Builder Spawning and Monitoring (spec-15)
+# ---------------------------------------------------------------------------
+
+# Spawns builder processes in tmux windows, one per assignment.
+# For each assignment: creates an isolated git worktree, then launches a tmux
+# window running builder-wrapper.sh with the builder number, wave number, and
+# project root as arguments.  Staggers starts by PARALLEL_STAGGER_SECONDS to
+# distribute API load.
+# WHY: spawning is the step that launches parallel work; staggered timing
+# distributes API load across the rate limit window. (spec-15, spec-20)
+# Usage: spawn_builders <wave>
+spawn_builders() {
+    local wave=$1
+    local session="$TMUX_SESSION_NAME"
+    local builder_count
+    builder_count=$(jq '.assignments | length' "$AUTOMATON_DIR/wave/assignments.json")
+    local stagger="$PARALLEL_STAGGER_SECONDS"
+    local project_root
+    project_root=$(pwd)
+
+    log "CONDUCTOR" "Wave $wave: spawning $builder_count builders (stagger: ${stagger}s)"
+
+    local i
+    for ((i = 1; i <= builder_count; i++)); do
+        # Create an isolated worktree for this builder
+        create_worktree "$i" "$wave"
+
+        local worktree="$AUTOMATON_DIR/worktrees/builder-$i"
+
+        # Spawn a tmux window running the builder wrapper
+        # The wrapper reads its assignment, invokes claude, and writes results
+        tmux new-window -t "$session" -n "builder-$i" \
+            "cd $worktree && bash ${project_root}/.automaton/wave/builder-wrapper.sh $i $wave $project_root; exit"
+
+        log "CONDUCTOR" "Wave $wave: spawned builder-$i (worktree: $worktree)"
+
+        # Stagger starts to distribute API load (skip after last builder)
+        if [ "$i" -lt "$builder_count" ] && [ "$stagger" -gt 0 ]; then
+            sleep "$stagger"
+        fi
+    done
+}
+
+# Polls for builder result files every 5 seconds until all builders complete or
+# the wave timeout is reached.  Updates the dashboard on each poll cycle to show
+# real-time progress.
+# WHY: polling is how the conductor detects builder completion; the 5s interval
+# balances responsiveness with file-system overhead. (spec-15, spec-16)
+# Usage: poll_builders <wave>
+# Returns: 0 = all builders completed, 1 = timeout
+poll_builders() {
+    local wave=$1
+    local builder_count
+    builder_count=$(jq '.assignments | length' "$AUTOMATON_DIR/wave/assignments.json")
+    local timeout="$WAVE_TIMEOUT_SECONDS"
+    local start_time
+    start_time=$(date +%s)
+    local completed=0
+
+    log "CONDUCTOR" "Wave $wave: polling $builder_count builders (timeout: ${timeout}s)"
+
+    while [ "$completed" -lt "$builder_count" ]; do
+        completed=0
+
+        local i
+        for ((i = 1; i <= builder_count; i++)); do
+            if [ -f "$AUTOMATON_DIR/wave/results/builder-${i}.json" ]; then
+                completed=$((completed + 1))
+            fi
+        done
+
+        # Update dashboard with current progress
+        write_dashboard
+
+        # Check for timeout (0 = disabled)
+        if [ "$timeout" -gt 0 ]; then
+            local now elapsed
+            now=$(date +%s)
+            elapsed=$((now - start_time))
+            if [ "$elapsed" -ge "$timeout" ]; then
+                log "CONDUCTOR" "Wave $wave: timeout after ${elapsed}s ($completed/$builder_count complete)"
+                handle_wave_timeout "$wave"
+                return 1
+            fi
+        fi
+
+        # Wait before next poll (skip if all done)
+        if [ "$completed" -lt "$builder_count" ]; then
+            sleep 5
+        fi
+    done
+
+    log "CONDUCTOR" "Wave $wave: all $builder_count builders complete"
+    return 0
+}
+
+# Handles wave timeout by terminating builders that haven't written result files.
+# Sends SIGINT (C-c) to give builders 10 seconds for graceful shutdown, then
+# kills the tmux window.  Writes a timeout result file for each incomplete
+# builder so the conductor has complete data for all builders.
+# WHY: timed-out builders must be terminated to prevent infinite waves; writing
+# timeout results ensures the conductor has complete data. (spec-15)
+# Usage: handle_wave_timeout <wave>
+handle_wave_timeout() {
+    local wave=$1
+    local session="$TMUX_SESSION_NAME"
+    local builder_count
+    builder_count=$(jq '.assignments | length' "$AUTOMATON_DIR/wave/assignments.json")
+
+    local i
+    for ((i = 1; i <= builder_count; i++)); do
+        # Only handle builders that haven't written a result file
+        if [ ! -f "$AUTOMATON_DIR/wave/results/builder-${i}.json" ]; then
+            log "CONDUCTOR" "Wave $wave: builder-$i timed out. Terminating."
+
+            # Send SIGINT for graceful shutdown
+            tmux send-keys -t "$session:builder-$i" C-c 2>/dev/null || true
+
+            # Wait for graceful shutdown
+            sleep 10
+
+            # Force-kill the window if still alive
+            tmux kill-window -t "$session:builder-$i" 2>/dev/null || true
+
+            # Write a timeout result file so the conductor has complete data
+            local task
+            task=$(jq -r ".assignments[$((i - 1))].task" "$AUTOMATON_DIR/wave/assignments.json")
+
+            cat > "$AUTOMATON_DIR/wave/results/builder-${i}.json" << TIMEOUT_EOF
+{
+  "builder": $i,
+  "wave": $wave,
+  "status": "timeout",
+  "task": $(jq ".assignments[$((i - 1))].task" "$AUTOMATON_DIR/wave/assignments.json"),
+  "exit_code": -1,
+  "tokens": {"input": 0, "output": 0, "cache_create": 0, "cache_read": 0},
+  "estimated_cost_usd": 0,
+  "duration_seconds": $WAVE_TIMEOUT_SECONDS,
+  "files_changed": [],
+  "git_commit": null
+}
+TIMEOUT_EOF
+        fi
+    done
+}
+
+# ---------------------------------------------------------------------------
 # Parallel Planning Prompt Extension (spec-18)
 # ---------------------------------------------------------------------------
 

@@ -207,11 +207,11 @@
 
 ## 22. Conductor - Builder Spawning and Monitoring (spec-15)
 
-- [ ] Write `spawn_builders()` that iterates the assignments, creates a worktree via `create_worktree()` for each builder, spawns a tmux window named `builder-N` running the builder-wrapper.sh with builder number, wave number, and project root as arguments, and staggers starts by sleeping `PARALLEL_STAGGER_SECONDS` between spawns (WHY: spawning is the step that launches parallel work; staggered timing distributes API load; spec-15, spec-20)
+- [x] Write `spawn_builders()` that iterates the assignments, creates a worktree via `create_worktree()` for each builder, spawns a tmux window named `builder-N` running the builder-wrapper.sh with builder number, wave number, and project root as arguments, and staggers starts by sleeping `PARALLEL_STAGGER_SECONDS` between spawns (WHY: spawning is the step that launches parallel work; staggered timing distributes API load; spec-15, spec-20)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `poll_builders()` that loops every 5 seconds checking for result files in `.automaton/wave/results/`, calls `write_dashboard()` on each poll cycle, checks for wave timeout against `WAVE_TIMEOUT_SECONDS`, and returns when all builders have written result files or timeout is reached (WHY: polling is how the conductor detects builder completion; the 5s interval balances responsiveness with overhead; spec-15, spec-16)
+- [x] Write `poll_builders()` that loops every 5 seconds checking for result files in `.automaton/wave/results/`, calls `write_dashboard()` on each poll cycle, checks for wave timeout against `WAVE_TIMEOUT_SECONDS`, and returns when all builders have written result files or timeout is reached (WHY: polling is how the conductor detects builder completion; the 5s interval balances responsiveness with overhead; spec-15, spec-16)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `handle_wave_timeout()` that identifies builders without result files, sends SIGTERM to their tmux windows via `tmux send-keys C-c`, waits 10 seconds for graceful shutdown, kills remaining windows, and writes timeout result files for incomplete builders (WHY: timed-out builders must be terminated to prevent infinite waves; writing timeout results ensures the conductor has complete data for all builders; spec-15)
+- [x] Write `handle_wave_timeout()` that identifies builders without result files, sends SIGTERM to their tmux windows via `tmux send-keys C-c`, waits 10 seconds for graceful shutdown, kills remaining windows, and writes timeout result files for incomplete builders (WHY: timed-out builders must be terminated to prevent infinite waves; writing timeout results ensures the conductor has complete data for all builders; spec-15)
   <!-- files: automaton.sh, templates/automaton.sh -->
 
 ## 23. Conductor - Wave Error Handling (spec-15, spec-09)
