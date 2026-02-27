@@ -1436,6 +1436,169 @@ cleanup_parallel_plan_prompt() {
 }
 
 # ---------------------------------------------------------------------------
+# Task Partitioning (spec-18)
+# ---------------------------------------------------------------------------
+
+# Builds a conflict graph from IMPLEMENTATION_PLAN.md by extracting all
+# incomplete ([ ]) tasks with their <!-- files: ... --> annotations.
+# Produces .automaton/wave/tasks.json as a JSON array of {line, task, files[]}.
+# WHY: The conflict graph is the input to task selection; it must be rebuilt
+# before each wave since completed tasks change the set.
+build_conflict_graph() {
+    local plan="IMPLEMENTATION_PLAN.md"
+    local tasks_file=".automaton/wave/tasks.json"
+
+    awk '
+    /^- \[ \]/ {
+        task_line = NR
+        task_text = $0
+        sub(/^- \[ \] /, "", task_text)
+        # Read next line for annotation
+        getline
+        if ($0 ~ /<!-- files:/) {
+            files = $0
+            gsub(/.*<!-- files: /, "", files)
+            gsub(/ -->.*/, "", files)
+        } else {
+            files = ""
+        }
+        print task_line "\t" task_text "\t" files
+    }
+    ' "$plan" | jq -R -s '
+        split("\n") | map(select(. != "")) | map(
+            split("\t") | {
+                line: (.[0] | tonumber),
+                task: .[1],
+                files: (.[2] | split(", ") | map(select(. != "")))
+            }
+        )
+    ' > "$tasks_file"
+
+    log "CONDUCTOR" "Conflict graph built: $(jq length "$tasks_file") incomplete tasks"
+}
+
+# Checks whether two tasks conflict based on their file lists.
+# Takes two comma-separated file lists. Returns 0 (conflict) if they share
+# any file or if either list is empty (unannotated). Returns 1 (no conflict).
+# WHY: Pairwise conflict check is the core predicate used by select_wave_tasks.
+tasks_conflict() {
+    local task1_files="$1"
+    local task2_files="$2"
+
+    # Empty files list = unannotated = conflicts with everything
+    if [ -z "$task1_files" ] || [ -z "$task2_files" ]; then
+        return 0  # conflict
+    fi
+
+    # Check for any shared file
+    local f1 f2
+    for f1 in $(echo "$task1_files" | tr ',' ' '); do
+        for f2 in $(echo "$task2_files" | tr ',' ' '); do
+            if [ "$f1" = "$f2" ]; then
+                return 0  # conflict
+            fi
+        done
+    done
+
+    return 1  # no conflict
+}
+
+# Selects non-conflicting tasks for a wave using greedy plan-order algorithm.
+# Reads .automaton/wave/tasks.json, selects up to MAX_BUILDERS tasks that don't
+# share files. Unannotated tasks can only run alone. Writes selected tasks to
+# .automaton/wave/selected.json and outputs the JSON to stdout.
+# WHY: This determines how many tasks can run in parallel per wave.
+select_wave_tasks() {
+    local tasks_file=".automaton/wave/tasks.json"
+    local selected_file=".automaton/wave/selected.json"
+    local max="${MAX_BUILDERS:-3}"
+
+    if [ ! -f "$tasks_file" ]; then
+        echo "[]"
+        return 0
+    fi
+
+    local task_count
+    task_count=$(jq 'length' "$tasks_file")
+
+    if [ "$task_count" -eq 0 ]; then
+        echo "[]" > "$selected_file"
+        echo "[]"
+        return 0
+    fi
+
+    # Use jq to implement the greedy selection algorithm:
+    # - Iterate tasks in plan order
+    # - Skip if files overlap with already-selected tasks
+    # - Unannotated tasks (empty files) can only run alone
+    # - Stop at max_builders
+    jq --argjson max "$max" '
+        def files_overlap(a; b):
+            any(a[]; . as $f | any(b[]; . == $f));
+
+        reduce .[] as $task (
+            {selected: [], used_files: []};
+
+            if (.selected | length) >= $max then
+                .
+            elif ($task.files | length) == 0 then
+                # Unannotated task — can only run alone
+                if (.selected | length) == 0 then
+                    .selected = [$task] | .done = true
+                else
+                    .
+                end
+            elif .done then
+                .
+            else
+                # Capture used_files as a variable to avoid jq scoping issues
+                # inside the files_overlap filter arguments
+                .used_files as $uf |
+                if files_overlap($task.files; $uf) then
+                    .
+                else
+                    .selected += [$task] |
+                    .used_files += $task.files
+                end
+            end
+        ) | .selected
+    ' "$tasks_file" > "$selected_file"
+
+    local selected_count
+    selected_count=$(jq 'length' "$selected_file")
+    log "CONDUCTOR" "Wave task selection: $selected_count/$task_count tasks selected (max $max builders)"
+
+    cat "$selected_file"
+}
+
+# Logs annotation coverage to help assess partition quality.
+# Calculates the percentage of incomplete tasks that have file annotations.
+# Emits a warning if coverage is below 50%.
+# WHY: Low annotation coverage means limited parallelism; the warning helps
+# humans understand why builds are slow.
+log_partition_quality() {
+    local total
+    local annotated
+
+    total=$(grep -c '^\- \[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    if [ "$total" -eq 0 ]; then
+        log "CONDUCTOR" "Task annotations: 0/0 (no incomplete tasks)"
+        return 0
+    fi
+
+    # Count annotation lines that follow a [ ] task line
+    # We count <!-- files: lines in the plan as proxy for annotated tasks
+    annotated=$(grep -c '<!-- files:' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    local coverage=$((annotated * 100 / total))
+
+    log "CONDUCTOR" "Task annotations: $annotated/$total ($coverage% coverage)"
+
+    if [ "$coverage" -lt 50 ]; then
+        log "CONDUCTOR" "WARN: Low annotation coverage. Parallelism will be limited."
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Phase Sequence Controller
 # ---------------------------------------------------------------------------
 
