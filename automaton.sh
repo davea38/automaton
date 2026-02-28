@@ -3839,6 +3839,11 @@ run_orchestration() {
     PHASE_START_TIME=$(date +%s)
     log "ORCHESTRATOR" "Starting: phase=$current_phase"
 
+    # Start tmux session for parallel builds (spec-15)
+    if [ "$PARALLEL_ENABLED" = "true" ]; then
+        start_tmux_session
+    fi
+
     # Track review iterations for the review→build feedback loop (spec-06)
     local review_attempts=0
 
@@ -4011,6 +4016,11 @@ run_orchestration() {
         esac
     done
     # === End outer phase loop ===
+
+    # Clean up tmux session on normal exit (spec-15)
+    if [ "$PARALLEL_ENABLED" = "true" ]; then
+        cleanup_tmux_session 2>/dev/null || true
+    fi
 
     write_state
     log "ORCHESTRATOR" "Run complete."

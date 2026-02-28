@@ -232,7 +232,7 @@
 
 - [x] Wire parallel build into the phase sequence controller: when `PARALLEL_ENABLED` is `true` and the current phase is `build`, call `run_parallel_build()` instead of the v1 single-builder loop; when `PARALLEL_ENABLED` is `false`, behavior is identical to v1 (WHY: this is the switch point between v1 and v2; it must be a clean conditional so the two modes are completely independent; spec-14, spec-15)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Wire tmux session lifecycle into the main script: call `start_tmux_session()` after dependency checks when `PARALLEL_ENABLED` is `true`, call `cleanup_tmux_session()` in signal handlers and on clean exit (WHY: the tmux session must be created before the build phase and cleaned up on any exit path; spec-15)
+- [x] Wire tmux session lifecycle into the main script: call `start_tmux_session()` after dependency checks when `PARALLEL_ENABLED` is `true`, call `cleanup_tmux_session()` in signal handlers and on clean exit (WHY: the tmux session must be created before the build phase and cleaned up on any exit path; spec-15)
   <!-- files: automaton.sh, templates/automaton.sh -->
 - [ ] Extend `--dry-run` output to display parallel configuration: show `parallel.enabled`, `max_builders`, `tmux_session_name`, `stagger_seconds`, `wave_timeout_seconds`, `dashboard`, and whether tmux/git-worktree dependencies are satisfied (WHY: dry-run must reflect all configuration including v2 settings so users can verify before a parallel run; spec-14, spec-01)
   <!-- files: automaton.sh, templates/automaton.sh -->
