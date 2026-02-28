@@ -19,6 +19,7 @@ const TEMPLATE_FILES = [
   'PROMPT_plan.md',
   'PROMPT_build.md',
   'PROMPT_review.md',
+  'PROMPT_self_research.md',
   'AGENTS.md',
   'IMPLEMENTATION_PLAN.md',
   'CLAUDE.md',

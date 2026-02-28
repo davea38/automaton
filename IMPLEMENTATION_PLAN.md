@@ -1,40 +1,23 @@
 # Implementation Plan
 
-Automaton is a mature multi-phase orchestrator (specs 01-26) with comprehensive functionality in `automaton.sh` (5249 lines, 98 functions). This plan covers the small number of remaining gaps identified through gap analysis.
+All 26 specs are functionally implemented in `automaton.sh` (5249 lines, 99 functions). Root and template copies of `automaton.sh`, `automaton.config.json`, `PROMPT_build.md`, `PROMPT_review.md`, `PROMPT_research.md`, `PROMPT_converse.md`, and `PROMPT_plan.md` are verified identical. Two gaps remain: a missing template file and an untracked `.gitignore`.
 
-## 1. Template Sync — automaton.sh (spec-13)
+## Previously Completed
 
-The root `automaton.sh` (5249 lines) has diverged significantly from `templates/automaton.sh` (4146 lines). Features from specs 22-26 were added to the root but never synced back to the template.
+- [x] Sync `templates/automaton.sh` with root (WHY: template was 1103 lines behind, missing specs 22-26 functionality)
+- [x] Sync `templates/automaton.config.json` with root (WHY: template was missing self_build, journal, and budget fields)
+- [x] Sync `templates/PROMPT_build.md` with root (WHY: template was missing self-build safety rules from spec-22)
+- [x] Sync `templates/PROMPT_review.md` with root (WHY: template was missing self-build review section from spec-25)
+- [x] Sync `templates/PROMPT_research.md` with root (WHY: template was missing context_summary read from spec-24)
+- [x] Sync `templates/PROMPT_plan.md` with root (WHY: template was missing context_summary read and proportional subagent scaling)
 
-- [x] Copy the root `automaton.sh` to `templates/automaton.sh` to bring the template up to date with specs 22-26 (WHY: the template is 1103 lines behind the root and is missing self-build, journal, weekly allowance, context efficiency, self-targeting, and improvement loop functionality)
+## 1. Missing Template — PROMPT_self_research.md (spec-13, spec-25)
 
-## 2. Template Sync — Config (spec-13)
+Root `PROMPT_self_research.md` exists and is referenced by `automaton.sh` at line 4632 for `--self` mode, but has no template counterpart. Projects scaffolded via `npx automaton` will be missing this file, causing `--self` mode research phase to silently skip it.
 
-The root `automaton.config.json` has `self_build`, `journal`, `weekly_allowance_tokens`, `allowance_reset_day`, `reserve_percentage`, and `mode` fields that the template lacks.
+- [x] Copy root `PROMPT_self_research.md` to `templates/PROMPT_self_research.md` (WHY: without the template, scaffolded projects cannot use `--self` mode's research phase)
+- [x] Add `'PROMPT_self_research.md'` to the `TEMPLATE_FILES` array in `bin/cli.js` (WHY: the scaffolder must know about the file to copy it during `npx automaton`)
 
-- [x] Copy the root `automaton.config.json` to `templates/automaton.config.json` to include `self_build`, `journal`, and extended budget fields (WHY: new projects scaffolded from templates would be missing self-build safety, journal, and dual-mode budget configuration)
+## 2. Housekeeping
 
-## 3. Template Sync — Prompt Files (spec-13)
-
-Root prompt files have diverged from their template copies. Specific diffs:
-
-**PROMPT_build.md** — template is missing context_summary/iteration_memory reads, self-modification safety rules (spec-22), self-build mode context section, proportional subagent scaling, and backlog.md references.
-
-**PROMPT_review.md** — template is missing context_summary read, self-build review section (syntax check, dry-run, token usage comparison, protected function audit, self_modifications.json check), and backlog.md task-append path.
-
-**PROMPT_research.md** — template is missing context_summary read and proportional subagent scaling language.
-
-**PROMPT_plan.md** — template is missing context_summary read, proportional subagent scaling language, and updated codebase study instructions.
-
-- [x] Copy the root `PROMPT_build.md` to `templates/PROMPT_build.md` (WHY: template is missing self-build safety rules from spec-22 and context efficiency reads from spec-24)
-- [x] Copy the root `PROMPT_review.md` to `templates/PROMPT_review.md` (WHY: template is missing the entire self-build review section including token usage comparison from spec-25)
-- [x] Copy the root `PROMPT_research.md` to `templates/PROMPT_research.md` (WHY: template is missing context_summary read from spec-24)
-- [x] Copy the root `PROMPT_plan.md` to `templates/PROMPT_plan.md` (WHY: template is missing context_summary read from spec-24 and proportional subagent scaling)
-
-## 4. Housekeeping
-
-- [x] Stage and commit the `.gitignore` file (WHY: it is untracked per git status and should be part of the repository to ensure `.automaton/` runtime state is excluded from version control)
-
-## Summary
-
-All 26 specs are functionally implemented in the root orchestrator. The remaining work is entirely template synchronization (spec-13) to ensure `automaton.sh --init` scaffolds new projects with the full feature set, plus one housekeeping commit. No new logic or features need to be written.
+- [ ] Stage and commit `.gitignore` (WHY: it is untracked and should be in version control to ensure `.automaton/` runtime state is excluded)
