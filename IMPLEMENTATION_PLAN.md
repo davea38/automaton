@@ -26,7 +26,7 @@ Root prompt files have diverged from their template copies. Specific diffs:
 
 **PROMPT_plan.md** — template is missing context_summary read, proportional subagent scaling language, and updated codebase study instructions.
 
-- [ ] Copy the root `PROMPT_build.md` to `templates/PROMPT_build.md` (WHY: template is missing self-build safety rules from spec-22 and context efficiency reads from spec-24)
+- [x] Copy the root `PROMPT_build.md` to `templates/PROMPT_build.md` (WHY: template is missing self-build safety rules from spec-22 and context efficiency reads from spec-24)
 - [ ] Copy the root `PROMPT_review.md` to `templates/PROMPT_review.md` (WHY: template is missing the entire self-build review section including token usage comparison from spec-25)
 - [ ] Copy the root `PROMPT_research.md` to `templates/PROMPT_research.md` (WHY: template is missing context_summary read from spec-24)
 - [ ] Copy the root `PROMPT_plan.md` to `templates/PROMPT_plan.md` (WHY: template is missing context_summary read from spec-24 and proportional subagent scaling)
