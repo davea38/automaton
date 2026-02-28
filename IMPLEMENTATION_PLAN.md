@@ -241,9 +241,9 @@
 
 ## 26. Templates Sync
 
-- [ ] Copy updated `automaton.config.json` (with `parallel` section) into `templates/automaton.config.json` (WHY: new projects scaffolded via bin/cli.js must get the v2 config schema; spec-13, spec-14)
+- [x] Copy updated `automaton.config.json` (with `parallel` section) into `templates/automaton.config.json` (WHY: new projects scaffolded via bin/cli.js must get the v2 config schema; spec-13, spec-14)
   <!-- files: templates/automaton.config.json -->
-- [ ] Copy updated `automaton.sh` (with all parallel functions) into `templates/automaton.sh` (WHY: new projects scaffolded via bin/cli.js must get the v2 orchestrator; spec-13)
+- [x] Copy updated `automaton.sh` (with all parallel functions) into `templates/automaton.sh` (WHY: new projects scaffolded via bin/cli.js must get the v2 orchestrator; spec-13)
   <!-- files: templates/automaton.sh -->
 
 ## Deferred / Future Work
