@@ -2451,6 +2451,11 @@ merge_wave() {
     local failed=0
     local skipped=0
 
+    # Track per-tier merge counts for wave history (read by update_wave_state)
+    MERGE_TIER1_COUNT=0
+    MERGE_TIER2_COUNT=0
+    MERGE_TIER3_COUNT=0
+
     for ((i=1; i<=builder_count; i++)); do
         local status result_file branch
         result_file="$AUTOMATON_DIR/wave/results/builder-${i}.json"
@@ -2482,6 +2487,7 @@ merge_wave() {
         # Tier 1: Attempt clean merge
         if git merge --no-ff "$branch" -m "automaton: merge wave $wave builder $i" 2>/dev/null; then
             merged=$((merged + 1))
+            MERGE_TIER1_COUNT=$((MERGE_TIER1_COUNT + 1))
             log "CONDUCTOR" "Wave $wave: builder-$i merged (tier 1: clean)"
             continue
         fi
@@ -2504,11 +2510,13 @@ merge_wave() {
             # All conflicts were coordination files — complete the merge
             git commit --no-edit
             merged=$((merged + 1))
+            MERGE_TIER2_COUNT=$((MERGE_TIER2_COUNT + 1))
             log "CONDUCTOR" "Wave $wave: builder-$i merged (tier 2: coordination files)"
         else
             # Real source conflict — Tier 3
             handle_source_conflict "$wave" "$i" "$conflicting"
             failed=$((failed + 1))
+            MERGE_TIER3_COUNT=$((MERGE_TIER3_COUNT + 1))
         fi
     done
 
@@ -2921,6 +2929,98 @@ update_plan_after_wave() {
     fi
 
     return 0
+}
+
+# Updates state.json after each wave: increments iteration by the number of
+# successful builders, updates phase_iteration, records wave summary in
+# wave_history array with builder count, success/fail counts, tasks completed,
+# duration, token/cost totals, and merge tier breakdown.
+# Also aggregates budget and persists state via write_state().
+#
+# Args: $1=wave number, $2=collected results JSON (from collect_results),
+#       $3=wave start epoch (seconds since epoch, captured before spawning)
+#
+# Expects MERGE_TIER1_COUNT, MERGE_TIER2_COUNT, MERGE_TIER3_COUNT to be set
+# by merge_wave() before this function is called.
+#
+# WHY: wave state enables resume and post-run analysis of parallelism
+# effectiveness; spec-15, spec-21
+update_wave_state() {
+    local wave=$1
+    local results_json="$2"
+    local wave_start_epoch="$3"
+
+    local wave_end_epoch
+    wave_end_epoch=$(date +%s)
+    local wave_duration=$((wave_end_epoch - wave_start_epoch))
+
+    # Count builders and outcomes from collected results
+    local total_builders success_count partial_count failed_count usable_count
+    total_builders=$(echo "$results_json" | jq '.results | length')
+    success_count=$(echo "$results_json" | jq '.summary.success // 0')
+    partial_count=$(echo "$results_json" | jq '.summary.partial // 0')
+    failed_count=$(echo "$results_json" | jq '(.summary.error // 0) + (.summary.rate_limited // 0) + (.summary.timeout // 0) + (.summary.missing // 0)')
+    usable_count=$((success_count + partial_count))
+
+    # Sum tokens from all builder results (input + output + cache tokens)
+    local tokens_total
+    tokens_total=$(echo "$results_json" | jq '[.results[] | .tokens | ((.input // 0) + (.output // 0) + (.cache_create // 0) + (.cache_read // 0))] | add // 0')
+
+    # Sum estimated cost from all builder results
+    local cost_total
+    cost_total=$(echo "$results_json" | jq '[.results[].estimated_cost // 0] | add // 0')
+
+    # Increment global iteration counters by number of usable builders
+    # (each successful/partial builder counts as one iteration of forward progress)
+    iteration=$((iteration + usable_count))
+    phase_iteration=$((phase_iteration + usable_count))
+
+    # Aggregate builder tokens into shared budget.json
+    aggregate_wave_budget "$wave"
+
+    # Build the wave history entry with full metrics
+    local wave_entry
+    wave_entry=$(jq -n \
+        --argjson wave "$wave" \
+        --argjson builders "$total_builders" \
+        --argjson succeeded "$usable_count" \
+        --argjson failed "$failed_count" \
+        --argjson tasks "$usable_count" \
+        --argjson duration "$wave_duration" \
+        --argjson tokens "$tokens_total" \
+        --argjson cost "$cost_total" \
+        --argjson t1 "${MERGE_TIER1_COUNT:-0}" \
+        --argjson t2 "${MERGE_TIER2_COUNT:-0}" \
+        --argjson t3 "${MERGE_TIER3_COUNT:-0}" \
+        '{
+            wave: $wave,
+            builders: $builders,
+            succeeded: $succeeded,
+            failed: $failed,
+            tasks_completed: $tasks,
+            duration_seconds: $duration,
+            tokens_total: $tokens,
+            cost_total: $cost,
+            merge_tier1: $t1,
+            merge_tier2: $t2,
+            merge_tier3: $t3
+        }')
+
+    # Append to wave_history array (used by write_state and dashboard)
+    wave_history=$(echo "${wave_history:-[]}" | jq -c --argjson entry "$wave_entry" '. + [$entry]')
+
+    # Advance wave_number for the next wave
+    wave_number=$((wave + 1))
+
+    # Persist all state changes atomically
+    write_state
+
+    # Git push if configured
+    if [ "${GIT_AUTO_PUSH:-false}" = "true" ]; then
+        git push 2>/dev/null || log "CONDUCTOR" "WARN: git push failed"
+    fi
+
+    log "CONDUCTOR" "Wave $wave: state updated (iteration=$iteration, ${usable_count}/${total_builders} succeeded, ${wave_duration}s, ~\$${cost_total})"
 }
 
 # ---------------------------------------------------------------------------

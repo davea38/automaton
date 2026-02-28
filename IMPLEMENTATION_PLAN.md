@@ -225,7 +225,7 @@
 
 - [ ] Write `run_parallel_build()` implementing the 10-step wave dispatch loop: (1) select tasks via `select_wave_tasks`, (2) write assignments via `write_assignments`, (3) budget checkpoint via `check_wave_budget`, (4) generate builder wrapper via `generate_builder_wrapper`, (5) spawn builders via `spawn_builders`, (6) poll via `poll_builders`, (7) collect results via `collect_results`, (8) merge via `merge_wave`, (9) verify via `verify_wave`, (10) update state/dashboard/budget; loop until all tasks complete or limits hit; fall back to `run_single_builder_iteration` when no parallelizable tasks remain (WHY: this is the core conductor loop that replaces the v1 build loop; it ties together all parallel subsystems; spec-15)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Write `update_wave_state()` to update state.json after each wave: increment iteration by the number of successful builders, update phase_iteration, set last_iteration_at, add wave summary to `wave_history` array with wave number, builder count, success/fail counts, tasks completed, duration, and merge tier breakdown (WHY: wave state enables resume and post-run analysis of parallelism effectiveness; spec-15, spec-21)
+- [x] Write `update_wave_state()` to update state.json after each wave: increment iteration by the number of successful builders, update phase_iteration, set last_iteration_at, add wave summary to `wave_history` array with wave number, builder count, success/fail counts, tasks completed, duration, and merge tier breakdown (WHY: wave state enables resume and post-run analysis of parallelism effectiveness; spec-15, spec-21)
   <!-- files: automaton.sh, templates/automaton.sh -->
 
 ## 25. Main Loop Integration (spec-14, spec-15)
