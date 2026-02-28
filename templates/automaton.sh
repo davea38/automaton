@@ -3897,6 +3897,36 @@ if [ "$ARG_DRY_RUN" = "true" ]; then
     echo "    cooldown:      ${RATE_COOLDOWN_SECONDS}s (backoff: x${RATE_BACKOFF_MULTIPLIER}, max: ${RATE_MAX_BACKOFF_SECONDS}s)"
     echo "  Execution:"
     echo "    max iterations: research=${EXEC_MAX_ITER_RESEARCH}, plan=${EXEC_MAX_ITER_PLAN}, build=${EXEC_MAX_ITER_BUILD}, review=${EXEC_MAX_ITER_REVIEW}"
+    echo "  Parallel:"
+    if [ "$PARALLEL_ENABLED" = "true" ]; then
+        echo "    enabled:        true"
+        echo "    max_builders:   ${MAX_BUILDERS}"
+        echo "    tmux_session:   ${TMUX_SESSION_NAME}"
+        echo "    stagger:        ${PARALLEL_STAGGER_SECONDS}s"
+        echo "    wave_timeout:   ${WAVE_TIMEOUT_SECONDS}s"
+        echo "    dashboard:      ${PARALLEL_DASHBOARD}"
+        # Check tmux availability
+        if command -v tmux >/dev/null 2>&1; then
+            echo "    tmux:           $(tmux -V 2>/dev/null || echo "available")"
+        else
+            echo "    tmux:           NOT FOUND (required)"
+        fi
+        # Check git worktree support (git 2.5+)
+        _dr_git_ver=$(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        if [ -n "$_dr_git_ver" ]; then
+            _dr_git_major="${_dr_git_ver%%.*}"
+            _dr_git_minor="${_dr_git_ver#*.}"
+            if [ "$_dr_git_major" -gt 2 ] || { [ "$_dr_git_major" -eq 2 ] && [ "$_dr_git_minor" -ge 5 ]; }; then
+                echo "    git worktree:   supported (git ${_dr_git_ver})"
+            else
+                echo "    git worktree:   NOT SUPPORTED (git ${_dr_git_ver}, need 2.5+)"
+            fi
+        else
+            echo "    git worktree:   unknown (cannot determine git version)"
+        fi
+    else
+        echo "    enabled:        false"
+    fi
 
     # Show phase plan
     echo ""
