@@ -20,4 +20,4 @@ Root `PROMPT_self_research.md` exists and is referenced by `automaton.sh` at lin
 
 ## 2. Housekeeping
 
-- [ ] Stage and commit `.gitignore` (WHY: it is untracked and should be in version control to ensure `.automaton/` runtime state is excluded)
+- [x] Stage and commit `.gitignore` (WHY: it is untracked and should be in version control to ensure `.automaton/` runtime state is excluded; committed in af3cdd5)
