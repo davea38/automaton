@@ -6,7 +6,8 @@ You are in RESEARCH mode. You will read all specs, identify unknowns, perform we
 
 1. Study `AGENTS.md` for operational guidance (project name, any existing tech preferences).
 2. Read `PRD.md` for the high-level vision and architecture overview.
-3. Read every file in `specs/` to understand the full set of requirements.
+3. If `.automaton/context_summary.md` exists, read it for project state overview.
+4. Read every file in `specs/` to understand the full set of requirements.
 
 ## Phase 1 - Identify Unknowns
 
