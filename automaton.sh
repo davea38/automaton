@@ -3433,6 +3433,178 @@ handle_wave_errors() {
     fi
 }
 
+# Implements the 10-step wave dispatch loop for parallel builds.
+# Replaces the v1 single-builder iteration loop during the build phase when
+# PARALLEL_ENABLED=true. Orchestrates: task selection → assignment → budget
+# check → builder spawn → poll → collect → merge → verify → state update →
+# cleanup, looping until all tasks are complete or limits are reached.
+# Falls back to run_single_builder_iteration() when no parallelizable tasks
+# remain or when wave errors prevent parallel progress.
+#
+# WHY: this is the core conductor loop that replaces the v1 build loop;
+# it ties together all parallel subsystems. (spec-15)
+#
+# Returns: 0 on completion (all tasks done or orderly exit)
+# May exit: 2 via check_budget (hard stop), 3 via escalate (unrecoverable)
+run_parallel_build() {
+    # Initialize wave state (may already be set from resume via read_state)
+    wave_number=${wave_number:-1}
+    consecutive_wave_failures=${consecutive_wave_failures:-0}
+    wave_history="${wave_history:-[]}"
+
+    log "CONDUCTOR" "Starting parallel build (max_builders=$MAX_BUILDERS, wave_timeout=${WAVE_TIMEOUT_SECONDS}s)"
+
+    while true; do
+        # --- Pre-wave checks ---
+
+        # Phase timeout check
+        if ! check_phase_timeout; then
+            log "CONDUCTOR" "Phase timeout reached during parallel build"
+            break
+        fi
+
+        # Max iterations check
+        local max_iter
+        max_iter=$(get_phase_max_iterations "build")
+        if [ "$max_iter" -gt 0 ] && [ "$phase_iteration" -ge "$max_iter" ]; then
+            log "CONDUCTOR" "Max iterations reached for build phase ($max_iter)"
+            break
+        fi
+
+        log "CONDUCTOR" "--- Wave $wave_number ---"
+
+        # --- Step 1: Build conflict graph and select non-conflicting tasks ---
+        build_conflict_graph
+        log_partition_quality
+        local selected
+        selected=$(select_wave_tasks)
+
+        # --- Step 2: Check completion or fall back to single-builder ---
+        local selected_count
+        selected_count=$(echo "$selected" | jq 'length')
+
+        if [ "$selected_count" -eq 0 ]; then
+            local remaining
+            remaining=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+            if [ "$remaining" -eq 0 ]; then
+                log "CONDUCTOR" "All tasks complete."
+                break
+            fi
+            # No parallelizable tasks remain — fall back to single-builder
+            log "CONDUCTOR" "Wave $wave_number: no parallelizable tasks, falling back to single-builder"
+            if ! run_single_builder_iteration; then
+                log "CONDUCTOR" "Single-builder fallback failed for non-parallelizable tasks"
+                break
+            fi
+            continue
+        fi
+
+        # --- Step 3: Budget checkpoint (may reduce builder count) ---
+        local affordable
+        affordable=$(check_wave_budget "$selected_count") || {
+            log "CONDUCTOR" "Budget exhausted. Stopping parallel build."
+            break
+        }
+
+        # Trim selected tasks if budget can only support fewer builders
+        if [ "$affordable" -lt "$selected_count" ]; then
+            log "CONDUCTOR" "Budget reduced wave from $selected_count to $affordable builders"
+            selected=$(echo "$selected" | jq --argjson n "$affordable" '.[:$n]')
+            selected_count=$affordable
+        fi
+
+        # --- Step 4: Write assignments ---
+        write_assignments "$wave_number" "$selected"
+
+        # --- Step 5: Generate builder wrapper script ---
+        generate_builder_wrapper
+
+        # Capture pre-wave plan state for verify_wave integrity check
+        COMPLETED_BEFORE_WAVE=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+
+        # --- Step 6: Spawn builders (staggered starts) ---
+        local wave_start_epoch
+        wave_start_epoch=$(date +%s)
+        spawn_builders "$wave_number"
+        emit_wave_status "spawn"
+        write_dashboard
+
+        # --- Step 7: Poll for completion (blocks until all done or timeout) ---
+        poll_builders "$wave_number"
+
+        # --- Step 8: Collect and validate results ---
+        local results
+        results=$(collect_results "$wave_number")
+
+        # --- Step 9: Handle wave-level errors ---
+        local error_rc=0
+        handle_wave_errors "$wave_number" "$results" || error_rc=$?
+
+        if [ "$error_rc" -eq 1 ]; then
+            # All builders failed AND single-builder fallback also failed
+            log "CONDUCTOR" "Wave $wave_number: no progress possible"
+            cleanup_wave "$wave_number"
+            wave_number=$((wave_number + 1))
+            continue
+        elif [ "$error_rc" -eq 2 ]; then
+            # All builders failed BUT single-builder fallback succeeded — retry wave
+            log "CONDUCTOR" "Wave $wave_number: single-builder recovery succeeded, retrying wave dispatch"
+            cleanup_wave "$wave_number"
+            wave_number=$((wave_number + 1))
+            continue
+        fi
+        # error_rc == 0: at least one builder succeeded → proceed to merge
+
+        # --- Step 10: Merge builder worktrees into main branch ---
+        merge_wave "$wave_number"
+
+        # Update plan: mark successful builders' tasks as [x] and commit
+        update_plan_after_wave "$wave_number" "$results"
+
+        # Post-merge verification (build command, merge markers, plan integrity)
+        if ! verify_wave "$wave_number"; then
+            log "CONDUCTOR" "Wave $wave_number: verification failed, recovering with single-builder"
+            cleanup_wave "$wave_number"
+            wave_number=$((wave_number + 1))
+            if run_single_builder_iteration; then
+                log "CONDUCTOR" "Post-verification single-builder recovery succeeded"
+            fi
+            continue
+        fi
+
+        # Emit wave completion status to stdout (for non-tmux visibility)
+        emit_wave_status "complete"
+
+        # Save current wave number before update_wave_state advances it
+        local completed_wave=$wave_number
+
+        # Update state: increment iteration/phase_iteration, aggregate budget,
+        # persist state.json, write wave history (also advances wave_number)
+        update_wave_state "$completed_wave" "$results" "$wave_start_epoch"
+        write_dashboard
+
+        # Cleanup: remove worktrees, archive wave data, kill builder windows
+        cleanup_wave "$completed_wave"
+
+        # Global budget check (may exit 2 for hard stops, returns 1 for phase budget)
+        # Pass 0,0 — per-iteration warning is not applicable at wave level;
+        # Rules 2-4 read cumulative totals from budget.json directly.
+        check_budget 0 0 || {
+            log "CONDUCTOR" "Budget limit reached. Exiting parallel build."
+            break
+        }
+
+        # Inter-wave pacing (may sleep if token velocity exceeds 80% of TPM limit)
+        check_wave_pacing
+
+        # wave_number already advanced by update_wave_state
+    done
+
+    write_state
+    log "CONDUCTOR" "Parallel build phase complete."
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Phase Sequence Controller
 # ---------------------------------------------------------------------------
