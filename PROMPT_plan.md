@@ -6,13 +6,14 @@ You will NOT implement anything.
 ## Phase 0 - Load Context
 
 1. Study `AGENTS.md` for operational guidance.
-2. Study every file in `specs/` using up to 250 parallel Sonnet subagents to learn the requirements.
-3. Study the existing codebase (`src/` or relevant directories) using up to 500 parallel Sonnet subagents. Do NOT assume functionality is missing - confirm by searching the code first.
+2. If `.automaton/context_summary.md` exists, read it first for a project state overview before reading specs.
+3. Study every file in `specs/` — use subagents proportional to codebase size. For a single-file project, 1-3 subagents suffice. Scale up for large multi-file projects.
+4. Study the existing codebase (`src/` or relevant directories) using subagents proportional to codebase size. Do NOT assume functionality is missing - confirm by searching the code first.
 
 ## Phase 1 - Gap Analysis
 
 Compare what the specs require against what already exists in the code.
-Use up to 500 Sonnet subagents to study existing source code and compare it against specs.
+Use subagents proportional to codebase size to study existing source code and compare it against specs.
 For each spec, identify what is:
 - Already implemented (mark as done)
 - Partially implemented (note what remains)

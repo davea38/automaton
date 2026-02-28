@@ -8,6 +8,7 @@ You are in REVIEW mode. You will independently verify the build output against s
 2. Read `PRD.md` for the original vision and success criteria.
 3. Read every file in `specs/` to understand what was required.
 4. Read `IMPLEMENTATION_PLAN.md` to see what was built and what tasks were completed.
+5. If `.automaton/context_summary.md` exists, read it for project state overview.
 
 ## Phase 1 - Run Validation Suite
 
@@ -43,6 +44,15 @@ Scan the codebase for common issues:
 
 Be thorough but fair. Minor style issues are warnings, not failures. Focus on correctness and spec compliance, not personal style preferences.
 
+## Phase 3b - Self-Build Review (when in self-build mode)
+
+When the target is automaton itself, additionally:
+1. Run `bash -n automaton.sh` to verify syntax. If it fails, this is a critical issue.
+2. Run `./automaton.sh --dry-run` to verify the orchestrator still starts. If it fails, this is a critical issue.
+3. Compare token usage of this run vs. the previous run (from `.automaton/budget.json` history). If tokens per task increased, add a regression investigation task.
+4. Verify no protected functions were modified without explicit task authorization.
+5. Check that `.automaton/self_modifications.json` shows all changes were validated.
+
 ## Phase 4 - Verdict
 
 Evaluate all findings from Phases 1-3.
@@ -52,7 +62,7 @@ Evaluate all findings from Phases 1-3.
 - Output `<promise>COMPLETE</promise>`
 
 **If any checks fail** (test failures, lint errors, missing spec coverage, critical quality issues):
-- Append new `[ ]` tasks to `IMPLEMENTATION_PLAN.md` for each failure. Use these formats:
+- Append new `[ ]` tasks to `IMPLEMENTATION_PLAN.md` (or `.automaton/backlog.md` in self-build mode) for each failure. Use these formats:
   - `[ ] Fix: [test name] failing - [error description]`
   - `[ ] Fix: lint error in [file] - [description]`
   - `[ ] Fix: type error in [file] - [description]`

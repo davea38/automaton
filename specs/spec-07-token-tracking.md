@@ -133,11 +133,41 @@ cost = (input_tokens * input_rate / 1_000_000)
 - If exceeded: Same behavior as total token limit
 - Exit code 2
 
+## Budget Modes (spec-23)
+
+The budget system supports two modes via `budget.mode` in config:
+
+### API Mode (default)
+
+Original behavior. Tracks USD costs using the pricing table above. All four enforcement rules apply.
+
+### Allowance Mode
+
+For Max subscription users with a flat weekly token allowance. Config:
+```json
+"budget": {
+  "mode": "allowance",
+  "weekly_allowance_tokens": 45000000,
+  "allowance_reset_day": "monday",
+  "reserve_percentage": 20
+}
+```
+
+Effective budget = `weekly_allowance_tokens * (1 - reserve_percentage/100)`.
+
+Enforcement rules in allowance mode:
+- **Per-iteration warning**: Same as API mode (advisory)
+- **Weekly allowance hard stop**: If `tokens_used_this_week` exceeds `effective_allowance`, exit 2 with reset date
+- **Phase proportioning**: Phases get soft token limits (research 5%, plan 10%, build 70%, review 15%)
+- **Week rollover**: On `--resume`, if current date is past `week_end`, archives and resets weekly counters
+
+Cost estimation (`estimate_cost()`) still runs in allowance mode for informational logging.
+
 ## Initialization
 
 On first run, the orchestrator creates `.automaton/budget.json` with limits from `automaton.config.json` (or defaults) and zeroed usage counters.
 
-On `--resume`, the orchestrator reads the existing budget.json and continues accumulating.
+On `--resume`, the orchestrator reads the existing budget.json and continues accumulating. In allowance mode, week rollover is checked on resume.
 
 ## Budget Display
 
@@ -148,5 +178,9 @@ Session log entries include cost:
 
 Stdout one-liner includes remaining budget:
 ```
+# API mode:
 [BUILD 7/~20] Task: Add auth middleware | ~$2.04 | budget: $18.60 remaining
+
+# Allowance mode:
+[BUILD 7] build iteration 7 | 112000 input / 24000 output (~$2.04) | allowance: 32M tokens remaining
 ```

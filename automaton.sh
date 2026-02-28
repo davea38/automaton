@@ -76,6 +76,22 @@ load_config() {
         PARALLEL_STAGGER_SECONDS=$(jq -r '.parallel.stagger_seconds // 15' "$config_file")
         WAVE_TIMEOUT_SECONDS=$(jq -r '.parallel.wave_timeout_seconds // 600' "$config_file")
         PARALLEL_DASHBOARD=$(jq -r '.parallel.dashboard // true' "$config_file")
+
+        # -- budget mode (spec-23) --
+        BUDGET_MODE=$(jq -r '.budget.mode // "api"' "$config_file")
+        BUDGET_WEEKLY_ALLOWANCE=$(jq -r '.budget.weekly_allowance_tokens // 45000000' "$config_file")
+        BUDGET_ALLOWANCE_RESET_DAY=$(jq -r '.budget.allowance_reset_day // "monday"' "$config_file")
+        BUDGET_RESERVE_PERCENTAGE=$(jq -r '.budget.reserve_percentage // 20' "$config_file")
+
+        # -- self_build (spec-22) --
+        SELF_BUILD_ENABLED=$(jq -r '.self_build.enabled // false' "$config_file")
+        SELF_BUILD_MAX_FILES=$(jq -r '.self_build.max_files_per_iteration // 3' "$config_file")
+        SELF_BUILD_MAX_LINES=$(jq -r '.self_build.max_lines_changed_per_iteration // 200' "$config_file")
+        SELF_BUILD_PROTECTED_FUNCTIONS=$(jq -r '.self_build.protected_functions // ["run_orchestration","_handle_shutdown"] | join(",")' "$config_file")
+        SELF_BUILD_REQUIRE_SMOKE=$(jq -r '.self_build.require_smoke_test // true' "$config_file")
+
+        # -- journal (spec-26) --
+        JOURNAL_MAX_RUNS=$(jq -r '.journal.max_runs // 50' "$config_file")
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -135,6 +151,22 @@ load_config() {
         PARALLEL_STAGGER_SECONDS=15
         WAVE_TIMEOUT_SECONDS=600
         PARALLEL_DASHBOARD="true"
+
+        # -- budget mode (spec-23) --
+        BUDGET_MODE="api"
+        BUDGET_WEEKLY_ALLOWANCE=45000000
+        BUDGET_ALLOWANCE_RESET_DAY="monday"
+        BUDGET_RESERVE_PERCENTAGE=20
+
+        # -- self_build (spec-22) --
+        SELF_BUILD_ENABLED="false"
+        SELF_BUILD_MAX_FILES=3
+        SELF_BUILD_MAX_LINES=200
+        SELF_BUILD_PROTECTED_FUNCTIONS="run_orchestration,_handle_shutdown"
+        SELF_BUILD_REQUIRE_SMOKE="true"
+
+        # -- journal (spec-26) --
+        JOURNAL_MAX_RUNS=50
     fi
 }
 
@@ -374,42 +406,185 @@ write_agent_history() {
 initialize_budget() {
     local tmp="$AUTOMATON_DIR/budget.json.tmp"
 
-    jq -n \
-        --argjson max_tokens "$BUDGET_MAX_TOKENS" \
-        --argjson max_usd "$BUDGET_MAX_USD" \
-        --argjson phase_research "$BUDGET_PHASE_RESEARCH" \
-        --argjson phase_plan "$BUDGET_PHASE_PLAN" \
-        --argjson phase_build "$BUDGET_PHASE_BUILD" \
-        --argjson phase_review "$BUDGET_PHASE_REVIEW" \
-        --argjson per_iteration "$BUDGET_PER_ITERATION" \
-        '{
-            limits: {
-                max_total_tokens: $max_tokens,
-                max_cost_usd: $max_usd,
-                per_phase: {
-                    research: $phase_research,
-                    plan: $phase_plan,
-                    build: $phase_build,
-                    review: $phase_review
+    if [ "$BUDGET_MODE" = "allowance" ]; then
+        # Allowance mode (spec-23): weekly token tracking for Max subscription
+        local week_start week_end effective_allowance
+        week_start=$(_allowance_week_start)
+        week_end=$(_allowance_week_end "$week_start")
+        effective_allowance=$(awk -v total="$BUDGET_WEEKLY_ALLOWANCE" -v reserve="$BUDGET_RESERVE_PERCENTAGE" \
+            'BEGIN { printf "%d", total * (1 - reserve/100) }')
+
+        jq -n \
+            --arg mode "allowance" \
+            --argjson weekly_allowance "$BUDGET_WEEKLY_ALLOWANCE" \
+            --argjson effective_allowance "$effective_allowance" \
+            --arg week_start "$week_start" \
+            --arg week_end "$week_end" \
+            --argjson reserve "$BUDGET_RESERVE_PERCENTAGE" \
+            --argjson per_iteration "$BUDGET_PER_ITERATION" \
+            '{
+                mode: $mode,
+                limits: {
+                    weekly_allowance_tokens: $weekly_allowance,
+                    effective_allowance: $effective_allowance,
+                    reserve_percentage: $reserve,
+                    per_iteration: $per_iteration,
+                    phase_proportions: {
+                        research: 0.05,
+                        plan: 0.10,
+                        build: 0.70,
+                        review: 0.15
+                    }
                 },
-                per_iteration: $per_iteration
-            },
-            used: {
-                total_input: 0,
-                total_output: 0,
-                total_cache_create: 0,
-                total_cache_read: 0,
-                by_phase: {
-                    research: { input: 0, output: 0 },
-                    plan: { input: 0, output: 0 },
-                    build: { input: 0, output: 0 },
-                    review: { input: 0, output: 0 }
+                week_start: $week_start,
+                week_end: $week_end,
+                tokens_used_this_week: 0,
+                tokens_remaining: ($effective_allowance | tonumber),
+                used: {
+                    total_input: 0,
+                    total_output: 0,
+                    total_cache_create: 0,
+                    total_cache_read: 0,
+                    by_phase: {
+                        research: { input: 0, output: 0 },
+                        plan: { input: 0, output: 0 },
+                        build: { input: 0, output: 0 },
+                        review: { input: 0, output: 0 }
+                    },
+                    estimated_cost_usd: 0.00
                 },
-                estimated_cost_usd: 0.00
-            },
-            history: []
-        }' > "$tmp"
+                history: [],
+                allowance_history: []
+            }' > "$tmp"
+    else
+        # API mode (default): original USD-based budget
+        jq -n \
+            --arg mode "api" \
+            --argjson max_tokens "$BUDGET_MAX_TOKENS" \
+            --argjson max_usd "$BUDGET_MAX_USD" \
+            --argjson phase_research "$BUDGET_PHASE_RESEARCH" \
+            --argjson phase_plan "$BUDGET_PHASE_PLAN" \
+            --argjson phase_build "$BUDGET_PHASE_BUILD" \
+            --argjson phase_review "$BUDGET_PHASE_REVIEW" \
+            --argjson per_iteration "$BUDGET_PER_ITERATION" \
+            '{
+                mode: $mode,
+                limits: {
+                    max_total_tokens: $max_tokens,
+                    max_cost_usd: $max_usd,
+                    per_phase: {
+                        research: $phase_research,
+                        plan: $phase_plan,
+                        build: $phase_build,
+                        review: $phase_review
+                    },
+                    per_iteration: $per_iteration
+                },
+                used: {
+                    total_input: 0,
+                    total_output: 0,
+                    total_cache_create: 0,
+                    total_cache_read: 0,
+                    by_phase: {
+                        research: { input: 0, output: 0 },
+                        plan: { input: 0, output: 0 },
+                        build: { input: 0, output: 0 },
+                        review: { input: 0, output: 0 }
+                    },
+                    estimated_cost_usd: 0.00
+                },
+                history: []
+            }' > "$tmp"
+    fi
     mv "$tmp" "$AUTOMATON_DIR/budget.json"
+}
+
+# Returns the start of the current allowance week (ISO date) based on reset day.
+_allowance_week_start() {
+    local reset_day="$BUDGET_ALLOWANCE_RESET_DAY"
+    local today today_dow target_dow days_back
+
+    today=$(date +%Y-%m-%d)
+    today_dow=$(date +%u)  # 1=Monday, 7=Sunday
+
+    case "$reset_day" in
+        monday)    target_dow=1 ;;
+        tuesday)   target_dow=2 ;;
+        wednesday) target_dow=3 ;;
+        thursday)  target_dow=4 ;;
+        friday)    target_dow=5 ;;
+        saturday)  target_dow=6 ;;
+        sunday)    target_dow=7 ;;
+        *)         target_dow=1 ;;
+    esac
+
+    days_back=$(( (today_dow - target_dow + 7) % 7 ))
+    date -d "$today - $days_back days" +%Y-%m-%d 2>/dev/null || \
+        date -v-"${days_back}d" +%Y-%m-%d 2>/dev/null || echo "$today"
+}
+
+# Returns the end of the current allowance week (ISO date).
+_allowance_week_end() {
+    local week_start="$1"
+    date -d "$week_start + 6 days" +%Y-%m-%d 2>/dev/null || \
+        date -v+6d -jf "%Y-%m-%d" "$week_start" +%Y-%m-%d 2>/dev/null || echo "$week_start"
+}
+
+# Checks if the current date is past the stored week_end in budget.json.
+# If so, archives the current week and resets counters.
+# Called during --resume in allowance mode.
+_allowance_check_rollover() {
+    if [ "$BUDGET_MODE" != "allowance" ]; then
+        return 0
+    fi
+
+    local budget_file="$AUTOMATON_DIR/budget.json"
+    if [ ! -f "$budget_file" ]; then
+        return 0
+    fi
+
+    local stored_week_end today
+    stored_week_end=$(jq -r '.week_end // ""' "$budget_file")
+    today=$(date +%Y-%m-%d)
+
+    if [ -z "$stored_week_end" ]; then
+        return 0
+    fi
+
+    # Compare dates: if today > week_end, rollover needed
+    if [[ "$today" > "$stored_week_end" ]]; then
+        log "ORCHESTRATOR" "Allowance week rollover: $stored_week_end has passed. Resetting weekly counters."
+
+        local new_week_start new_week_end effective_allowance tmp
+        new_week_start=$(_allowance_week_start)
+        new_week_end=$(_allowance_week_end "$new_week_start")
+        effective_allowance=$(awk -v total="$BUDGET_WEEKLY_ALLOWANCE" -v reserve="$BUDGET_RESERVE_PERCENTAGE" \
+            'BEGIN { printf "%d", total * (1 - reserve/100) }')
+        tmp="$AUTOMATON_DIR/budget.json.tmp"
+
+        jq \
+            --arg ws "$new_week_start" \
+            --arg we "$new_week_end" \
+            --argjson eff "$effective_allowance" \
+            '
+            # Archive current week
+            .allowance_history += [{
+                week_start: .week_start,
+                week_end: .week_end,
+                tokens_used: .tokens_used_this_week,
+                effective_allowance: .limits.effective_allowance
+            }] |
+            # Reset for new week
+            .week_start = $ws |
+            .week_end = $we |
+            .tokens_used_this_week = 0 |
+            .tokens_remaining = $eff |
+            .limits.effective_allowance = $eff
+            ' "$budget_file" > "$tmp"
+        mv "$tmp" "$budget_file"
+
+        log "ORCHESTRATOR" "New allowance week: $new_week_start to $new_week_end ($effective_allowance effective tokens)"
+    fi
 }
 
 # Extracts token usage from Claude CLI stream-json output.
@@ -490,20 +665,8 @@ update_budget() {
 
     local total_iter_tokens=$((input_tokens + output_tokens))
 
-    jq \
-        --argjson input_tokens "$input_tokens" \
-        --argjson output_tokens "$output_tokens" \
-        --argjson cache_create "$cache_create" \
-        --argjson cache_read "$cache_read" \
-        --argjson iter_cost "$iter_cost" \
-        --arg phase "$current_phase" \
-        --argjson iteration "$iteration" \
-        --arg model "$model" \
-        --argjson duration "$duration" \
-        --arg task "$task_desc" \
-        --arg status "$status" \
-        --arg timestamp "$timestamp" \
-        '
+    # Common jq update for both modes
+    local jq_filter='
         .used.total_input += $input_tokens |
         .used.total_output += $output_tokens |
         .used.total_cache_create += $cache_create |
@@ -524,59 +687,116 @@ update_budget() {
             task: $task,
             status: $status,
             timestamp: $timestamp
-        }]
-        ' "$budget_file" > "$tmp"
+        }]'
+
+    # In allowance mode, also update weekly token counters
+    if [ "$BUDGET_MODE" = "allowance" ]; then
+        jq_filter="${jq_filter}"'
+        | .tokens_used_this_week += ($input_tokens + $output_tokens)
+        | .tokens_remaining = (.limits.effective_allowance - .tokens_used_this_week)'
+    fi
+
+    jq \
+        --argjson input_tokens "$input_tokens" \
+        --argjson output_tokens "$output_tokens" \
+        --argjson cache_create "$cache_create" \
+        --argjson cache_read "$cache_read" \
+        --argjson iter_cost "$iter_cost" \
+        --arg phase "$current_phase" \
+        --argjson iteration "$iteration" \
+        --arg model "$model" \
+        --argjson duration "$duration" \
+        --arg task "$task_desc" \
+        --arg status "$status" \
+        --arg timestamp "$timestamp" \
+        "$jq_filter" "$budget_file" > "$tmp"
     mv "$tmp" "$budget_file"
 }
 
-# Enforces four budget rules after each iteration. Returns 0 to continue,
+# Enforces budget rules after each iteration. Returns 0 to continue,
 # 1 to force phase transition, or exits with code 2 for hard stops.
-# Logs the appropriate message for each triggered rule.
+# In API mode: enforces per-iteration, per-phase, total token, and cost limits.
+# In allowance mode (spec-23): enforces weekly token allowance and phase proportions.
 check_budget() {
     local input_tokens="$1" output_tokens="$2"
     local budget_file="$AUTOMATON_DIR/budget.json"
     local total_iter_tokens=$((input_tokens + output_tokens))
 
-    # Rule 1: Per-iteration warning (advisory only)
+    # Rule 1: Per-iteration warning (advisory, both modes)
     if [ "$total_iter_tokens" -gt "$BUDGET_PER_ITERATION" ]; then
         log "ORCHESTRATOR" "WARNING: Iteration used ${total_iter_tokens} tokens, exceeding per-iteration limit of ${BUDGET_PER_ITERATION}"
     fi
 
-    # Read cumulative totals from budget.json
-    local total_input total_output total_cost
-    total_input=$(jq '.used.total_input' "$budget_file")
-    total_output=$(jq '.used.total_output' "$budget_file")
-    total_cost=$(jq '.used.estimated_cost_usd' "$budget_file")
-    local cumulative_tokens=$((total_input + total_output))
+    if [ "$BUDGET_MODE" = "allowance" ]; then
+        # --- Allowance mode enforcement (spec-23) ---
+        local tokens_remaining tokens_used effective_allowance week_end
+        tokens_remaining=$(jq '.tokens_remaining' "$budget_file")
+        tokens_used=$(jq '.tokens_used_this_week' "$budget_file")
+        effective_allowance=$(jq '.limits.effective_allowance' "$budget_file")
+        week_end=$(jq -r '.week_end' "$budget_file")
 
-    # Rule 3: Total token hard stop (check before phase limit so hard stop takes priority)
-    if [ "$cumulative_tokens" -gt "$BUDGET_MAX_TOKENS" ]; then
-        log "ORCHESTRATOR" "Total token budget exhausted (${cumulative_tokens}/${BUDGET_MAX_TOKENS}). Run --resume after adjusting budget."
-        write_state
-        exit 2
-    fi
+        # Hard stop: weekly allowance exhausted
+        if [ "$tokens_remaining" -le 0 ]; then
+            log "ORCHESTRATOR" "Weekly token allowance exhausted (${tokens_used}/${effective_allowance}). Resets after ${week_end}. Run --resume after reset."
+            write_state
+            exit 2
+        fi
 
-    # Rule 4: Cost hard stop
-    local cost_exceeded
-    cost_exceeded=$(awk -v cost="$total_cost" -v limit="$BUDGET_MAX_USD" \
-        'BEGIN { print (cost > limit) ? "yes" : "no" }')
-    if [ "$cost_exceeded" = "yes" ]; then
-        log "ORCHESTRATOR" "Cost budget exhausted (\$${total_cost}/\$${BUDGET_MAX_USD}). Run --resume after adjusting budget."
-        write_state
-        exit 2
-    fi
+        # Pre-iteration warning: less than one iteration's worth of tokens left
+        if [ "$tokens_remaining" -lt "$BUDGET_PER_ITERATION" ]; then
+            log "ORCHESTRATOR" "WARNING: Only ${tokens_remaining} tokens remaining in weekly allowance (need ~${BUDGET_PER_ITERATION} per iteration)"
+        fi
 
-    # Rule 2: Per-phase force transition
-    local phase_limit_var="BUDGET_PHASE_$(echo "$current_phase" | tr '[:lower:]' '[:upper:]')"
-    local phase_limit="${!phase_limit_var}"
-    local phase_input phase_output
-    phase_input=$(jq --arg p "$current_phase" '.used.by_phase[$p].input' "$budget_file")
-    phase_output=$(jq --arg p "$current_phase" '.used.by_phase[$p].output' "$budget_file")
-    local phase_tokens=$((phase_input + phase_output))
+        # Phase proportioning (soft limits): check if current phase exceeded its share
+        local phase_proportion phase_budget phase_input phase_output phase_tokens
+        phase_proportion=$(jq --arg p "$current_phase" '.limits.phase_proportions[$p] // 0.25' "$budget_file")
+        phase_budget=$(awk -v eff="$effective_allowance" -v prop="$phase_proportion" \
+            'BEGIN { printf "%d", eff * prop }')
+        phase_input=$(jq --arg p "$current_phase" '.used.by_phase[$p].input' "$budget_file")
+        phase_output=$(jq --arg p "$current_phase" '.used.by_phase[$p].output' "$budget_file")
+        phase_tokens=$((phase_input + phase_output))
 
-    if [ "$phase_tokens" -gt "$phase_limit" ]; then
-        log "ORCHESTRATOR" "Phase budget exhausted for ${current_phase} (${phase_tokens}/${phase_limit}). Transitioning to next phase."
-        return 1
+        if [ "$phase_tokens" -gt "$phase_budget" ]; then
+            log "ORCHESTRATOR" "Phase token proportion exhausted for ${current_phase} (${phase_tokens}/${phase_budget}). Transitioning to next phase."
+            return 1
+        fi
+    else
+        # --- API mode enforcement (original behavior) ---
+        local total_input total_output total_cost
+        total_input=$(jq '.used.total_input' "$budget_file")
+        total_output=$(jq '.used.total_output' "$budget_file")
+        total_cost=$(jq '.used.estimated_cost_usd' "$budget_file")
+        local cumulative_tokens=$((total_input + total_output))
+
+        # Rule 3: Total token hard stop
+        if [ "$cumulative_tokens" -gt "$BUDGET_MAX_TOKENS" ]; then
+            log "ORCHESTRATOR" "Total token budget exhausted (${cumulative_tokens}/${BUDGET_MAX_TOKENS}). Run --resume after adjusting budget."
+            write_state
+            exit 2
+        fi
+
+        # Rule 4: Cost hard stop
+        local cost_exceeded
+        cost_exceeded=$(awk -v cost="$total_cost" -v limit="$BUDGET_MAX_USD" \
+            'BEGIN { print (cost > limit) ? "yes" : "no" }')
+        if [ "$cost_exceeded" = "yes" ]; then
+            log "ORCHESTRATOR" "Cost budget exhausted (\$${total_cost}/\$${BUDGET_MAX_USD}). Run --resume after adjusting budget."
+            write_state
+            exit 2
+        fi
+
+        # Rule 2: Per-phase force transition
+        local phase_limit_var="BUDGET_PHASE_$(echo "$current_phase" | tr '[:lower:]' '[:upper:]')"
+        local phase_limit="${!phase_limit_var}"
+        local phase_input phase_output
+        phase_input=$(jq --arg p "$current_phase" '.used.by_phase[$p].input' "$budget_file")
+        phase_output=$(jq --arg p "$current_phase" '.used.by_phase[$p].output' "$budget_file")
+        local phase_tokens=$((phase_input + phase_output))
+
+        if [ "$phase_tokens" -gt "$phase_limit" ]; then
+            log "ORCHESTRATOR" "Phase budget exhausted for ${current_phase} (${phase_tokens}/${phase_limit}). Transitioning to next phase."
+            return 1
+        fi
     fi
 
     return 0
@@ -900,6 +1120,600 @@ check_test_failures() {
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# Self-Build Safety (spec-22)
+# ---------------------------------------------------------------------------
+
+# List of orchestrator files to track during self-build.
+SELF_BUILD_FILES="automaton.sh PROMPT_converse.md PROMPT_research.md PROMPT_plan.md PROMPT_build.md PROMPT_review.md automaton.config.json bin/cli.js"
+
+# Computes sha256 checksums of all orchestrator files and stores them in
+# .automaton/self_checksums.json. Called before each build iteration when
+# self_build.enabled is true.
+#
+# Usage: self_build_checkpoint
+self_build_checkpoint() {
+    if [ "$SELF_BUILD_ENABLED" != "true" ]; then
+        return 0
+    fi
+
+    local checksums_file="$AUTOMATON_DIR/self_checksums.json"
+    local tmp="$AUTOMATON_DIR/self_checksums.json.tmp"
+    local backup_dir="$AUTOMATON_DIR/self_backup"
+    mkdir -p "$backup_dir"
+
+    # Build checksums JSON and backup files
+    local json_entries=""
+    local first=true
+    for f in $SELF_BUILD_FILES; do
+        if [ -f "$f" ]; then
+            local hash
+            hash=$(sha256sum "$f" | awk '{print $1}')
+            # Backup the file for potential restore
+            cp "$f" "$backup_dir/$(echo "$f" | tr '/' '_')"
+            if [ "$first" = "true" ]; then
+                first=false
+            else
+                json_entries="${json_entries},"
+            fi
+            json_entries="${json_entries}\"$f\":\"$hash\""
+        fi
+    done
+
+    echo "{${json_entries}}" | jq '.' > "$tmp"
+    mv "$tmp" "$checksums_file"
+
+    log "ORCHESTRATOR" "Self-build checkpoint: checksums saved for orchestrator files"
+}
+
+# After a build iteration, compares current file checksums against the
+# pre-iteration checkpoint. If any orchestrator file changed, validates the
+# change (syntax check + smoke test) and logs to the audit trail.
+#
+# Usage: self_build_validate
+# Returns: 0 = all clear, 1 = file was restored from checkpoint
+self_build_validate() {
+    if [ "$SELF_BUILD_ENABLED" != "true" ]; then
+        return 0
+    fi
+
+    local checksums_file="$AUTOMATON_DIR/self_checksums.json"
+    local backup_dir="$AUTOMATON_DIR/self_backup"
+    local audit_file="$AUTOMATON_DIR/self_modifications.json"
+    local changed_files=""
+    local any_changed=false
+
+    # Initialize audit log if it doesn't exist
+    if [ ! -f "$audit_file" ]; then
+        echo '[]' > "$audit_file"
+    fi
+
+    if [ ! -f "$checksums_file" ]; then
+        return 0
+    fi
+
+    # Compare current checksums against checkpoint
+    local new_checksums=""
+    for f in $SELF_BUILD_FILES; do
+        if [ -f "$f" ]; then
+            local old_hash new_hash
+            old_hash=$(jq -r --arg f "$f" '.[$f] // ""' "$checksums_file")
+            new_hash=$(sha256sum "$f" | awk '{print $1}')
+
+            if [ -n "$old_hash" ] && [ "$old_hash" != "$new_hash" ]; then
+                any_changed=true
+                changed_files="${changed_files} $f"
+                log "ORCHESTRATOR" "Self-build: $f was modified during iteration $iteration"
+                new_checksums="${new_checksums}{\"file\":\"$f\",\"before\":\"$old_hash\",\"after\":\"$new_hash\"},"
+            fi
+        fi
+    done
+
+    if [ "$any_changed" != "true" ]; then
+        return 0
+    fi
+
+    # --- Syntax validation for automaton.sh ---
+    local syntax_ok="skipped"
+    local smoke_ok="skipped"
+
+    if echo "$changed_files" | grep -q "automaton.sh"; then
+        # Syntax check
+        if bash -n automaton.sh 2>/dev/null; then
+            syntax_ok="pass"
+            log "ORCHESTRATOR" "Self-build: automaton.sh syntax check PASSED"
+
+            # Smoke test (dry-run in subshell)
+            if [ "$SELF_BUILD_REQUIRE_SMOKE" = "true" ]; then
+                if (./automaton.sh --dry-run) >/dev/null 2>&1; then
+                    smoke_ok="pass"
+                    log "ORCHESTRATOR" "Self-build: automaton.sh smoke test PASSED"
+                else
+                    smoke_ok="fail"
+                    log "ORCHESTRATOR" "Self-build: automaton.sh smoke test FAILED — restoring from checkpoint"
+                    _self_build_restore "$backup_dir"
+                    _self_build_add_fix_task "automaton.sh smoke test (--dry-run) failed after iteration $iteration"
+                    _self_build_audit_entry "$changed_files" "$new_checksums" "$syntax_ok" "$smoke_ok"
+                    return 1
+                fi
+            fi
+        else
+            syntax_ok="fail"
+            log "ORCHESTRATOR" "Self-build: automaton.sh syntax check FAILED — restoring from checkpoint"
+            _self_build_restore "$backup_dir"
+            _self_build_add_fix_task "automaton.sh syntax error introduced in iteration $iteration"
+            _self_build_audit_entry "$changed_files" "$new_checksums" "$syntax_ok" "$smoke_ok"
+            return 1
+        fi
+    fi
+
+    # Log audit entry for successful modifications
+    _self_build_audit_entry "$changed_files" "$new_checksums" "$syntax_ok" "$smoke_ok"
+
+    log "ORCHESTRATOR" "Self-build: modifications validated. Changes take effect on next --resume or fresh run."
+    return 0
+}
+
+# Restores orchestrator files from the pre-iteration backup.
+_self_build_restore() {
+    local backup_dir="$1"
+
+    for f in $SELF_BUILD_FILES; do
+        local backup_name
+        backup_name="$backup_dir/$(echo "$f" | tr '/' '_')"
+        if [ -f "$backup_name" ]; then
+            cp "$backup_name" "$f"
+        fi
+    done
+
+    # Commit the restoration
+    git add automaton.sh PROMPT_*.md automaton.config.json bin/cli.js 2>/dev/null || true
+    git commit -m "automaton: self-build restore from checkpoint (iteration $iteration)" 2>/dev/null || true
+
+    log "ORCHESTRATOR" "Self-build: files restored from pre-iteration checkpoint"
+}
+
+# Adds a fix task to the appropriate plan file for self-build failures.
+_self_build_add_fix_task() {
+    local description="$1"
+    local plan_file="IMPLEMENTATION_PLAN.md"
+
+    # In self-build mode, prefer the backlog
+    if [ -f "$AUTOMATON_DIR/backlog.md" ] && [ "${ARG_SELF:-false}" = "true" ]; then
+        plan_file="$AUTOMATON_DIR/backlog.md"
+    fi
+
+    if [ -f "$plan_file" ]; then
+        echo "- [ ] Fix: $description" >> "$plan_file"
+    fi
+
+    log "ORCHESTRATOR" "Self-build: added fix task to $plan_file: $description"
+}
+
+# Appends an entry to the self-modification audit log.
+_self_build_audit_entry() {
+    local changed_files="$1" checksums_json="$2" syntax_result="$3" smoke_result="$4"
+    local audit_file="$AUTOMATON_DIR/self_modifications.json"
+    local tmp="$AUTOMATON_DIR/self_modifications.json.tmp"
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Build files array as JSON
+    local files_json
+    files_json=$(echo "$changed_files" | tr ' ' '\n' | grep -v '^$' | jq -R -s 'split("\n") | map(select(. != ""))')
+
+    jq --arg ts "$timestamp" \
+       --argjson iter "$iteration" \
+       --arg phase "$current_phase" \
+       --argjson files "$files_json" \
+       --arg syntax "$syntax_result" \
+       --arg smoke "$smoke_result" \
+       '. + [{
+           timestamp: $ts,
+           iteration: $iter,
+           phase: $phase,
+           files_changed: $files,
+           syntax_check: $syntax,
+           smoke_test: $smoke
+       }]' "$audit_file" > "$tmp"
+    mv "$tmp" "$audit_file"
+}
+
+# Checks self-build scope limits (spec-25): max files per iteration,
+# max lines changed per iteration, protected function modification.
+# Returns: 0 = within limits, logs warnings for violations
+self_build_check_scope() {
+    if [ "$SELF_BUILD_ENABLED" != "true" ]; then
+        return 0
+    fi
+
+    # Count files changed in this iteration
+    local files_changed_count
+    files_changed_count=$(git diff --name-only HEAD~1 2>/dev/null | wc -l || echo 0)
+
+    if [ "$files_changed_count" -gt "$SELF_BUILD_MAX_FILES" ]; then
+        log "ORCHESTRATOR" "WARNING: Self-build scope: $files_changed_count files changed (limit: $SELF_BUILD_MAX_FILES)"
+    fi
+
+    # Count lines changed
+    local lines_changed
+    lines_changed=$(git diff --stat HEAD~1 2>/dev/null | tail -1 | grep -oE '[0-9]+ insertion|[0-9]+ deletion' | grep -oE '[0-9]+' | paste -sd+ - | bc 2>/dev/null || echo 0)
+
+    if [ "$lines_changed" -gt "$SELF_BUILD_MAX_LINES" ]; then
+        log "ORCHESTRATOR" "WARNING: Self-build scope: $lines_changed lines changed (limit: $SELF_BUILD_MAX_LINES)"
+    fi
+
+    # Check protected functions
+    if git diff HEAD~1 -- automaton.sh 2>/dev/null | grep -qE '^\+.*^(run_orchestration|_handle_shutdown)\(' 2>/dev/null; then
+        local protected
+        IFS=',' read -ra protected <<< "$SELF_BUILD_PROTECTED_FUNCTIONS"
+        for func in "${protected[@]}"; do
+            if git diff HEAD~1 -- automaton.sh 2>/dev/null | grep -qE "^\+.*${func}\s*\(" 2>/dev/null; then
+                log "ORCHESTRATOR" "WARNING: Self-build scope: protected function '$func' was modified"
+            fi
+        done
+    fi
+
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Self-Targeting Mode (spec-25)
+# ---------------------------------------------------------------------------
+
+# Initializes the improvement backlog if it doesn't exist.
+_self_init_backlog() {
+    local backlog="$AUTOMATON_DIR/backlog.md"
+    if [ -f "$backlog" ]; then
+        return 0
+    fi
+
+    mkdir -p "$AUTOMATON_DIR"
+    cat > "$backlog" <<'BACKLOG'
+# Improvement Backlog
+
+## Prompt Improvements
+- [ ] Reduce prompt sizes across all phases for token efficiency
+
+## Architecture Improvements
+- [ ] Extract budget functions into sourced module
+- [ ] Extract self-build functions into sourced module
+
+## Configuration Improvements
+- [ ] Add validation for all config fields at load time
+
+## Performance Improvements
+- [ ] Reduce jq invocations by batching reads
+
+## Auto-generated
+BACKLOG
+
+    log "ORCHESTRATOR" "Self-build: initialized improvement backlog at $backlog"
+}
+
+# Shows --self --continue recommendation: estimates token cost for the
+# highest-priority backlog item and shows whether it's safe to run.
+_self_continue_recommendation() {
+    local backlog="$AUTOMATON_DIR/backlog.md"
+    if [ ! -f "$backlog" ]; then
+        echo "No backlog found. Run --self first to initialize."
+        exit 0
+    fi
+
+    local next_task
+    next_task=$(grep '^\- \[ \]' "$backlog" | head -1 | sed 's/^- \[ \] //')
+
+    if [ -z "$next_task" ]; then
+        echo "Backlog is empty. No improvement tasks remain."
+        exit 0
+    fi
+
+    echo "Next backlog item: $next_task"
+    echo ""
+
+    # Check remaining allowance
+    if [ "$BUDGET_MODE" = "allowance" ] && [ -f "$AUTOMATON_DIR/budget.json" ]; then
+        local remaining effective pct
+        remaining=$(jq '.tokens_remaining // 0' "$AUTOMATON_DIR/budget.json")
+        effective=$(jq '.limits.effective_allowance // 1' "$AUTOMATON_DIR/budget.json")
+        pct=$(awk -v r="$remaining" -v e="$effective" 'BEGIN { printf "%d", (r/e)*100 }')
+        echo "Remaining weekly allowance: $remaining tokens ($pct%)"
+
+        if [ "$pct" -gt 30 ]; then
+            echo "Recommendation: Safe to run - $pct% of remaining allowance"
+        elif [ "$pct" -gt 10 ]; then
+            echo "Recommendation: Proceed with caution - only $pct% remaining"
+        else
+            echo "Recommendation: Low allowance ($pct%). Consider waiting for reset."
+        fi
+    else
+        echo "Budget mode: api (cost-based). Run at your discretion."
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Run Journal & Performance Tracking (spec-26)
+# ---------------------------------------------------------------------------
+
+# Archives the current run data to .automaton/journal/run-{NNN}/.
+# Called at the end of run_orchestration().
+archive_run_journal() {
+    local journal_dir="$AUTOMATON_DIR/journal"
+    mkdir -p "$journal_dir"
+
+    # Determine next run number
+    local run_num=1
+    if [ -d "$journal_dir" ]; then
+        local latest
+        latest=$(ls -1d "$journal_dir"/run-* 2>/dev/null | sort -t- -k2 -n | tail -1 || true)
+        if [ -n "$latest" ]; then
+            run_num=$(( $(basename "$latest" | sed 's/run-//') + 1 ))
+        fi
+    fi
+
+    local run_dir
+    run_dir=$(printf "%s/run-%03d" "$journal_dir" "$run_num")
+    mkdir -p "$run_dir"
+
+    # Copy run artifacts
+    cp "$AUTOMATON_DIR/budget.json" "$run_dir/" 2>/dev/null || true
+    cp "$AUTOMATON_DIR/state.json" "$run_dir/" 2>/dev/null || true
+    cp "$AUTOMATON_DIR/session.log" "$run_dir/" 2>/dev/null || true
+    cp "$AUTOMATON_DIR/context_summary.md" "$run_dir/" 2>/dev/null || true
+    cp "$AUTOMATON_DIR/self_modifications.json" "$run_dir/" 2>/dev/null || true
+
+    # Generate performance metrics
+    _generate_run_metadata "$run_dir"
+
+    # Auto-generate backlog entries from performance data (spec-26)
+    if [ "${ARG_SELF:-false}" = "true" ]; then
+        _auto_generate_backlog "$run_dir"
+        _check_convergence "$journal_dir"
+    fi
+
+    # Enforce journal retention limit
+    local max_runs="${JOURNAL_MAX_RUNS:-50}"
+    local run_count
+    run_count=$(ls -1d "$journal_dir"/run-* 2>/dev/null | wc -l)
+    if [ "$run_count" -gt "$max_runs" ]; then
+        local to_remove=$((run_count - max_runs))
+        ls -1d "$journal_dir"/run-* 2>/dev/null | sort -t- -k2 -n | head -"$to_remove" | while read -r old_run; do
+            rm -rf "$old_run"
+        done
+        log "ORCHESTRATOR" "Journal: pruned $to_remove old runs (max: $max_runs)"
+    fi
+
+    log "ORCHESTRATOR" "Run archived to $run_dir"
+}
+
+# Generates run_metadata.json with performance metrics.
+_generate_run_metadata() {
+    local run_dir="$1"
+    local budget_file="$run_dir/budget.json"
+    local state_file="$run_dir/state.json"
+
+    if [ ! -f "$budget_file" ]; then
+        echo '{}' > "$run_dir/run_metadata.json"
+        return
+    fi
+
+    local total_input total_output total_tokens history_count
+    total_input=$(jq '.used.total_input // 0' "$budget_file")
+    total_output=$(jq '.used.total_output // 0' "$budget_file")
+    total_tokens=$((total_input + total_output))
+    history_count=$(jq '.history | length' "$budget_file")
+
+    # Tasks completed: count successful build iterations
+    local tasks_completed
+    tasks_completed=$(jq '[.history[] | select(.phase == "build" and .status == "success")] | length' "$budget_file")
+
+    # Tokens per completed task
+    local tokens_per_task=0
+    if [ "$tasks_completed" -gt 0 ]; then
+        tokens_per_task=$((total_tokens / tasks_completed))
+    fi
+
+    # Stall rate
+    local stall_count total_build_iters stall_rate
+    stall_count=$(jq '.stall_count // 0' "$state_file" 2>/dev/null || echo 0)
+    total_build_iters=$(jq '[.history[] | select(.phase == "build")] | length' "$budget_file")
+    if [ "$total_build_iters" -gt 0 ]; then
+        stall_rate=$(awk -v s="$stall_count" -v t="$total_build_iters" 'BEGIN { printf "%.2f", s/t }')
+    else
+        stall_rate="0.00"
+    fi
+
+    # Average iteration duration
+    local avg_duration
+    if [ "$history_count" -gt 0 ]; then
+        avg_duration=$(jq '[.history[].duration_seconds] | add / length | floor' "$budget_file")
+    else
+        avg_duration=0
+    fi
+
+    # Prompt overhead ratio (estimated: prompt tokens are a portion of input)
+    local prompt_overhead="0.00"
+
+    # First-pass success rate
+    local review_rework_count first_pass_rate
+    review_rework_count=$(jq '.replan_count // 0' "$state_file" 2>/dev/null || echo 0)
+    if [ "$tasks_completed" -gt 0 ]; then
+        local successful=$((tasks_completed - review_rework_count))
+        if [ "$successful" -lt 0 ]; then successful=0; fi
+        first_pass_rate=$(awk -v s="$successful" -v t="$tasks_completed" 'BEGIN { printf "%.2f", s/t }')
+    else
+        first_pass_rate="0.00"
+    fi
+
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    jq -n \
+        --arg ts "$timestamp" \
+        --argjson total_tokens "$total_tokens" \
+        --argjson tasks_completed "$tasks_completed" \
+        --argjson tokens_per_task "$tokens_per_task" \
+        --arg stall_rate "$stall_rate" \
+        --arg first_pass_rate "$first_pass_rate" \
+        --argjson avg_duration "$avg_duration" \
+        --arg prompt_overhead "$prompt_overhead" \
+        --argjson history_count "$history_count" \
+        '{
+            timestamp: $ts,
+            total_tokens: $total_tokens,
+            tasks_completed: $tasks_completed,
+            tokens_per_task: $tokens_per_task,
+            stall_rate: ($stall_rate | tonumber),
+            first_pass_success_rate: ($first_pass_rate | tonumber),
+            avg_iteration_duration_seconds: $avg_duration,
+            prompt_overhead_ratio: ($prompt_overhead | tonumber),
+            total_iterations: $history_count
+        }' > "$run_dir/run_metadata.json"
+}
+
+# Auto-generates backlog entries from performance analysis.
+_auto_generate_backlog() {
+    local run_dir="$1"
+    local metadata="$run_dir/run_metadata.json"
+    local backlog="$AUTOMATON_DIR/backlog.md"
+
+    if [ ! -f "$metadata" ] || [ ! -f "$backlog" ]; then
+        return
+    fi
+
+    local stall_rate tokens_per_task
+    stall_rate=$(jq '.stall_rate // 0' "$metadata")
+    tokens_per_task=$(jq '.tokens_per_task // 0' "$metadata")
+
+    local new_items=""
+
+    # Stall rate > 20% → improve prompt task
+    local stall_high
+    stall_high=$(awk -v s="$stall_rate" 'BEGIN { print (s > 0.20) ? "yes" : "no" }')
+    if [ "$stall_high" = "yes" ]; then
+        new_items="${new_items}\n- [ ] Investigate: stall rate ${stall_rate} exceeds 20% — review build prompt clarity"
+    fi
+
+    # Check if previous run exists for regression comparison
+    local prev_run
+    prev_run=$(ls -1d "$AUTOMATON_DIR/journal"/run-* 2>/dev/null | sort -t- -k2 -n | tail -2 | head -1 || true)
+    if [ -n "$prev_run" ] && [ -f "$prev_run/run_metadata.json" ]; then
+        local prev_tpt
+        prev_tpt=$(jq '.tokens_per_task // 0' "$prev_run/run_metadata.json")
+        if [ "$tokens_per_task" -gt 0 ] && [ "$prev_tpt" -gt 0 ]; then
+            local regression
+            regression=$(awk -v curr="$tokens_per_task" -v prev="$prev_tpt" \
+                'BEGIN { print (curr > prev * 1.1) ? "yes" : "no" }')
+            if [ "$regression" = "yes" ]; then
+                new_items="${new_items}\n- [ ] Investigate: token efficiency regression — ${tokens_per_task} tokens/task vs previous ${prev_tpt}"
+            fi
+        fi
+    fi
+
+    if [ -n "$new_items" ]; then
+        echo -e "$new_items" >> "$backlog"
+        log "ORCHESTRATOR" "Auto-generated backlog entries from performance analysis"
+    fi
+}
+
+# Convergence detection: warns if last 3 runs show no improvement.
+_check_convergence() {
+    local journal_dir="$1"
+
+    local recent_runs
+    recent_runs=$(ls -1d "$journal_dir"/run-* 2>/dev/null | sort -t- -k2 -n | tail -3)
+    local run_count
+    run_count=$(echo "$recent_runs" | grep -c . || echo 0)
+
+    if [ "$run_count" -lt 3 ]; then
+        return 0
+    fi
+
+    # Compare tokens_per_task across last 3 runs
+    local improving=false
+    local prev_tpt=0
+    while IFS= read -r run; do
+        if [ -f "$run/run_metadata.json" ]; then
+            local tpt
+            tpt=$(jq '.tokens_per_task // 0' "$run/run_metadata.json")
+            if [ "$prev_tpt" -gt 0 ] && [ "$tpt" -lt "$prev_tpt" ]; then
+                improving=true
+            fi
+            prev_tpt="$tpt"
+        fi
+    done <<< "$recent_runs"
+
+    if [ "$improving" = "false" ]; then
+        log "ORCHESTRATOR" "WARNING: Self-improvement may have converged. Last 3 runs show no measurable improvement. Consider manual review of backlog priorities."
+    fi
+}
+
+# Displays run history table and performance trends.
+# Called by --stats CLI command.
+display_stats() {
+    local journal_dir="$AUTOMATON_DIR/journal"
+
+    if [ ! -d "$journal_dir" ] || [ -z "$(ls -d "$journal_dir"/run-* 2>/dev/null)" ]; then
+        echo "No run history found. Complete at least one run first."
+        exit 0
+    fi
+
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo " automaton — Run History"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    printf "%-8s %-22s %-8s %-12s %-10s %-10s %-8s\n" \
+        "Run" "Timestamp" "Tasks" "Tokens/Task" "Stall%" "1stPass%" "AvgSec"
+    echo "-------  --------------------  ------  ----------  --------  --------  ------"
+
+    for run_dir in $(ls -1d "$journal_dir"/run-* 2>/dev/null | sort -t- -k2 -n); do
+        local meta="$run_dir/run_metadata.json"
+        if [ ! -f "$meta" ]; then
+            continue
+        fi
+
+        local run_name ts tasks tpt stall fp avg_dur
+        run_name=$(basename "$run_dir")
+        ts=$(jq -r '.timestamp // "?"' "$meta" | cut -c1-19)
+        tasks=$(jq '.tasks_completed // 0' "$meta")
+        tpt=$(jq '.tokens_per_task // 0' "$meta")
+        stall=$(jq '.stall_rate // 0' "$meta" | awk '{printf "%.0f", $1*100}')
+        fp=$(jq '.first_pass_success_rate // 0' "$meta" | awk '{printf "%.0f", $1*100}')
+        avg_dur=$(jq '.avg_iteration_duration_seconds // 0' "$meta")
+
+        printf "%-8s %-22s %-8s %-12s %-10s %-10s %-8s\n" \
+            "$run_name" "$ts" "$tasks" "$tpt" "${stall}%" "${fp}%" "${avg_dur}s"
+    done
+
+    echo ""
+
+    # Trend analysis
+    echo "Trends (last 5 runs):"
+    local recent_tpts=()
+    local recent_stalls=()
+    for run_dir in $(ls -1d "$journal_dir"/run-* 2>/dev/null | sort -t- -k2 -n | tail -5); do
+        local meta="$run_dir/run_metadata.json"
+        if [ -f "$meta" ]; then
+            recent_tpts+=($(jq '.tokens_per_task // 0' "$meta"))
+            recent_stalls+=($(jq '.stall_rate // 0' "$meta"))
+        fi
+    done
+
+    if [ "${#recent_tpts[@]}" -ge 2 ]; then
+        local first_tpt="${recent_tpts[0]}"
+        local last_tpt="${recent_tpts[${#recent_tpts[@]}-1]}"
+        if [ "$first_tpt" -gt "$last_tpt" ] 2>/dev/null; then
+            echo "  Tokens/task: improving (${first_tpt} -> ${last_tpt})"
+        elif [ "$first_tpt" -lt "$last_tpt" ] 2>/dev/null; then
+            echo "  Tokens/task: regressing (${first_tpt} -> ${last_tpt})"
+        else
+            echo "  Tokens/task: stable (${last_tpt})"
+        fi
+    fi
+
+    echo ""
+    exit 0
+}
+
 # Escalation: when automated recovery fails, stop cleanly and hand off to human.
 # Logs the escalation, marks it in IMPLEMENTATION_PLAN.md for visibility,
 # saves state, commits everything, and exits with code 3.
@@ -911,6 +1725,10 @@ escalate() {
     log "ORCHESTRATOR" "ESCALATION: $description"
 
     # Mark the escalation in the plan file for human visibility
+    local plan_file="IMPLEMENTATION_PLAN.md"
+    if [ "${ARG_SELF:-false}" = "true" ] && [ -f "$AUTOMATON_DIR/backlog.md" ]; then
+        plan_file="$AUTOMATON_DIR/backlog.md"
+    fi
     {
         echo ""
         echo "## ESCALATION"
@@ -918,7 +1736,7 @@ escalate() {
         echo "ESCALATION: $description"
         echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo "Phase: $current_phase, Iteration: $iteration"
-    } >> IMPLEMENTATION_PLAN.md
+    } >> "$plan_file"
 
     # Persist current state for --resume
     write_state
@@ -928,6 +1746,165 @@ escalate() {
     git commit -m "automaton: escalation - $description" 2>/dev/null || true
 
     exit 3
+}
+
+# ---------------------------------------------------------------------------
+# Context Efficiency (spec-24)
+# ---------------------------------------------------------------------------
+
+# Generates .automaton/context_summary.md at each phase transition.
+# Contains: project state, completed tasks, remaining tasks, key decisions,
+# recently modified files.
+generate_context_summary() {
+    local summary_file="$AUTOMATON_DIR/context_summary.md"
+    local plan_file="IMPLEMENTATION_PLAN.md"
+
+    # In self-build mode, use backlog
+    if [ "${ARG_SELF:-false}" = "true" ] && [ -f "$AUTOMATON_DIR/backlog.md" ]; then
+        plan_file="$AUTOMATON_DIR/backlog.md"
+    fi
+
+    {
+        echo "# Context Summary"
+        echo ""
+        echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo "Phase: $current_phase | Iteration: $iteration"
+        echo ""
+
+        # Completed tasks
+        echo "## Completed Tasks"
+        if [ -f "$plan_file" ]; then
+            grep '\[x\]' "$plan_file" | tail -10 || echo "None yet."
+        else
+            echo "No plan file found."
+        fi
+        echo ""
+
+        # Remaining tasks
+        echo "## Remaining Tasks"
+        if [ -f "$plan_file" ]; then
+            grep '\[ \]' "$plan_file" | head -10 || echo "All tasks complete."
+        else
+            echo "No plan file found."
+        fi
+        echo ""
+
+        # Recently modified files
+        echo "## Recently Modified Files"
+        git log --oneline --name-only -5 2>/dev/null | grep -v '^[a-f0-9]' | sort -u | head -15 || echo "No git history."
+        echo ""
+
+        # Budget status
+        echo "## Budget Status"
+        if [ -f "$AUTOMATON_DIR/budget.json" ]; then
+            if [ "$BUDGET_MODE" = "allowance" ]; then
+                local used remaining
+                used=$(jq '.tokens_used_this_week' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
+                remaining=$(jq '.tokens_remaining' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
+                echo "Mode: allowance | Used this week: $used | Remaining: $remaining"
+            else
+                local cost
+                cost=$(jq '.used.estimated_cost_usd' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
+                echo "Mode: api | Cost so far: \$$cost / \$$BUDGET_MAX_USD"
+            fi
+        fi
+    } > "$summary_file"
+
+    log "ORCHESTRATOR" "Context summary generated: $summary_file"
+}
+
+# Generates diff-based context for build iterations after the first.
+# Returns the path to a temp prompt file with incremental context prepended.
+# Args: base_prompt_file
+# Outputs: path to augmented prompt file (or empty string if first iteration)
+generate_incremental_build_prompt() {
+    local base_prompt="$1"
+    local augmented="$AUTOMATON_DIR/prompt_build_augmented.md"
+
+    # First build iteration: use base prompt as-is
+    if [ "$phase_iteration" -le 1 ]; then
+        echo ""
+        return 0
+    fi
+
+    local plan_file="IMPLEMENTATION_PLAN.md"
+    if [ "${ARG_SELF:-false}" = "true" ] && [ -f "$AUTOMATON_DIR/backlog.md" ]; then
+        plan_file="$AUTOMATON_DIR/backlog.md"
+    fi
+
+    {
+        # Context summary if available
+        if [ -f "$AUTOMATON_DIR/context_summary.md" ]; then
+            cat "$AUTOMATON_DIR/context_summary.md"
+            echo ""
+        fi
+
+        # Recent changes from git
+        echo "## Recent Changes"
+        echo '```'
+        git diff --stat HEAD~3 2>/dev/null || echo "No recent changes."
+        echo '```'
+        echo ""
+
+        # Current focus: next unchecked tasks
+        echo "## Current Focus"
+        if [ -f "$plan_file" ]; then
+            grep '\[ \]' "$plan_file" | head -5 || echo "All tasks complete."
+        fi
+        echo ""
+
+        # Iteration memory
+        if [ -f "$AUTOMATON_DIR/iteration_memory.md" ]; then
+            echo "## Recent Iteration History"
+            tail -5 "$AUTOMATON_DIR/iteration_memory.md"
+            echo ""
+        fi
+
+        # Self-build codebase overview
+        if [ "$SELF_BUILD_ENABLED" = "true" ] && [ -f "automaton.sh" ]; then
+            echo "## Codebase Overview (automaton.sh)"
+            echo '```'
+            grep -n '^[a-z_]*()' automaton.sh | head -40 || true
+            echo '```'
+            echo ""
+        fi
+
+        # Base prompt
+        cat "$base_prompt"
+    } > "$augmented"
+
+    echo "$augmented"
+}
+
+# Tracks prompt size and logs it. Called before each agent invocation.
+# Args: prompt_file
+log_prompt_size() {
+    local prompt_file="$1"
+    if [ ! -f "$prompt_file" ]; then
+        return 0
+    fi
+
+    local char_count est_tokens
+    char_count=$(wc -c < "$prompt_file")
+    est_tokens=$((char_count / 4))
+
+    log "ORCHESTRATOR" "Prompt size: ${char_count} chars (~${est_tokens} tokens) from $prompt_file"
+}
+
+# Appends a one-line summary to .automaton/iteration_memory.md after each
+# build iteration. Included in context for subsequent iterations.
+append_iteration_memory() {
+    local memory_file="$AUTOMATON_DIR/iteration_memory.md"
+
+    # Get files changed and a short summary
+    local files_summary
+    files_summary=$(git diff --name-only HEAD~1 2>/dev/null | head -3 | tr '\n' ', ' || echo "none")
+    files_summary="${files_summary%, }"
+
+    local line_info
+    line_info=$(git diff --stat HEAD~1 2>/dev/null | tail -1 | sed 's/^ *//' || echo "no changes")
+
+    echo "[BUILD $phase_iteration] $files_summary: $line_info" >> "$memory_file"
 }
 
 # ---------------------------------------------------------------------------
@@ -1188,6 +2165,19 @@ run_agent() {
         return 0
     fi
 
+    # Incremental context for build iterations after the first (spec-24)
+    local effective_prompt="$prompt_file"
+    if [ "$current_phase" = "build" ]; then
+        local augmented
+        augmented=$(generate_incremental_build_prompt "$prompt_file")
+        if [ -n "$augmented" ] && [ -f "$augmented" ]; then
+            effective_prompt="$augmented"
+        fi
+    fi
+
+    # Log prompt size for token efficiency tracking (spec-24)
+    log_prompt_size "$effective_prompt"
+
     local cmd_args=("-p" "--output-format" "stream-json" "--model" "$model")
 
     if [ "$FLAG_DANGEROUSLY_SKIP_PERMISSIONS" = "true" ]; then
@@ -1198,7 +2188,7 @@ run_agent() {
         cmd_args+=("--verbose")
     fi
 
-    log "ORCHESTRATOR" "Invoking agent: model=$model prompt=$prompt_file"
+    log "ORCHESTRATOR" "Invoking agent: model=$model prompt=$effective_prompt"
 
     AGENT_RESULT=""
     AGENT_EXIT_CODE=0
@@ -1206,7 +2196,7 @@ run_agent() {
     # Capture stdout (stream-json) and stderr (errors, verbose logs) together.
     # extract_tokens() greps for "type":"result" lines so stderr noise is harmless.
     # Error classifiers (is_rate_limit, is_network_error) need stderr to detect failures.
-    AGENT_RESULT=$(cat "$prompt_file" | claude "${cmd_args[@]}" 2>&1) || AGENT_EXIT_CODE=$?
+    AGENT_RESULT=$(cat "$effective_prompt" | claude "${cmd_args[@]}" 2>&1) || AGENT_EXIT_CODE=$?
 
     log "ORCHESTRATOR" "Agent finished: exit_code=$AGENT_EXIT_CODE"
 
@@ -1223,6 +2213,9 @@ ARG_SKIP_RESEARCH=false
 ARG_SKIP_REVIEW=false
 ARG_CONFIG_FILE=""
 ARG_DRY_RUN=false
+ARG_SELF=false
+ARG_CONTINUE=false
+ARG_STATS=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -1254,6 +2247,18 @@ while [ $# -gt 0 ]; do
             ARG_DRY_RUN=true
             shift
             ;;
+        --self)
+            ARG_SELF=true
+            shift
+            ;;
+        --continue)
+            ARG_CONTINUE=true
+            shift
+            ;;
+        --stats)
+            ARG_STATS=true
+            shift
+            ;;
         --help|-h)
             cat <<'USAGE'
 Usage: automaton.sh [OPTIONS]
@@ -1266,6 +2271,9 @@ Options:
   --skip-review     Skip Phase 4 (review), mark COMPLETE after build
   --config FILE     Use an alternate config file (default: automaton.config.json)
   --dry-run         Load config, run Gate 1, show settings, then exit
+  --self            Self-build mode: improve automaton itself (spec-25)
+  --self --continue Auto-pick highest-priority backlog item and run (spec-26)
+  --stats           Display run history and performance trends (spec-26)
   --help, -h        Show this help message
 
 Exit codes:
@@ -1322,6 +2330,13 @@ if [ "$ARG_SKIP_RESEARCH" = "true" ]; then
 fi
 if [ "$ARG_SKIP_REVIEW" = "true" ]; then
     FLAG_SKIP_REVIEW="true"
+fi
+
+# --- Self-build mode activation (spec-25) ---
+if [ "$ARG_SELF" = "true" ]; then
+    SELF_BUILD_ENABLED="true"
+    BUDGET_MODE="allowance"
+    log "ORCHESTRATOR" "Self-build mode activated: self_build.enabled=true, budget.mode=allowance"
 fi
 
 # --- Check parallel-mode dependencies (tmux, git worktree support) ---
@@ -3612,7 +4627,14 @@ run_parallel_build() {
 # Returns the prompt file for a given phase.
 get_phase_prompt() {
     case "$1" in
-        research) echo "PROMPT_research.md" ;;
+        research)
+            # Self-build mode uses specialized research prompt (spec-25)
+            if [ "${ARG_SELF:-false}" = "true" ] && [ -f "PROMPT_self_research.md" ]; then
+                echo "PROMPT_self_research.md"
+            else
+                echo "PROMPT_research.md"
+            fi
+            ;;
         plan)     echo "PROMPT_plan.md" ;;
         build)    echo "PROMPT_build.md" ;;
         review)   echo "PROMPT_review.md" ;;
@@ -3658,46 +4680,79 @@ emit_status_line() {
         iter_display="${phase_iteration}/${max_iter}"
     fi
 
-    remaining_budget=$(jq -r '(.limits.max_cost_usd - .used.estimated_cost_usd) * 100 | floor / 100' \
-        "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
-
-    echo "[${phase_upper} ${iter_display}] ${current_phase} iteration ${phase_iteration} | ${LAST_INPUT_TOKENS:-0} input / ${LAST_OUTPUT_TOKENS:-0} output (~\$${iter_cost}) | budget: \$${remaining_budget} remaining"
+    if [ "$BUDGET_MODE" = "allowance" ]; then
+        # Allowance mode: show remaining tokens instead of USD
+        local tokens_remaining tokens_display
+        tokens_remaining=$(jq '.tokens_remaining' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
+        if [ "$tokens_remaining" != "?" ] && [ "$tokens_remaining" -ge 1000000 ] 2>/dev/null; then
+            tokens_display="$((tokens_remaining / 1000000))M"
+        elif [ "$tokens_remaining" != "?" ] && [ "$tokens_remaining" -ge 1000 ] 2>/dev/null; then
+            tokens_display="$((tokens_remaining / 1000))K"
+        else
+            tokens_display="$tokens_remaining"
+        fi
+        echo "[${phase_upper} ${iter_display}] ${current_phase} iteration ${phase_iteration} | ${LAST_INPUT_TOKENS:-0} input / ${LAST_OUTPUT_TOKENS:-0} output (~\$${iter_cost}) | allowance: ${tokens_display} tokens remaining"
+    else
+        remaining_budget=$(jq -r '(.limits.max_cost_usd - .used.estimated_cost_usd) * 100 | floor / 100' \
+            "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
+        echo "[${phase_upper} ${iter_display}] ${current_phase} iteration ${phase_iteration} | ${LAST_INPUT_TOKENS:-0} input / ${LAST_OUTPUT_TOKENS:-0} output (~\$${iter_cost}) | budget: \$${remaining_budget} remaining"
+    fi
 }
 
 # Prints the startup banner showing version, phase, budget, config, and branch.
 # Called once at the start of run_orchestration() after state is determined.
 print_banner() {
     local phase="$1"
-    local max_tokens_display max_cost_display git_branch
-
-    # Format token budget for human readability (e.g., 10000000 → "10M")
-    if [ "$BUDGET_MAX_TOKENS" -ge 1000000 ] 2>/dev/null; then
-        max_tokens_display="$((BUDGET_MAX_TOKENS / 1000000))M"
-    elif [ "$BUDGET_MAX_TOKENS" -ge 1000 ] 2>/dev/null; then
-        max_tokens_display="$((BUDGET_MAX_TOKENS / 1000))K"
-    else
-        max_tokens_display="$BUDGET_MAX_TOKENS"
-    fi
-
-    # Format cost with two decimal places using printf
-    max_cost_display=$(printf '%.2f' "$BUDGET_MAX_USD")
+    local git_branch budget_display
 
     # Get the current git branch
     git_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 
     # Determine mode display string
     local mode_display
-    if [ "$PARALLEL_ENABLED" = "true" ]; then
+    if [ "${ARG_SELF:-false}" = "true" ]; then
+        mode_display="self-build"
+    elif [ "$PARALLEL_ENABLED" = "true" ]; then
         mode_display="parallel (${MAX_BUILDERS} builders)"
     else
         mode_display="single-builder"
+    fi
+
+    # Format budget display based on mode
+    if [ "$BUDGET_MODE" = "allowance" ]; then
+        local allowance_display effective_display
+        if [ "$BUDGET_WEEKLY_ALLOWANCE" -ge 1000000 ] 2>/dev/null; then
+            allowance_display="$((BUDGET_WEEKLY_ALLOWANCE / 1000000))M"
+        else
+            allowance_display="$BUDGET_WEEKLY_ALLOWANCE"
+        fi
+        local effective
+        effective=$(awk -v total="$BUDGET_WEEKLY_ALLOWANCE" -v reserve="$BUDGET_RESERVE_PERCENTAGE" \
+            'BEGIN { printf "%d", total * (1 - reserve/100) }')
+        if [ "$effective" -ge 1000000 ] 2>/dev/null; then
+            effective_display="$((effective / 1000000))M"
+        else
+            effective_display="$effective"
+        fi
+        budget_display="weekly ${allowance_display} (${effective_display} effective, ${BUDGET_RESERVE_PERCENTAGE}% reserve)"
+    else
+        local max_tokens_display max_cost_display
+        if [ "$BUDGET_MAX_TOKENS" -ge 1000000 ] 2>/dev/null; then
+            max_tokens_display="$((BUDGET_MAX_TOKENS / 1000000))M"
+        elif [ "$BUDGET_MAX_TOKENS" -ge 1000 ] 2>/dev/null; then
+            max_tokens_display="$((BUDGET_MAX_TOKENS / 1000))K"
+        else
+            max_tokens_display="$BUDGET_MAX_TOKENS"
+        fi
+        max_cost_display=$(printf '%.2f' "$BUDGET_MAX_USD")
+        budget_display="\$${max_cost_display} max | ${max_tokens_display} tokens max"
     fi
 
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo " automaton v${AUTOMATON_VERSION}"
     echo " Phase:   ${phase}"
     echo " Mode:    ${mode_display}"
-    echo " Budget:  \$${max_cost_display} max | ${max_tokens_display} tokens max"
+    echo " Budget:  ${budget_display}"
     echo " Config:  ${CONFIG_FILE_USED}"
     echo " Branch:  ${git_branch}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -3755,6 +4810,11 @@ post_iteration() {
         check_stall || stall_rc=$?
         check_test_failures "$AGENT_RESULT" || test_fail_rc=$?
         check_plan_integrity
+        # Self-build safety: validate orchestrator file modifications (spec-22)
+        self_build_validate
+        self_build_check_scope
+        # Append iteration memory for incremental context (spec-24)
+        append_iteration_memory
     fi
 
     # 8. Persist state
@@ -3806,6 +4866,9 @@ transition_to_phase() {
     # Clean up temp plan prompt if leaving the plan phase (spec-18)
     cleanup_parallel_plan_prompt
 
+    # Generate context summary at phase transition (spec-24)
+    generate_context_summary
+
     phase_history=$(echo "$phase_history" | jq -c \
         --arg p "$current_phase" --arg t "$now" \
         '. + [{"phase": $p, "completed_at": $t}]')
@@ -3823,14 +4886,23 @@ transition_to_phase() {
 # budget enforcement, stall detection, and the review→build feedback loop.
 run_orchestration() {
     # --- Gate 1: specs must exist before autonomous work ---
-    if ! gate_check "spec_completeness"; then
-        echo "Gate 1 (spec completeness) failed. Run the conversation phase first."
-        exit 1
+    # In self-build mode (spec-25), skip Gate 1 — specs already exist
+    if [ "${ARG_SELF:-false}" = "true" ]; then
+        log "ORCHESTRATOR" "Self-build mode: skipping Gate 1 (specs exist)"
+        # Initialize backlog if it doesn't exist
+        _self_init_backlog
+    else
+        if ! gate_check "spec_completeness"; then
+            echo "Gate 1 (spec completeness) failed. Run the conversation phase first."
+            exit 1
+        fi
     fi
 
     # --- Determine starting state (fresh or resumed) ---
     if [ "$ARG_RESUME" = "true" ]; then
         read_state
+        # Check for allowance week rollover on resume (spec-23)
+        _allowance_check_rollover
         log "ORCHESTRATOR" "RESUMED: phase=$current_phase iteration=$iteration"
     else
         initialize
@@ -3909,6 +4981,8 @@ run_orchestration() {
             # Checkpoint plan before each build iteration (corruption guard)
             if [ "$current_phase" = "build" ]; then
                 checkpoint_plan
+                # Self-build checkpoint: save orchestrator file checksums (spec-22)
+                self_build_checkpoint
             fi
 
             # --- Invoke the agent ---
@@ -4032,9 +5106,26 @@ run_orchestration() {
     fi
 
     write_state
+
+    # Archive run to journal (spec-26)
+    archive_run_journal
+
     log "ORCHESTRATOR" "Run complete."
     exit 0
 }
+
+# --- Stats mode (spec-26) ---
+if [ "$ARG_STATS" = "true" ]; then
+    display_stats
+fi
+
+# --- Self-continue mode (spec-26) ---
+if [ "$ARG_SELF" = "true" ] && [ "$ARG_CONTINUE" = "true" ]; then
+    _self_continue_recommendation
+    echo ""
+    echo "Proceeding with self-build..."
+    echo ""
+fi
 
 # --- Dry-run mode ---
 # Loads config, runs Gate 1, displays resolved settings and phase plan, exits 0.
@@ -4069,10 +5160,22 @@ if [ "$ARG_DRY_RUN" = "true" ]; then
     echo "    review:        ${MODEL_REVIEW}"
     echo "    subagent:      ${MODEL_SUBAGENT_DEFAULT}"
     echo "  Budget:"
-    echo "    max tokens:    ${BUDGET_MAX_TOKENS}"
-    echo "    max cost:      \$${BUDGET_MAX_USD}"
+    echo "    mode:          ${BUDGET_MODE}"
+    if [ "$BUDGET_MODE" = "allowance" ]; then
+        echo "    weekly tokens: ${BUDGET_WEEKLY_ALLOWANCE}"
+        echo "    reset day:     ${BUDGET_ALLOWANCE_RESET_DAY}"
+        echo "    reserve:       ${BUDGET_RESERVE_PERCENTAGE}%"
+    else
+        echo "    max tokens:    ${BUDGET_MAX_TOKENS}"
+        echo "    max cost:      \$${BUDGET_MAX_USD}"
+    fi
     echo "    per-iteration: ${BUDGET_PER_ITERATION} tokens (warning)"
     echo "    per-phase:     research=${BUDGET_PHASE_RESEARCH}, plan=${BUDGET_PHASE_PLAN}, build=${BUDGET_PHASE_BUILD}, review=${BUDGET_PHASE_REVIEW}"
+    echo "  Self-build:"
+    echo "    enabled:       ${SELF_BUILD_ENABLED}"
+    echo "    max files:     ${SELF_BUILD_MAX_FILES}"
+    echo "    max lines:     ${SELF_BUILD_MAX_LINES}"
+    echo "    smoke test:    ${SELF_BUILD_REQUIRE_SMOKE}"
     echo "  Rate limits:"
     echo "    tokens/min:    ${RATE_TOKENS_PER_MINUTE}"
     echo "    cooldown:      ${RATE_COOLDOWN_SECONDS}s (backoff: x${RATE_BACKOFF_MULTIPLIER}, max: ${RATE_MAX_BACKOFF_SECONDS}s)"
