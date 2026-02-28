@@ -33,7 +33,7 @@ Root prompt files have diverged from their template copies. Specific diffs:
 
 ## 4. Housekeeping
 
-- [ ] Stage and commit the `.gitignore` file (WHY: it is untracked per git status and should be part of the repository to ensure `.automaton/` runtime state is excluded from version control)
+- [x] Stage and commit the `.gitignore` file (WHY: it is untracked per git status and should be part of the repository to ensure `.automaton/` runtime state is excluded from version control)
 
 ## Summary
 
