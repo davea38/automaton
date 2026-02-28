@@ -8,6 +8,7 @@
     "subagent_default": "sonnet"
   },
   "budget": {
+    "mode": "api",
     "max_total_tokens": 10000000,
     "max_cost_usd": 50.00,
     "per_phase": {
@@ -16,7 +17,10 @@
       "build": 7000000,
       "review": 1500000
     },
-    "per_iteration": 500000
+    "per_iteration": 500000,
+    "weekly_allowance_tokens": 45000000,
+    "allowance_reset_day": "monday",
+    "reserve_percentage": 20
   },
   "rate_limits": {
     "tokens_per_minute": 80000,
@@ -61,5 +65,15 @@
     "stagger_seconds": 15,
     "wave_timeout_seconds": 600,
     "dashboard": true
+  },
+  "self_build": {
+    "enabled": false,
+    "max_files_per_iteration": 3,
+    "max_lines_changed_per_iteration": 200,
+    "protected_functions": ["run_orchestration", "_handle_shutdown"],
+    "require_smoke_test": true
+  },
+  "journal": {
+    "max_runs": 50
   }
 }

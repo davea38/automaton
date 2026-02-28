@@ -12,7 +12,7 @@ The root `automaton.sh` (5249 lines) has diverged significantly from `templates/
 
 The root `automaton.config.json` has `self_build`, `journal`, `weekly_allowance_tokens`, `allowance_reset_day`, `reserve_percentage`, and `mode` fields that the template lacks.
 
-- [ ] Copy the root `automaton.config.json` to `templates/automaton.config.json` to include `self_build`, `journal`, and extended budget fields (WHY: new projects scaffolded from templates would be missing self-build safety, journal, and dual-mode budget configuration)
+- [x] Copy the root `automaton.config.json` to `templates/automaton.config.json` to include `self_build`, `journal`, and extended budget fields (WHY: new projects scaffolded from templates would be missing self-build safety, journal, and dual-mode budget configuration)
 
 ## 3. Template Sync — Prompt Files (spec-13)
 
