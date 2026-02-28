@@ -3513,9 +3513,18 @@ print_banner() {
     # Get the current git branch
     git_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 
+    # Determine mode display string
+    local mode_display
+    if [ "$PARALLEL_ENABLED" = "true" ]; then
+        mode_display="parallel (${MAX_BUILDERS} builders)"
+    else
+        mode_display="single-builder"
+    fi
+
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo " automaton v${AUTOMATON_VERSION}"
     echo " Phase:   ${phase}"
+    echo " Mode:    ${mode_display}"
     echo " Budget:  \$${max_cost_display} max | ${max_tokens_display} tokens max"
     echo " Config:  ${CONFIG_FILE_USED}"
     echo " Branch:  ${git_branch}"

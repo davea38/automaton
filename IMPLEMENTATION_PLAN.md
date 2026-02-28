@@ -236,7 +236,7 @@
   <!-- files: automaton.sh, templates/automaton.sh -->
 - [x] Extend `--dry-run` output to display parallel configuration: show `parallel.enabled`, `max_builders`, `tmux_session_name`, `stagger_seconds`, `wave_timeout_seconds`, `dashboard`, and whether tmux/git-worktree dependencies are satisfied (WHY: dry-run must reflect all configuration including v2 settings so users can verify before a parallel run; spec-14, spec-01)
   <!-- files: automaton.sh, templates/automaton.sh -->
-- [ ] Update the startup banner to show parallel mode status: display "Mode: parallel (N builders)" or "Mode: single-builder" after loading config (WHY: the banner is the first thing users see; they need to know which mode is active; spec-14)
+- [x] Update the startup banner to show parallel mode status: display "Mode: parallel (N builders)" or "Mode: single-builder" after loading config (WHY: the banner is the first thing users see; they need to know which mode is active; spec-14)
   <!-- files: automaton.sh, templates/automaton.sh -->
 
 ## 26. Templates Sync
