@@ -230,7 +230,7 @@
 
 ## 25. Main Loop Integration (spec-14, spec-15)
 
-- [ ] Wire parallel build into the phase sequence controller: when `PARALLEL_ENABLED` is `true` and the current phase is `build`, call `run_parallel_build()` instead of the v1 single-builder loop; when `PARALLEL_ENABLED` is `false`, behavior is identical to v1 (WHY: this is the switch point between v1 and v2; it must be a clean conditional so the two modes are completely independent; spec-14, spec-15)
+- [x] Wire parallel build into the phase sequence controller: when `PARALLEL_ENABLED` is `true` and the current phase is `build`, call `run_parallel_build()` instead of the v1 single-builder loop; when `PARALLEL_ENABLED` is `false`, behavior is identical to v1 (WHY: this is the switch point between v1 and v2; it must be a clean conditional so the two modes are completely independent; spec-14, spec-15)
   <!-- files: automaton.sh, templates/automaton.sh -->
 - [ ] Wire tmux session lifecycle into the main script: call `start_tmux_session()` after dependency checks when `PARALLEL_ENABLED` is `true`, call `cleanup_tmux_session()` in signal handlers and on clean exit (WHY: the tmux session must be created before the build phase and cleaned up on any exit path; spec-15)
   <!-- files: automaton.sh, templates/automaton.sh -->

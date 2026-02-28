@@ -3694,7 +3694,15 @@ run_orchestration() {
 
         log "ORCHESTRATOR" "Phase: $current_phase (max: $([ "$max_iter" -eq 0 ] && echo 'unlimited' || echo "$max_iter"))"
 
-        # === Inner iteration loop ===
+        # === Build phase: parallel vs single-builder (spec-14, spec-15) ===
+        # When parallel.enabled is true and the current phase is build, use the
+        # wave-based conductor loop instead of the v1 single-builder iteration loop.
+        # When parallel.enabled is false, behavior is identical to v1.
+        if [ "$current_phase" = "build" ] && [ "$PARALLEL_ENABLED" = "true" ]; then
+            run_parallel_build
+        else
+
+        # === Inner iteration loop (v1 single-builder) ===
         while true; do
             phase_iteration=$((phase_iteration + 1))
             iteration=$((iteration + 1))
@@ -3777,6 +3785,8 @@ run_orchestration() {
             fi
         done
         # === End inner iteration loop ===
+
+        fi  # end parallel vs single-builder conditional
 
         # --- Gate checks and phase transitions ---
         case "$current_phase" in
