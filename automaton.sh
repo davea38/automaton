@@ -740,6 +740,9 @@ initialize_budget() {
             }' > "$tmp"
     fi
     mv "$tmp" "$AUTOMATON_DIR/budget.json"
+
+    # Initialize cross-project allowance tracking (spec-35 §5)
+    _init_cross_project_allowance
 }
 
 # Returns the start of the current allowance week (ISO date) based on reset day.
@@ -827,6 +830,208 @@ _allowance_check_rollover() {
         mv "$tmp" "$budget_file"
 
         log "ORCHESTRATOR" "New allowance week: $new_week_start to $new_week_end ($effective_allowance effective tokens)"
+
+        # Also roll over the cross-project allowance file
+        _cross_project_rollover "$stored_week_end"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Cross-Project Allowance Tracking (spec-35 §5)
+# ---------------------------------------------------------------------------
+# Tracks token usage across multiple projects sharing one Max Plan allowance.
+# WHY: Max Plan users running automaton on different projects share a single
+# weekly allowance; cross-project tracking prevents over-allocation.
+
+# Returns the path to the cross-project allowance file.
+_cross_project_allowance_file() {
+    echo "${HOME}/.automaton/allowance.json"
+}
+
+# Initializes ~/.automaton/allowance.json if missing or if the current week
+# has rolled over. Called from initialize_budget() in allowance mode.
+_init_cross_project_allowance() {
+    if [ "$BUDGET_MODE" != "allowance" ]; then
+        return 0
+    fi
+
+    local allowance_file
+    allowance_file=$(_cross_project_allowance_file)
+    local allowance_dir
+    allowance_dir=$(dirname "$allowance_file")
+
+    # Create ~/.automaton/ directory if needed
+    mkdir -p "$allowance_dir"
+
+    local week_start week_end
+    week_start=$(_allowance_week_start)
+    week_end=$(_allowance_week_end "$week_start")
+
+    if [ ! -f "$allowance_file" ] || [ ! -s "$allowance_file" ]; then
+        # Create fresh allowance file
+        jq -n \
+            --argjson weekly_allowance "$BUDGET_WEEKLY_ALLOWANCE" \
+            --arg reset_day "$BUDGET_ALLOWANCE_RESET_DAY" \
+            --arg week_start "$week_start" \
+            --arg week_end "$week_end" \
+            '{
+                weekly_allowance_tokens: $weekly_allowance,
+                allowance_reset_day: $reset_day,
+                current_week: {
+                    week_start: $week_start,
+                    week_end: $week_end,
+                    projects: {},
+                    total_used: 0
+                },
+                history: []
+            }' > "$allowance_file"
+        log "ORCHESTRATOR" "Cross-project allowance tracking initialized: $allowance_file"
+        return 0
+    fi
+
+    # Check if stored week has rolled over
+    local stored_week_end
+    stored_week_end=$(jq -r '.current_week.week_end // ""' "$allowance_file" 2>/dev/null || echo "")
+
+    if [ -n "$stored_week_end" ] && [[ "$(date +%Y-%m-%d)" > "$stored_week_end" ]]; then
+        _cross_project_rollover "$stored_week_end"
+    fi
+
+    # Update config values in case they changed
+    local tmp="${allowance_file}.tmp"
+    jq \
+        --argjson weekly_allowance "$BUDGET_WEEKLY_ALLOWANCE" \
+        --arg reset_day "$BUDGET_ALLOWANCE_RESET_DAY" \
+        '.weekly_allowance_tokens = $weekly_allowance | .allowance_reset_day = $reset_day' \
+        "$allowance_file" > "$tmp" && mv "$tmp" "$allowance_file"
+}
+
+# Archives the current week in ~/.automaton/allowance.json and resets for a new week.
+# Args: old_week_end (ISO date of the week that just ended)
+_cross_project_rollover() {
+    local old_week_end="$1"
+    local allowance_file
+    allowance_file=$(_cross_project_allowance_file)
+
+    if [ ! -f "$allowance_file" ]; then
+        return 0
+    fi
+
+    local new_week_start new_week_end
+    new_week_start=$(_allowance_week_start)
+    new_week_end=$(_allowance_week_end "$new_week_start")
+
+    local tmp="${allowance_file}.tmp"
+    jq \
+        --arg ws "$new_week_start" \
+        --arg we "$new_week_end" \
+        '
+        # Archive current week to history
+        .history += [{
+            week_start: .current_week.week_start,
+            week_end: .current_week.week_end,
+            projects: .current_week.projects,
+            total_used: .current_week.total_used
+        }] |
+        # Reset for new week
+        .current_week = {
+            week_start: $ws,
+            week_end: $we,
+            projects: {},
+            total_used: 0
+        }
+        ' "$allowance_file" > "$tmp" && mv "$tmp" "$allowance_file"
+
+    log "ORCHESTRATOR" "Cross-project allowance rolled over to week $new_week_start — $new_week_end"
+}
+
+# Updates ~/.automaton/allowance.json with token usage for the current project.
+# Called from update_budget() after each iteration in allowance mode.
+# Args: tokens_used (input + output tokens for this iteration)
+_update_cross_project_allowance() {
+    if [ "$BUDGET_MODE" != "allowance" ]; then
+        return 0
+    fi
+
+    local tokens_used="${1:-0}"
+    local allowance_file
+    allowance_file=$(_cross_project_allowance_file)
+
+    if [ ! -f "$allowance_file" ]; then
+        _init_cross_project_allowance
+    fi
+
+    local project_dir
+    project_dir=$(pwd)
+    local now_ts
+    now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    local tmp="${allowance_file}.tmp"
+    jq \
+        --arg project "$project_dir" \
+        --argjson tokens "$tokens_used" \
+        --arg last_run "$now_ts" \
+        '
+        # Update or create project entry
+        if .current_week.projects[$project] then
+            .current_week.projects[$project].tokens_used += $tokens |
+            .current_week.projects[$project].last_run = $last_run
+        else
+            .current_week.projects[$project] = {
+                tokens_used: $tokens,
+                runs: 0,
+                last_run: $last_run
+            }
+        end |
+        # Recalculate total from all projects
+        .current_week.total_used = ([.current_week.projects[].tokens_used] | add // 0)
+        ' "$allowance_file" > "$tmp" && mv "$tmp" "$allowance_file"
+}
+
+# Increments the run count for the current project in ~/.automaton/allowance.json.
+# Called from write_run_summary() at run completion.
+_increment_cross_project_run_count() {
+    if [ "$BUDGET_MODE" != "allowance" ]; then
+        return 0
+    fi
+
+    local allowance_file
+    allowance_file=$(_cross_project_allowance_file)
+
+    if [ ! -f "$allowance_file" ]; then
+        return 0
+    fi
+
+    local project_dir
+    project_dir=$(pwd)
+
+    local tmp="${allowance_file}.tmp"
+    jq \
+        --arg project "$project_dir" \
+        '
+        if .current_week.projects[$project] then
+            .current_week.projects[$project].runs += 1
+        else . end
+        ' "$allowance_file" > "$tmp" && mv "$tmp" "$allowance_file"
+}
+
+# Returns total tokens used across all projects this week.
+# Reads from ~/.automaton/allowance.json if available, falls back to local budget.json.
+# WHY: Pacing calculations must account for all projects sharing the allowance.
+_get_cross_project_total_used() {
+    local allowance_file
+    allowance_file=$(_cross_project_allowance_file)
+
+    if [ -f "$allowance_file" ]; then
+        jq '.current_week.total_used // 0' "$allowance_file" 2>/dev/null || echo 0
+    else
+        # Fall back to local project usage
+        local budget_file="$AUTOMATON_DIR/budget.json"
+        if [ -f "$budget_file" ]; then
+            jq '.tokens_used_this_week // 0' "$budget_file" 2>/dev/null || echo 0
+        else
+            echo 0
+        fi
     fi
 }
 
@@ -837,13 +1042,19 @@ _allowance_check_rollover() {
 _calculate_daily_budget() {
     local budget_file="$AUTOMATON_DIR/budget.json"
 
-    # Get remaining tokens from budget.json if available, else calculate from config
-    local remaining
-    if [ -f "$budget_file" ] && [ "$(jq -r '.mode // ""' "$budget_file")" = "allowance" ]; then
+    # Calculate remaining tokens using cross-project totals when available.
+    # WHY: Pacing must account for all projects sharing the weekly allowance.
+    local remaining effective_allowance cross_project_used
+    effective_allowance=$(awk -v total="$BUDGET_WEEKLY_ALLOWANCE" -v reserve="$BUDGET_RESERVE_PERCENTAGE" \
+        'BEGIN { printf "%d", total * (1 - reserve/100) }')
+    cross_project_used=$(_get_cross_project_total_used)
+    if [ "$cross_project_used" -gt 0 ]; then
+        remaining=$((effective_allowance - cross_project_used))
+        [ "$remaining" -lt 0 ] && remaining=0
+    elif [ -f "$budget_file" ] && [ "$(jq -r '.mode // ""' "$budget_file")" = "allowance" ]; then
         remaining=$(jq '.tokens_remaining // 0' "$budget_file")
     else
-        remaining=$(awk -v total="$BUDGET_WEEKLY_ALLOWANCE" -v reserve="$BUDGET_RESERVE_PERCENTAGE" \
-            'BEGIN { printf "%d", total * (1 - reserve/100) }')
+        remaining="$effective_allowance"
     fi
 
     # Calculate days until reset (minimum 1)
@@ -939,16 +1150,21 @@ display_budget_check() {
         weekly_allowance="$BUDGET_WEEKLY_ALLOWANCE"
         reserve_pct="$BUDGET_RESERVE_PERCENTAGE"
 
-        if [ -f "$budget_file" ] && [ "$(jq -r '.mode // ""' "$budget_file")" = "allowance" ]; then
+        effective_allowance=$(awk -v total="$weekly_allowance" -v reserve="$reserve_pct" \
+            'BEGIN { printf "%d", total * (1 - reserve/100) }')
+
+        # Use cross-project total when available for accurate pacing
+        local cross_total
+        cross_total=$(_get_cross_project_total_used)
+        if [ "$cross_total" -gt 0 ]; then
+            used_tokens="$cross_total"
+        elif [ -f "$budget_file" ] && [ "$(jq -r '.mode // ""' "$budget_file")" = "allowance" ]; then
             used_tokens=$(jq '.tokens_used_this_week // 0' "$budget_file")
-            remaining=$(jq '.tokens_remaining // 0' "$budget_file")
-            effective_allowance=$(jq '.limits.effective_allowance // 0' "$budget_file")
         else
             used_tokens=0
-            effective_allowance=$(awk -v total="$weekly_allowance" -v reserve="$reserve_pct" \
-                'BEGIN { printf "%d", total * (1 - reserve/100) }')
-            remaining="$effective_allowance"
         fi
+        remaining=$((effective_allowance - used_tokens))
+        [ "$remaining" -lt 0 ] && remaining=0
 
         # Calculate reserve tokens and available (remaining after reserve)
         local reserve_tokens
@@ -1000,6 +1216,31 @@ display_budget_check() {
         echo " Days left:  $days_left"
         printf " Daily pace: %s tokens/day\n" "$(_fmt_num "$daily_pace")"
         printf " Recommended run budget: %s tokens\n" "$(_fmt_num "$recommended_run")"
+
+        # Show cross-project usage if available (spec-35 §5)
+        local allowance_file
+        allowance_file=$(_cross_project_allowance_file)
+        if [ -f "$allowance_file" ]; then
+            local project_count cross_total
+            project_count=$(jq '.current_week.projects | length' "$allowance_file" 2>/dev/null || echo 0)
+            cross_total=$(jq '.current_week.total_used // 0' "$allowance_file" 2>/dev/null || echo 0)
+            if [ "$project_count" -gt 1 ] || [ "$cross_total" -gt 0 ]; then
+                echo "─────────── Cross-Project Usage ────────"
+                printf " Projects:   %s\n" "$project_count"
+                printf " Total used: %s tokens (all projects)\n" "$(_fmt_num "$cross_total")"
+                # List individual projects
+                local projects_list
+                projects_list=$(jq -r '.current_week.projects | to_entries[] | "\(.key)\t\(.value.tokens_used)\t\(.value.runs)"' "$allowance_file" 2>/dev/null || true)
+                if [ -n "$projects_list" ]; then
+                    while IFS=$'\t' read -r proj_path proj_tokens proj_runs; do
+                        local proj_name
+                        proj_name=$(basename "$proj_path")
+                        printf "   %s: %s tokens (%s runs)\n" "$proj_name" "$(_fmt_num "$proj_tokens")" "$proj_runs"
+                    done <<< "$projects_list"
+                fi
+            fi
+        fi
+
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo ""
     else
@@ -1211,6 +1452,12 @@ update_budget() {
         --argjson utilization "$estimated_utilization" \
         "$jq_filter" "$budget_file" > "$tmp"
     mv "$tmp" "$budget_file"
+
+    # Update cross-project allowance tracking (spec-35 §5)
+    if [ "$BUDGET_MODE" = "allowance" ]; then
+        local iter_tokens=$((input_tokens + output_tokens))
+        _update_cross_project_allowance "$iter_tokens"
+    fi
 }
 
 # Checks rolling average cache hit ratio for the current phase.
@@ -2494,6 +2741,9 @@ write_run_summary() {
     # Accumulate into persistent budget history (spec-34)
     update_budget_history "$run_id" "$input_tokens" "$output_tokens" \
         "$cache_create" "$cache_read" "$cost_usd"
+
+    # Increment run count in cross-project allowance tracking (spec-35 §5)
+    _increment_cross_project_run_count
 }
 
 # Accumulates per-run token and cost data into .automaton/budget-history.json.
