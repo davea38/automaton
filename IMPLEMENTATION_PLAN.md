@@ -49,7 +49,7 @@ Persistent state split is required by spec-37 (session bootstrap reads `learning
 
 Prompt cache reads cost 90% less than uncached input tokens. Spec-29's static-first ordering makes caching possible; this spec activates and tracks it.
 
-- [ ] Add `<!-- STATIC CONTENT — do not inject per-iteration data above this line -->` markers to all `PROMPT_*.md` files to define the cache boundary (WHY: the static prefix must be byte-for-byte identical across iterations to achieve cache hits; explicit markers prevent accidental injection of dynamic data)
+- [x] Add `<!-- STATIC CONTENT — do not inject per-iteration data above this line -->` markers to all `PROMPT_*.md` files to define the cache boundary (WHY: the static prefix must be byte-for-byte identical across iterations to achieve cache hits; explicit markers prevent accidental injection of dynamic data)
 - [ ] Calculate cache hit ratio (`cache_read / (cache_read + input + cache_create)`) after every agent invocation in `post_iteration()` and store in `budget.json` history (WHY: cache hit ratio is the primary metric for validating that prompt assembly preserves the static prefix)
 - [ ] Emit warning when rolling average cache hit ratio drops below 50% after 3+ iterations in any phase (WHY: low cache ratio indicates the static prefix is changing between iterations — likely a bug in prompt assembly)
 - [ ] Ensure all parallel builders share an identical static prompt prefix by moving builder number, wave number, task assignment, and file ownership list to `<dynamic_context>` (WHY: cache entry created by builder-1 is reused by builders 2..N, saving 90% on input tokens for all subsequent builders in a wave)

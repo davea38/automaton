@@ -1,3 +1,5 @@
+<!-- STATIC CONTENT — do not inject per-iteration data above this line -->
+
 # Phase: Self-Build Research
 
 You are in SELF-BUILD RESEARCH mode. You will analyze automaton's own performance data, research Claude CLI best practices, and identify optimization opportunities. You will NOT write any code.

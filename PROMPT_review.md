@@ -1,3 +1,5 @@
+<!-- STATIC CONTENT — do not inject per-iteration data above this line -->
+
 <context>
 ## Project Context
 

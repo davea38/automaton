@@ -1,3 +1,5 @@
+<!-- STATIC CONTENT — do not inject per-iteration data above this line -->
+
 # Phase: Review
 
 You are in REVIEW mode. You will independently verify the build output against specs. You will NOT fix code — only identify issues and create tasks for the builder.
