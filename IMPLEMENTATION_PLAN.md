@@ -218,9 +218,9 @@ These specs build on the garden and signals to add collective decision-making an
 
 #### 39.2 Quorum Mechanics
 
-- [ ] Add `quorum` configuration section to `automaton.config.json` with all fields (enabled, voters, thresholds for seed_promotion/bloom_implementation/constitutional_amendment/emergency_override, max_tokens_per_voter, max_cost_per_cycle_usd, rejection_cooldown_cycles, model) (WHY: quorum thresholds are the governance dial — too low and bad ideas pass, too high and nothing advances; configuration enables tuning) <!-- test: tests/test_quorum_config.sh -->
+- [x] Add `quorum` configuration section to `automaton.config.json` with all fields (enabled, voters, thresholds for seed_promotion/bloom_implementation/constitutional_amendment/emergency_override, max_tokens_per_voter, max_cost_per_cycle_usd, rejection_cooldown_cycles, model) (WHY: quorum thresholds are the governance dial — too low and bad ideas pass, too high and nothing advances; configuration enables tuning) <!-- test: tests/test_quorum_config.sh -->
 
-- [ ] Update `.gitignore` to add `.automaton/votes/` as persistent git-tracked state (WHY: vote records form the audit trail of every autonomous decision — they must persist for transparency and debugging) <!-- test: none -->
+- [x] Update `.gitignore` to add `.automaton/votes/` as persistent git-tracked state (WHY: vote records form the audit trail of every autonomous decision — they must persist for transparency and debugging) <!-- test: none -->
 
 - [ ] Implement `_quorum_invoke_voter()` in `automaton.sh` that invokes a single voter agent with the proposal JSON using `claude --agent` with Sonnet model, `--no-tools`, and `--max-tokens` limit, and parses the JSON vote response (handling invalid output as abstain) (WHY: lightweight read-only Sonnet invocations keep quorum costs predictable while each voter's perspective ensures balanced evaluation) <!-- test: tests/test_quorum_invoke.sh -->
 

@@ -137,6 +137,18 @@ load_config() {
         STIGMERGY_DECAY_FLOOR=$(jq -r '.stigmergy.decay_floor // 0.05' "$config_file")
         STIGMERGY_MATCH_THRESHOLD=$(jq -r '.stigmergy.match_threshold // 0.6' "$config_file")
         STIGMERGY_MAX_SIGNALS=$(jq -r '.stigmergy.max_signals // 100' "$config_file")
+
+        # -- quorum (spec-39) --
+        QUORUM_ENABLED=$(jq -r '.quorum.enabled // true' "$config_file")
+        QUORUM_VOTERS=$(jq -r '.quorum.voters // ["conservative","ambitious","efficiency","quality","advocate"] | join(",")' "$config_file")
+        QUORUM_THRESHOLD_SEED=$(jq -r '.quorum.thresholds.seed_promotion // 3' "$config_file")
+        QUORUM_THRESHOLD_BLOOM=$(jq -r '.quorum.thresholds.bloom_implementation // 3' "$config_file")
+        QUORUM_THRESHOLD_AMENDMENT=$(jq -r '.quorum.thresholds.constitutional_amendment // 4' "$config_file")
+        QUORUM_THRESHOLD_EMERGENCY=$(jq -r '.quorum.thresholds.emergency_override // 5' "$config_file")
+        QUORUM_MAX_TOKENS_PER_VOTER=$(jq -r '.quorum.max_tokens_per_voter // 500' "$config_file")
+        QUORUM_MAX_COST_PER_CYCLE=$(jq -r '.quorum.max_cost_per_cycle_usd // 1.00' "$config_file")
+        QUORUM_REJECTION_COOLDOWN=$(jq -r '.quorum.rejection_cooldown_cycles // 5' "$config_file")
+        QUORUM_MODEL=$(jq -r '.quorum.model // "sonnet"' "$config_file")
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -249,6 +261,18 @@ load_config() {
         STIGMERGY_DECAY_FLOOR="0.05"
         STIGMERGY_MATCH_THRESHOLD="0.6"
         STIGMERGY_MAX_SIGNALS=100
+
+        # -- quorum (spec-39) --
+        QUORUM_ENABLED="true"
+        QUORUM_VOTERS="conservative,ambitious,efficiency,quality,advocate"
+        QUORUM_THRESHOLD_SEED=3
+        QUORUM_THRESHOLD_BLOOM=3
+        QUORUM_THRESHOLD_AMENDMENT=4
+        QUORUM_THRESHOLD_EMERGENCY=5
+        QUORUM_MAX_TOKENS_PER_VOTER=500
+        QUORUM_MAX_COST_PER_CYCLE="1.00"
+        QUORUM_REJECTION_COOLDOWN=5
+        QUORUM_MODEL="sonnet"
     fi
 }
 
@@ -842,6 +866,11 @@ RATE
                 updated_at: $updated_at
             }' > "$index_file"
         fi
+    fi
+
+    # Initialize votes directory when quorum enabled (spec-39)
+    if [ "$QUORUM_ENABLED" = "true" ]; then
+        mkdir -p "$AUTOMATON_DIR/votes"
     fi
 
     # Generate bootstrap script if it doesn't exist (spec-37, gap #1)

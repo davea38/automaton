@@ -111,5 +111,19 @@
     "decay_floor": 0.05,
     "match_threshold": 0.6,
     "max_signals": 100
+  },
+  "quorum": {
+    "enabled": true,
+    "voters": ["conservative", "ambitious", "efficiency", "quality", "advocate"],
+    "thresholds": {
+      "seed_promotion": 3,
+      "bloom_implementation": 3,
+      "constitutional_amendment": 4,
+      "emergency_override": 5
+    },
+    "max_tokens_per_voter": 500,
+    "max_cost_per_cycle_usd": 1,
+    "rejection_cooldown_cycles": 5,
+    "model": "sonnet"
   }
 }
