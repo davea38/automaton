@@ -2699,6 +2699,45 @@ log_prompt_size() {
     log "ORCHESTRATOR" "Prompt size: ${char_count} chars (~${est_tokens} tokens) from $prompt_file"
 }
 
+# Checks whether the static prefix of a prompt file meets the minimum token
+# threshold required for prompt caching. Logs an informational message when
+# the prefix is too small to be cached.
+# WHY: Users need to know when caching is inactive so they can decide whether
+# to expand the static prefix (spec-30).
+#
+# Minimum cacheable thresholds per model:
+#   Opus/Haiku: 4096 tokens
+#   Sonnet: 2048 tokens
+#
+# Args: prompt_file model
+check_cache_prefix_threshold() {
+    local prompt_file="$1"
+    local model="$2"
+    [ -f "$prompt_file" ] || return 0
+
+    # Extract static prefix (everything before <dynamic_context>)
+    local static_chars
+    if grep -q '<dynamic_context>' "$prompt_file"; then
+        static_chars=$(sed -n '1,/<dynamic_context>/p' "$prompt_file" | wc -c)
+    else
+        # No dynamic_context marker — entire prompt is static
+        static_chars=$(wc -c < "$prompt_file")
+    fi
+
+    local est_tokens=$((static_chars / 4))
+
+    # Determine threshold for model
+    local threshold
+    case "$model" in
+        sonnet) threshold=2048 ;;
+        *)      threshold=4096 ;;
+    esac
+
+    if [ "$est_tokens" -lt "$threshold" ]; then
+        log "ORCHESTRATOR" "INFO: Static prompt prefix is ~${est_tokens} tokens, below the ${threshold}-token minimum for caching with model '${model}'. Prompt caching will be inactive. Consider expanding the static prefix to enable cache hits."
+    fi
+}
+
 # Appends a one-line summary to .automaton/iteration_memory.md after each
 # build iteration. Included in context for subsequent iterations.
 append_iteration_memory() {
@@ -2985,6 +3024,9 @@ run_agent() {
 
     # Log prompt size for token efficiency tracking (spec-24)
     log_prompt_size "$effective_prompt"
+
+    # Check if static prefix meets minimum cacheable threshold (spec-30)
+    check_cache_prefix_threshold "$effective_prompt" "$model"
 
     local cmd_args=("-p" "--output-format" "stream-json" "--model" "$model")
 
