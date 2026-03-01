@@ -7783,6 +7783,210 @@ _safety_preflight() {
 }
 
 # ---------------------------------------------------------------------------
+# Evolution Phase: REFLECT (spec-41 §3)
+# ---------------------------------------------------------------------------
+
+# Analyzes automaton's current state to identify what needs attention.
+# Processes metrics trends to emit signals and auto-seed garden ideas from
+# metric threshold breaches and strong unlinked signals. Prunes expired
+# garden items and decays all signals. Writes reflect.json to the cycle dir.
+#
+# Args: cycle_id
+# Returns: 0 on success, 1 on failure
+_evolve_reflect() {
+    local cycle_id="${1:?_evolve_reflect requires cycle_id}"
+    local cycle_dir="$AUTOMATON_DIR/evolution/cycle-${cycle_id}"
+    mkdir -p "$cycle_dir"
+
+    log "EVOLVE" "REFLECT phase starting (cycle=$cycle_id)"
+
+    local signals_emitted=0
+    local ideas_seeded=0
+    local ideas_pruned=0
+    local signals_decayed=0
+    local metric_alerts="[]"
+
+    # 1. Analyze metric trends
+    local trends
+    trends=$(_metrics_analyze_trends "${METRICS_TREND_WINDOW:-5}")
+
+    # Extract degrading metrics with alerts
+    metric_alerts=$(echo "$trends" | jq '[.[] | select(.alert == true)]' 2>/dev/null || echo "[]")
+    local alert_count
+    alert_count=$(echo "$metric_alerts" | jq 'length' 2>/dev/null || echo 0)
+
+    if [ "$alert_count" -gt 0 ]; then
+        log "EVOLVE" "REFLECT: $alert_count metric alerts detected"
+    fi
+
+    # 2. Emit signals for degrading metrics
+    local i=0
+    while [ "$i" -lt "$alert_count" ]; do
+        local metric_name metric_dir consec_deg category
+        metric_name=$(echo "$metric_alerts" | jq -r ".[$i].metric")
+        metric_dir=$(echo "$metric_alerts" | jq -r ".[$i].direction")
+        consec_deg=$(echo "$metric_alerts" | jq -r ".[$i].consecutive_degrading")
+        category=$(echo "$metric_alerts" | jq -r ".[$i].category")
+
+        _signal_emit "attention_needed" \
+            "Degrading metric: $metric_name" \
+            "$metric_name has been $metric_dir for $consec_deg consecutive cycles (category: $category)" \
+            "evolve-reflect" "$cycle_id" \
+            "metric=$metric_name,direction=$metric_dir,consecutive=$consec_deg" \
+            && signals_emitted=$((signals_emitted + 1))
+
+        i=$((i + 1))
+    done
+
+    # 3. Auto-seed garden ideas from metric threshold breaches
+    if [ "${GARDEN_AUTO_SEED_METRICS:-true}" = "true" ] && [ "$alert_count" -gt 0 ]; then
+        i=0
+        while [ "$i" -lt "$alert_count" ]; do
+            local metric_name category
+            metric_name=$(echo "$metric_alerts" | jq -r ".[$i].metric")
+            category=$(echo "$metric_alerts" | jq -r ".[$i].category")
+
+            local tags="auto-seed,metrics,$category,$metric_name"
+            local dup_id
+            dup_id=$(_garden_find_duplicates "$tags" 2>/dev/null) || true
+
+            if [ -z "$dup_id" ]; then
+                local seed_id
+                seed_id=$(_garden_plant_seed \
+                    "Improve $metric_name" \
+                    "Metric $metric_name in category $category has been degrading. Investigate root cause and implement improvement." \
+                    "metric_alert" "evolve-reflect" "evolve-reflect" \
+                    "medium" "$tags") && ideas_seeded=$((ideas_seeded + 1))
+                log "EVOLVE" "REFLECT: Auto-seeded idea from metric alert: $metric_name"
+            else
+                _garden_water "$dup_id" "metric_trend" \
+                    "Metric $metric_name still degrading (cycle $cycle_id)" \
+                    "evolve-reflect"
+                log "EVOLVE" "REFLECT: Watered existing idea $dup_id for metric: $metric_name"
+            fi
+
+            i=$((i + 1))
+        done
+    fi
+
+    # 4. Auto-seed garden ideas from strong unlinked signals
+    if [ "${GARDEN_AUTO_SEED_SIGNALS:-true}" = "true" ]; then
+        local unlinked_signals
+        unlinked_signals=$(_signal_get_unlinked 2>/dev/null || echo "[]")
+        local unlinked_count
+        unlinked_count=$(echo "$unlinked_signals" | jq 'length' 2>/dev/null || echo 0)
+
+        local seed_threshold="${GARDEN_SIGNAL_SEED_THRESHOLD:-0.7}"
+        local j=0
+        while [ "$j" -lt "$unlinked_count" ]; do
+            local sig_strength sig_title sig_desc sig_id sig_type
+            sig_strength=$(echo "$unlinked_signals" | jq -r ".[$j].strength")
+            sig_title=$(echo "$unlinked_signals" | jq -r ".[$j].title")
+            sig_desc=$(echo "$unlinked_signals" | jq -r ".[$j].description")
+            sig_id=$(echo "$unlinked_signals" | jq -r ".[$j].id")
+            sig_type=$(echo "$unlinked_signals" | jq -r ".[$j].type")
+
+            local above_threshold
+            above_threshold=$(awk -v s="$sig_strength" -v t="$seed_threshold" \
+                'BEGIN { print (s >= t) ? "1" : "0" }')
+
+            if [ "$above_threshold" = "1" ]; then
+                local tags="auto-seed,signal,$sig_type"
+                local dup_id
+                dup_id=$(_garden_find_duplicates "$tags" 2>/dev/null) || true
+
+                if [ -z "$dup_id" ]; then
+                    local seed_id
+                    seed_id=$(_garden_plant_seed \
+                        "Address: $sig_title" \
+                        "$sig_desc (auto-seeded from strong unlinked signal $sig_id)" \
+                        "signal" "evolve-reflect" "evolve-reflect" \
+                        "medium" "$tags")
+                    if [ -n "$seed_id" ]; then
+                        _signal_link_idea "$sig_id" "$seed_id"
+                        ideas_seeded=$((ideas_seeded + 1))
+                        log "EVOLVE" "REFLECT: Auto-seeded idea $seed_id from signal $sig_id"
+                    fi
+                else
+                    _garden_water "$dup_id" "signal_observation" \
+                        "Signal $sig_id ($sig_title) still strong at $sig_strength" \
+                        "evolve-reflect"
+                    _signal_link_idea "$sig_id" "$dup_id"
+                    log "EVOLVE" "REFLECT: Watered existing idea $dup_id from signal $sig_id"
+                fi
+            fi
+
+            j=$((j + 1))
+        done
+    fi
+
+    # 5. Prune expired garden items
+    local pre_prune_total=0
+    if [ "${GARDEN_ENABLED:-true}" = "true" ]; then
+        local index_file="$AUTOMATON_DIR/garden/_index.json"
+        if [ -f "$index_file" ]; then
+            pre_prune_total=$(jq '.total // 0' "$index_file" 2>/dev/null || echo 0)
+        fi
+        _garden_prune_expired
+        if [ -f "$index_file" ]; then
+            local post_prune_total
+            post_prune_total=$(jq '.total // 0' "$index_file" 2>/dev/null || echo 0)
+            # Note: wilt increases total, so pruned = ideas that moved to wilt
+            # We track via the rebuild count difference
+        fi
+        _garden_rebuild_index
+    fi
+    log "EVOLVE" "REFLECT: Garden pruning complete"
+
+    # 6. Decay all signals
+    local pre_decay_count=0
+    if [ -f "$AUTOMATON_DIR/signals.json" ]; then
+        pre_decay_count=$(jq '.signals | length' "$AUTOMATON_DIR/signals.json" 2>/dev/null || echo 0)
+    fi
+    _signal_decay_all 2>/dev/null || true
+    local post_decay_count=0
+    if [ -f "$AUTOMATON_DIR/signals.json" ]; then
+        post_decay_count=$(jq '.signals | length' "$AUTOMATON_DIR/signals.json" 2>/dev/null || echo 0)
+    fi
+    signals_decayed=$((pre_decay_count - post_decay_count))
+    if [ "$signals_decayed" -lt 0 ]; then signals_decayed=0; fi
+
+    # 7. Build recommendation from metric alerts
+    local recommendation="No significant issues detected"
+    if [ "$alert_count" -gt 0 ]; then
+        local top_metric
+        top_metric=$(echo "$metric_alerts" | jq -r '.[0].metric // "unknown"')
+        recommendation="Focus on $top_metric — degrading trend detected"
+    fi
+
+    # 8. Write reflect.json
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    jq -n \
+        --argjson cycle_id "$cycle_id" \
+        --arg timestamp "$now" \
+        --argjson metric_alerts "$metric_alerts" \
+        --argjson signals_emitted "$signals_emitted" \
+        --argjson ideas_seeded "$ideas_seeded" \
+        --argjson ideas_pruned "$ideas_pruned" \
+        --argjson signals_decayed "$signals_decayed" \
+        --arg recommendation "$recommendation" \
+        '{
+            cycle_id: $cycle_id,
+            timestamp: $timestamp,
+            metric_alerts: $metric_alerts,
+            signals_emitted: $signals_emitted,
+            ideas_seeded: $ideas_seeded,
+            ideas_pruned: $ideas_pruned,
+            signals_decayed: $signals_decayed,
+            recommendation: $recommendation
+        }' > "$cycle_dir/reflect.json"
+
+    log "EVOLVE" "REFLECT phase complete: signals_emitted=$signals_emitted ideas_seeded=$ideas_seeded signals_decayed=$signals_decayed"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
