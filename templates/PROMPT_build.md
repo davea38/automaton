@@ -5,9 +5,7 @@
 
 1. Study `AGENTS.md` for operational guidance (project name, language, commands, existing learnings).
 2. Study `IMPLEMENTATION_PLAN.md` to see all tasks.
-3. If `.automaton/context_summary.md` exists, read it for project state overview.
-4. If `.automaton/iteration_memory.md` exists, read the last 10 lines for recent build history.
-5. Study relevant files in `specs/`. Use subagents when the codebase is large enough to benefit from parallel reads; for small projects, read files directly.
+3. Study relevant files in `specs/`. Use subagents when the codebase is large enough to benefit from parallel reads; for small projects, read files directly.
 </context>
 
 <identity>

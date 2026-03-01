@@ -4,9 +4,8 @@
 ## Project Context
 
 1. Study `AGENTS.md` for operational guidance (project name, language, commands, existing learnings).
-2. If `.automaton/context_summary.md` exists, read it for project state overview before reading specs.
-3. Read every file in `specs/` to understand the full set of requirements. Use subagents when the specs directory contains many files; for a handful of specs, read them directly.
-4. Study the existing codebase (`src/` or relevant directories). Do NOT assume functionality is missing — confirm by searching the code first.
+2. Read every file in `specs/` to understand the full set of requirements. Use subagents when the specs directory contains many files; for a handful of specs, read them directly.
+3. Study the existing codebase (`src/` or relevant directories). Do NOT assume functionality is missing — confirm by searching the code first.
 </context>
 
 <identity>

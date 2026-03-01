@@ -10,7 +10,6 @@ You are in REVIEW mode. You will independently verify the build output against s
 2. Read `PRD.md` for the original vision and success criteria.
 3. Read every file in `specs/` to understand what was required.
 4. Read `IMPLEMENTATION_PLAN.md` to see what was built and what tasks were completed.
-5. If `.automaton/context_summary.md` exists, read it for project state overview.
 
 ## Phase 1 - Run Validation Suite
 

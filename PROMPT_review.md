@@ -7,7 +7,6 @@
 2. Read `PRD.md` for the original vision and success criteria.
 3. Read every file in `specs/` to understand what was required. Use subagents when the specs directory contains many files; for a handful of specs, read them directly.
 4. Read `IMPLEMENTATION_PLAN.md` to see what was built and what tasks were completed.
-5. If `.automaton/context_summary.md` exists, read it for project state overview.
 </context>
 
 <identity>

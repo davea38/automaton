@@ -5,8 +5,7 @@
 
 1. Study `AGENTS.md` for operational guidance (project name, any existing tech preferences).
 2. Read `PRD.md` for the high-level vision and architecture overview.
-3. If `.automaton/context_summary.md` exists, read it for project state overview.
-4. Read every file in `specs/` to understand the full set of requirements. Use subagents when the specs directory contains many files; for a handful of specs, read them directly.
+3. Read every file in `specs/` to understand the full set of requirements. Use subagents when the specs directory contains many files; for a handful of specs, read them directly.
 </context>
 
 <identity>
