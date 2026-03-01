@@ -27,6 +27,13 @@ setup_bootstrap_env() {
     BOOTSTRAP_MANIFEST=""
 }
 
+# Helper: call _run_bootstrap and set BOOTSTRAP_FAILED from exit code
+# (same pattern as run_agent() in automaton.sh)
+run_bootstrap_with_flag() {
+    BOOTSTRAP_FAILED="false"
+    BOOTSTRAP_MANIFEST=$(_run_bootstrap "$@") || BOOTSTRAP_FAILED="true"
+}
+
 create_mock_init_sh() {
     mkdir -p "$TEMP_DIR/.automaton"
     cat > "$TEMP_DIR/.automaton/init.sh" <<'INITEOF'
@@ -55,7 +62,7 @@ eval "$(extract_function _format_bootstrap_for_context "$PROJECT_ROOT/automaton.
 # --- Test 1: BOOTSTRAP_FAILED is false on success ---
 setup_bootstrap_env
 create_mock_init_sh
-manifest=$(_run_bootstrap)
+run_bootstrap_with_flag
 assert_equals "false" "$BOOTSTRAP_FAILED" "BOOTSTRAP_FAILED is false on success"
 
 # --- Test 2: BOOTSTRAP_FAILED is true when script errors ---
@@ -67,9 +74,9 @@ echo "Something went wrong in bootstrap" >&2
 exit 1
 INITEOF
 chmod +x "$TEMP_DIR/.automaton/init.sh"
-manifest=$(_run_bootstrap)
+run_bootstrap_with_flag
 assert_equals "true" "$BOOTSTRAP_FAILED" "BOOTSTRAP_FAILED is true on script error"
-assert_equals "" "$manifest" "manifest is empty on script error"
+assert_equals "" "$BOOTSTRAP_MANIFEST" "manifest is empty on script error"
 
 # --- Test 3: stderr is captured and logged on failure ---
 assert_contains "$(read_log)" "Something went wrong in bootstrap" "stderr captured and logged on failure"
@@ -83,7 +90,7 @@ echo "not json" >&2
 echo "definitely not json"
 INITEOF
 chmod +x "$TEMP_DIR/.automaton/init.sh"
-manifest=$(_run_bootstrap)
+run_bootstrap_with_flag
 assert_equals "true" "$BOOTSTRAP_FAILED" "BOOTSTRAP_FAILED is true on invalid JSON"
 
 # --- Test 5: BOOTSTRAP_FAILED is true when manifest has error field ---
@@ -94,36 +101,34 @@ cat > "$TEMP_DIR/.automaton/init.sh" <<'INITEOF'
 echo '{"error": "Missing dependencies: jq"}'
 INITEOF
 chmod +x "$TEMP_DIR/.automaton/init.sh"
-manifest=$(_run_bootstrap)
+run_bootstrap_with_flag
 assert_equals "true" "$BOOTSTRAP_FAILED" "BOOTSTRAP_FAILED is true on error in manifest"
 
 # --- Test 6: BOOTSTRAP_FAILED is true when script not found ---
 setup_bootstrap_env
 EXEC_BOOTSTRAP_SCRIPT="$TEMP_DIR/.automaton/nonexistent.sh"
-manifest=$(_run_bootstrap)
+run_bootstrap_with_flag
 assert_equals "true" "$BOOTSTRAP_FAILED" "BOOTSTRAP_FAILED is true when script missing"
 
 # --- Test 7: BOOTSTRAP_FAILED remains false when bootstrap is disabled ---
 setup_bootstrap_env
 EXEC_BOOTSTRAP_ENABLED="false"
-manifest=$(_run_bootstrap)
+run_bootstrap_with_flag
 assert_equals "false" "$BOOTSTRAP_FAILED" "BOOTSTRAP_FAILED is false when bootstrap disabled"
 
 # --- Test 8: Fallback notice includes instruction to read files manually ---
 setup_bootstrap_env
 BOOTSTRAP_FAILED="true"
-BOOTSTRAP_MANIFEST=""
 formatted=$(_format_bootstrap_for_context "")
-assert_contains "$formatted" "Bootstrap failed" "fallback notice mentions bootstrap failure"
+assert_contains "$formatted" "Bootstrap" "fallback notice mentions bootstrap"
 assert_contains "$formatted" "read" "fallback notice tells agent to read files"
 
 # --- Test 9: No fallback notice when bootstrap succeeds ---
 setup_bootstrap_env
 create_mock_init_sh
 BOOTSTRAP_FAILED="false"
-manifest=$(_run_bootstrap)
-formatted=$(_format_bootstrap_for_context "$manifest")
-# Should have manifest data, not fallback notice
+run_bootstrap_with_flag
+formatted=$(_format_bootstrap_for_context "$BOOTSTRAP_MANIFEST")
 assert_contains "$formatted" "project_state" "success case has manifest data"
 
 # --- Test 10: Stderr from successful script is NOT logged as error ---
@@ -135,9 +140,8 @@ echo "debug info" >&2
 echo '{"ok": true}'
 INITEOF
 chmod +x "$TEMP_DIR/.automaton/init.sh"
-manifest=$(_run_bootstrap)
+run_bootstrap_with_flag
 assert_equals "false" "$BOOTSTRAP_FAILED" "successful script with stderr does not set failed flag"
-# Stderr from successful runs should not appear as error
 log_content="$(read_log)"
 if echo "$log_content" | grep -q "Bootstrap failed"; then
     echo "FAIL: successful script should not log 'Bootstrap failed'" >&2

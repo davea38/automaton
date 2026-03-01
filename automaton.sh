@@ -3726,8 +3726,10 @@ generate_progress_txt() {
 # ---------------------------------------------------------------------------
 
 # Run bootstrap script and return manifest JSON via stdout.
-# On failure or when disabled, returns empty string and logs a warning.
+# Returns exit 0 on success, exit 1 on failure (disabled returns 0).
+# On failure, logs error with stderr output and returns empty stdout.
 # Falls back gracefully — bootstrap is an optimization, not a requirement.
+# Callers should set BOOTSTRAP_FAILED based on exit code.
 #
 # Args:
 #   $1 — phase (optional, defaults to $current_phase)
@@ -3743,7 +3745,7 @@ _run_bootstrap() {
     local script_path="$EXEC_BOOTSTRAP_SCRIPT"
     if [ ! -x "$script_path" ]; then
         log "ORCHESTRATOR" "Bootstrap script not found or not executable: $script_path"
-        return 0
+        return 1
     fi
 
     local timeout_seconds=$(( EXEC_BOOTSTRAP_TIMEOUT_MS / 1000 ))
@@ -3752,29 +3754,39 @@ _run_bootstrap() {
     local start_epoch
     start_epoch=$(date +%s)
 
-    local manifest=""
+    local manifest="" stderr_file
+    stderr_file=$(mktemp)
     if command -v timeout &>/dev/null; then
-        manifest=$(timeout "${timeout_seconds}s" "$script_path" "." "$phase" "$iteration" 2>/dev/null) || {
+        manifest=$(timeout "${timeout_seconds}s" "$script_path" "." "$phase" "$iteration" 2>"$stderr_file") || {
+            local stderr_output
+            stderr_output=$(cat "$stderr_file")
+            rm -f "$stderr_file"
             log "ORCHESTRATOR" "Bootstrap failed. Falling back to agent-driven context loading."
-            return 0
+            [ -n "$stderr_output" ] && log "ORCHESTRATOR" "Bootstrap stderr: $stderr_output"
+            return 1
         }
     else
-        manifest=$("$script_path" "." "$phase" "$iteration" 2>/dev/null) || {
+        manifest=$("$script_path" "." "$phase" "$iteration" 2>"$stderr_file") || {
+            local stderr_output
+            stderr_output=$(cat "$stderr_file")
+            rm -f "$stderr_file"
             log "ORCHESTRATOR" "Bootstrap failed. Falling back to agent-driven context loading."
-            return 0
+            [ -n "$stderr_output" ] && log "ORCHESTRATOR" "Bootstrap stderr: $stderr_output"
+            return 1
         }
     fi
+    rm -f "$stderr_file"
 
     # Validate JSON
     if ! echo "$manifest" | jq empty 2>/dev/null; then
         log "ORCHESTRATOR" "Bootstrap produced invalid JSON. Falling back to agent-driven context loading."
-        return 0
+        return 1
     fi
 
     # Check for error field in manifest
     if echo "$manifest" | jq -e '.error' &>/dev/null; then
         log "ORCHESTRATOR" "Bootstrap error: $(echo "$manifest" | jq -r '.error')"
-        return 0
+        return 1
     fi
 
     # Performance check
@@ -3797,6 +3809,13 @@ _run_bootstrap() {
 _format_bootstrap_for_context() {
     local manifest="$1"
     if [ -z "$manifest" ]; then
+        # When bootstrap failed, tell the agent to read files manually
+        if [ "${BOOTSTRAP_FAILED:-false}" = "true" ]; then
+            echo "## Bootstrap Failed"
+            echo ""
+            echo "Bootstrap context assembly failed. You should read AGENTS.md, IMPLEMENTATION_PLAN.md, state files, and budget files manually to understand the project state."
+            echo ""
+        fi
         return 0
     fi
     echo "## Bootstrap Manifest"
@@ -3832,8 +3851,10 @@ inject_dynamic_context() {
         # --- Dynamic content injected by orchestrator ---
 
         # Bootstrap manifest (spec-37): pre-assembled context from init.sh
-        if [ -n "${BOOTSTRAP_MANIFEST:-}" ]; then
-            _format_bootstrap_for_context "$BOOTSTRAP_MANIFEST"
+        # When bootstrap fails, _format_bootstrap_for_context emits a fallback
+        # notice telling the agent to read files manually.
+        if [ -n "${BOOTSTRAP_MANIFEST:-}" ] || [ "${BOOTSTRAP_FAILED:-false}" = "true" ]; then
+            _format_bootstrap_for_context "${BOOTSTRAP_MANIFEST:-}"
         fi
 
         echo "## Current State"
@@ -4236,8 +4257,10 @@ _build_dynamic_context_stdin() {
     local dynamic_content=""
 
     # Bootstrap manifest (spec-37): pre-assembled context from init.sh
-    if [ -n "${BOOTSTRAP_MANIFEST:-}" ]; then
-        dynamic_content+=$(_format_bootstrap_for_context "$BOOTSTRAP_MANIFEST")$'\n'
+    # When bootstrap fails, _format_bootstrap_for_context emits a fallback
+    # notice telling the agent to read files manually.
+    if [ -n "${BOOTSTRAP_MANIFEST:-}" ] || [ "${BOOTSTRAP_FAILED:-false}" = "true" ]; then
+        dynamic_content+=$(_format_bootstrap_for_context "${BOOTSTRAP_MANIFEST:-}")$'\n'
     fi
 
     dynamic_content+="## Current State"$'\n'
@@ -4325,9 +4348,11 @@ run_agent() {
     local prompt_file="$1"
     local model="$2"
 
-    # Bootstrap (spec-37): pre-assemble context before agent invocation
+    # Bootstrap (spec-37): pre-assemble context before agent invocation.
+    # _run_bootstrap returns exit 1 on failure; || catches it for set -e safety.
     BOOTSTRAP_MANIFEST=""
-    BOOTSTRAP_MANIFEST=$(_run_bootstrap)
+    BOOTSTRAP_FAILED="false"
+    BOOTSTRAP_MANIFEST=$(_run_bootstrap) || BOOTSTRAP_FAILED="true"
     if [ -n "$BOOTSTRAP_MANIFEST" ]; then
         log "ORCHESTRATOR" "Bootstrap manifest assembled ($(echo "$BOOTSTRAP_MANIFEST" | wc -c | tr -d ' ') bytes)"
     fi
