@@ -6866,6 +6866,111 @@ _constitution_get_summary() {
         }'
 }
 
+# Validates a proposed diff against the constitution articles.
+# Returns: "pass" (no violations), "warn" (non-blocking concerns), "fail" (blocks commit).
+#
+# Checks:
+#   Article I  (Safety) — diff must not remove protected functions
+#   Article II (Human Sovereignty) — diff must not remove human control CLI flags
+#   Article III (Measurable Progress) — idea must have a metric target
+#   Article VI (Incremental Growth) — files/lines within self_build limits
+#   Article VII (Test Coverage) — diff must not remove tests
+#
+# Usage: result=$(_constitution_check "$diff_file" "$idea_id" "$cycle_id")
+_constitution_check() {
+    local diff_file="$1"
+    local idea_id="$2"
+    local cycle_id="$3"
+
+    local const_file="$AUTOMATON_DIR/constitution.md"
+    local result="pass"
+
+    # If constitution doesn't exist, warn but don't block
+    if [ ! -f "$const_file" ]; then
+        log "CONSTITUTION" "WARNING: Constitution file not found, skipping compliance check"
+        echo "warn"
+        return 0
+    fi
+
+    local diff_content=""
+    if [ -f "$diff_file" ] && [ -s "$diff_file" ]; then
+        diff_content=$(cat "$diff_file")
+    else
+        # Empty diff — nothing to violate
+        echo "pass"
+        return 0
+    fi
+
+    # Extract removed lines (lines starting with -)
+    local removed_lines
+    removed_lines=$(echo "$diff_content" | grep '^-' | grep -v '^---' || true)
+
+    # --- Check 1: Safety preservation (Article I) ---
+    # Diff must not remove or modify protected functions
+    IFS=',' read -ra protected_fns <<< "$SELF_BUILD_PROTECTED_FUNCTIONS"
+    for fn in "${protected_fns[@]}"; do
+        fn=$(echo "$fn" | xargs)  # trim whitespace
+        if echo "$removed_lines" | grep -q "${fn}()"; then
+            log "CONSTITUTION" "FAIL: Article I violation — protected function '$fn' removed"
+            echo "fail"
+            return 0
+        fi
+    done
+
+    # --- Check 2: Human control preservation (Article II) ---
+    # Diff must not remove CLI flags: --pause-evolution, --override, --amend
+    local human_flags=("--pause-evolution" "--override" "--amend")
+    for flag in "${human_flags[@]}"; do
+        if echo "$removed_lines" | grep -q -- "$flag"; then
+            log "CONSTITUTION" "FAIL: Article II violation — human control flag '$flag' removed"
+            echo "fail"
+            return 0
+        fi
+    done
+
+    # --- Check 3: Measurability (Article III) ---
+    # Idea must have at least one metric target in its description
+    local idea_file="$AUTOMATON_DIR/garden/${idea_id}.json"
+    if [ -f "$idea_file" ]; then
+        local description
+        description=$(jq -r '.description // ""' "$idea_file")
+        # Look for metric-related keywords
+        local metric_keywords="metric|token|efficiency|pass rate|coverage|rollback|error rate|stall|reliability|capability|quality|performance|latency|speed|reduce|increase|improve"
+        if ! echo "$description" | grep -qiE "$metric_keywords"; then
+            log "CONSTITUTION" "WARN: Article III concern — idea '$idea_id' has no measurable metric target"
+            result="warn"
+        fi
+    fi
+
+    # --- Check 4: Scope limits (Article VI) ---
+    # Count files changed
+    local files_changed
+    files_changed=$(echo "$diff_content" | grep -c '^diff --git' || echo "0")
+    if [ "$files_changed" -gt "$SELF_BUILD_MAX_FILES" ]; then
+        log "CONSTITUTION" "WARN: Article VI concern — $files_changed files changed (limit: $SELF_BUILD_MAX_FILES)"
+        result="warn"
+    fi
+
+    # Count lines changed (additions + deletions)
+    local lines_added lines_removed lines_changed
+    lines_added=$(echo "$diff_content" | grep -c '^+' | grep -v '^+++' || echo "0")
+    lines_removed=$(echo "$diff_content" | grep -c '^-' | grep -v '^---' || echo "0")
+    lines_changed=$((lines_added + lines_removed))
+    if [ "$lines_changed" -gt "$SELF_BUILD_MAX_LINES" ]; then
+        log "CONSTITUTION" "WARN: Article VI concern — $lines_changed lines changed (limit: $SELF_BUILD_MAX_LINES)"
+        result="warn"
+    fi
+
+    # --- Check 5: Test coverage (Article VII) ---
+    # If tests were removed, flag as warning
+    if echo "$removed_lines" | grep -qE 'assert_equals|assert_contains|assert_file_exists|assert_exit_code|test_summary'; then
+        log "CONSTITUTION" "WARN: Article VII concern — test assertions appear to be removed"
+        result="warn"
+    fi
+
+    echo "$result"
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
