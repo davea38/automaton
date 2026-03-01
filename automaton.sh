@@ -7986,6 +7986,198 @@ _evolve_reflect() {
     return 0
 }
 
+_evolve_ideate() {
+    local cycle_id="${1:?_evolve_ideate requires cycle_id}"
+    local cycle_dir="$AUTOMATON_DIR/evolution/cycle-${cycle_id}"
+    mkdir -p "$cycle_dir"
+
+    log "EVOLVE" "IDEATE phase starting (cycle=$cycle_id)"
+
+    local ideas_watered=0
+    local ideas_promoted_to_bloom=0
+    local ideas_created=0
+    local ideas_linked=0
+
+    # 1. Read reflection summary from REFLECT phase
+    local reflect_file="$cycle_dir/reflect.json"
+    local metric_alerts="[]"
+    local reflect_recommendation=""
+    if [ -f "$reflect_file" ]; then
+        metric_alerts=$(jq '.metric_alerts // []' "$reflect_file" 2>/dev/null || echo "[]")
+        reflect_recommendation=$(jq -r '.recommendation // ""' "$reflect_file" 2>/dev/null || echo "")
+    else
+        log "EVOLVE" "IDEATE: No reflect.json found, proceeding without reflection summary"
+    fi
+
+    # 2. Gather active signals for cross-referencing
+    local active_signals="[]"
+    active_signals=$(_signal_get_active 2>/dev/null || echo "[]")
+    local active_signal_count
+    active_signal_count=$(echo "$active_signals" | jq 'length' 2>/dev/null || echo 0)
+
+    # 3. Water existing sprouts with evidence from metric alerts
+    local alert_count
+    alert_count=$(echo "$metric_alerts" | jq 'length' 2>/dev/null || echo 0)
+
+    if [ "$alert_count" -gt 0 ] && [ "${GARDEN_ENABLED:-true}" = "true" ]; then
+        local garden_dir="$AUTOMATON_DIR/garden"
+        local sprout_files
+        sprout_files=$(find "$garden_dir" -name 'idea-*.json' -type f 2>/dev/null | sort)
+
+        for idea_file in $sprout_files; do
+            [ -f "$idea_file" ] || continue
+            local stage idea_id idea_tags
+            stage=$(jq -r '.stage' "$idea_file" 2>/dev/null)
+            [ "$stage" = "seed" ] || [ "$stage" = "sprout" ] || continue
+
+            idea_id=$(jq -r '.id' "$idea_file" 2>/dev/null)
+            idea_tags=$(jq -r '.tags // [] | join(",")' "$idea_file" 2>/dev/null)
+
+            # Check if any metric alert relates to this idea's tags
+            local i=0
+            while [ "$i" -lt "$alert_count" ]; do
+                local metric_name
+                metric_name=$(echo "$metric_alerts" | jq -r ".[$i].metric" 2>/dev/null)
+
+                if echo "$idea_tags" | grep -qi "$metric_name" 2>/dev/null; then
+                    _garden_water "$idea_id" "ideate_evidence" \
+                        "Metric $metric_name still alerting in cycle $cycle_id (IDEATE enrichment)" \
+                        "evolve-ideate" 2>/dev/null && ideas_watered=$((ideas_watered + 1))
+                    break
+                fi
+                i=$((i + 1))
+            done
+        done
+    fi
+
+    # 4. Water ideas with evidence from active signals
+    if [ "$active_signal_count" -gt 0 ] && [ "${GARDEN_ENABLED:-true}" = "true" ]; then
+        local garden_dir="$AUTOMATON_DIR/garden"
+        local idea_files
+        idea_files=$(find "$garden_dir" -name 'idea-*.json' -type f 2>/dev/null | sort)
+
+        local s=0
+        while [ "$s" -lt "$active_signal_count" ]; do
+            local sig_id sig_title sig_related_ideas
+            sig_id=$(echo "$active_signals" | jq -r ".[$s].id" 2>/dev/null)
+            sig_title=$(echo "$active_signals" | jq -r ".[$s].title" 2>/dev/null)
+            sig_related_ideas=$(echo "$active_signals" | jq -r ".[$s].related_ideas // [] | .[]" 2>/dev/null)
+
+            # Water ideas already linked to this signal
+            for linked_id in $sig_related_ideas; do
+                [ -n "$linked_id" ] || continue
+                local linked_file="$garden_dir/${linked_id}.json"
+                [ -f "$linked_file" ] || continue
+                local linked_stage
+                linked_stage=$(jq -r '.stage' "$linked_file" 2>/dev/null)
+                if [ "$linked_stage" = "seed" ] || [ "$linked_stage" = "sprout" ]; then
+                    _garden_water "$linked_id" "signal_reinforcement" \
+                        "Signal $sig_id ($sig_title) still active in cycle $cycle_id" \
+                        "evolve-ideate" 2>/dev/null && ideas_watered=$((ideas_watered + 1))
+                fi
+            done
+
+            # Link unlinked signals to ideas with matching tags
+            if [ -z "$sig_related_ideas" ]; then
+                local sig_type
+                sig_type=$(echo "$active_signals" | jq -r ".[$s].type" 2>/dev/null)
+                for idea_file in $idea_files; do
+                    [ -f "$idea_file" ] || continue
+                    local idea_stage idea_id idea_tags
+                    idea_stage=$(jq -r '.stage' "$idea_file" 2>/dev/null)
+                    [ "$idea_stage" = "seed" ] || [ "$idea_stage" = "sprout" ] || continue
+
+                    idea_tags=$(jq -r '.tags // [] | join(" ")' "$idea_file" 2>/dev/null)
+                    idea_id=$(jq -r '.id' "$idea_file" 2>/dev/null)
+
+                    if echo "$idea_tags" | grep -qi "$sig_type" 2>/dev/null; then
+                        _signal_link_idea "$sig_id" "$idea_id" 2>/dev/null && ideas_linked=$((ideas_linked + 1))
+                        break
+                    fi
+                done
+            fi
+
+            s=$((s + 1))
+        done
+    fi
+
+    # 5. Create new ideas from reflection patterns not yet in garden
+    if [ -n "$reflect_recommendation" ] && [ "$reflect_recommendation" != "No significant issues detected" ] && [ "${GARDEN_ENABLED:-true}" = "true" ]; then
+        local tags="auto-seed,ideate,reflection"
+        local dup_id
+        dup_id=$(_garden_find_duplicates "$tags" 2>/dev/null) || true
+
+        if [ -z "$dup_id" ]; then
+            local seed_id
+            seed_id=$(_garden_plant_seed \
+                "From reflection: $reflect_recommendation" \
+                "Auto-seeded from IDEATE phase based on REFLECT recommendation: $reflect_recommendation (cycle $cycle_id)" \
+                "ideate" "evolve-ideate" "evolve-ideate" \
+                "medium" "$tags") && ideas_created=$((ideas_created + 1))
+            if [ -n "$seed_id" ]; then
+                log "EVOLVE" "IDEATE: Created idea $seed_id from reflection recommendation"
+            fi
+        fi
+    fi
+
+    # 6. Evaluate sprout-to-bloom transitions and collect bloom candidates
+    local bloom_candidates_json="[]"
+    if [ "${GARDEN_ENABLED:-true}" = "true" ]; then
+        _garden_recompute_priorities 2>/dev/null || true
+
+        local bloom_ids
+        bloom_ids=$(_garden_get_bloom_candidates 2>/dev/null) || true
+
+        if [ -n "$bloom_ids" ]; then
+            local candidates_arr="["
+            local first=true
+            for bid in $bloom_ids; do
+                local bfile="$AUTOMATON_DIR/garden/${bid}.json"
+                [ -f "$bfile" ] || continue
+                local btitle bpriority
+                btitle=$(jq -r '.title' "$bfile" 2>/dev/null)
+                bpriority=$(jq -r '.priority // 0' "$bfile" 2>/dev/null)
+                ideas_promoted_to_bloom=$((ideas_promoted_to_bloom + 1))
+
+                if [ "$first" = "true" ]; then
+                    first=false
+                else
+                    candidates_arr="${candidates_arr},"
+                fi
+                candidates_arr="${candidates_arr}{\"id\":\"$bid\",\"title\":$(echo "$btitle" | jq -Rs .),\"priority\":$bpriority}"
+            done
+            candidates_arr="${candidates_arr}]"
+            bloom_candidates_json="$candidates_arr"
+        fi
+
+        _garden_rebuild_index 2>/dev/null || true
+    fi
+
+    # 7. Write ideate.json
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    jq -n \
+        --argjson cycle_id "$cycle_id" \
+        --arg timestamp "$now" \
+        --argjson ideas_watered "$ideas_watered" \
+        --argjson ideas_promoted_to_bloom "$ideas_promoted_to_bloom" \
+        --argjson ideas_created "$ideas_created" \
+        --argjson ideas_linked "$ideas_linked" \
+        --argjson bloom_candidates "$bloom_candidates_json" \
+        '{
+            cycle_id: $cycle_id,
+            timestamp: $timestamp,
+            ideas_watered: $ideas_watered,
+            ideas_promoted_to_bloom: $ideas_promoted_to_bloom,
+            ideas_created: $ideas_created,
+            ideas_linked: $ideas_linked,
+            bloom_candidates: $bloom_candidates
+        }' > "$cycle_dir/ideate.json"
+
+    log "EVOLVE" "IDEATE phase complete: watered=$ideas_watered promoted=$ideas_promoted_to_bloom created=$ideas_created linked=$ideas_linked"
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
