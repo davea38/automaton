@@ -198,9 +198,9 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 #### 42.3 Signal Integration
 
-- [ ] Initialize `.automaton/signals.json` with empty structure on first signal emission (not during initialization) (WHY: the spec requires lazy initialization — the file is created when first needed, not preemptively, to avoid empty state files cluttering the repo) <!-- test: tests/test_signal_emit.sh -->
+- [x] Initialize `.automaton/signals.json` with empty structure on first signal emission (not during initialization) (WHY: the spec requires lazy initialization — the file is created when first needed, not preemptively, to avoid empty state files cluttering the repo) <!-- test: tests/test_signal_emit.sh -->
 
-- [ ] Add `active_signals` field to the bootstrap manifest in `.automaton/init.sh` (total, strong count, strongest signal, unlinked_count) (WHY: evolution agents need signal awareness in their prompt context to inform reflection and ideation phases) <!-- test: tests/test_signal_bootstrap.sh -->
+- [x] Add `active_signals` field to the bootstrap manifest in `.automaton/init.sh` (total, strong count, strongest signal, unlinked_count) (WHY: evolution agents need signal awareness in their prompt context to inform reflection and ideation phases) <!-- test: tests/test_signal_bootstrap.sh -->
 
 - [ ] Add bidirectional linking between signals and garden ideas: update signal `related_ideas` when an idea is seeded from a signal, update idea `related_signals` when a signal triggers seeding (WHY: traceability between signals and ideas enables the evolution loop to understand why an idea exists and which observations support it) <!-- test: tests/test_signal_garden_link.sh -->
 
