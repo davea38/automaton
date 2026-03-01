@@ -2686,6 +2686,93 @@ generate_context_summary() {
     log "ORCHESTRATOR" "Context summary generated: $summary_file"
 }
 
+# Generates .automaton/progress.txt at each iteration (spec-33).
+# A human-readable status file that any agent in any context window can read
+# to understand full project state without loading history.
+generate_progress_txt() {
+    local progress_file="$AUTOMATON_DIR/progress.txt"
+    local plan_file="IMPLEMENTATION_PLAN.md"
+
+    # In self-build mode, use backlog
+    if [ "${ARG_SELF:-false}" = "true" ] && [ -f "$AUTOMATON_DIR/backlog.md" ]; then
+        plan_file="$AUTOMATON_DIR/backlog.md"
+    fi
+
+    # Task counts
+    local tasks_completed=0 tasks_remaining=0 tasks_total=0
+    if [ -f "$plan_file" ]; then
+        tasks_completed=$(grep -c '\[x\]' "$plan_file" 2>/dev/null || echo 0)
+        tasks_remaining=$(grep -c '\[ \]' "$plan_file" 2>/dev/null || echo 0)
+        tasks_total=$((tasks_completed + tasks_remaining))
+    fi
+
+    # Last completed task (most recent [x] line, stripped of markdown)
+    local last_completed="None yet"
+    if [ -f "$plan_file" ]; then
+        local raw
+        raw=$(grep '\[x\]' "$plan_file" | tail -1 | sed 's/^- \[x\] //' | sed 's/ (WHY:.*//' 2>/dev/null || true)
+        if [ -n "$raw" ]; then
+            last_completed="$raw"
+        fi
+    fi
+
+    # Next pending task (first [ ] line, stripped of markdown)
+    local next_pending="None"
+    if [ -f "$plan_file" ]; then
+        local raw_next
+        raw_next=$(grep '\[ \]' "$plan_file" | head -1 | sed 's/^- \[ \] //' | sed 's/ (WHY:.*//' 2>/dev/null || true)
+        if [ -n "$raw_next" ]; then
+            next_pending="$raw_next"
+        fi
+    fi
+
+    # Blocked info from stall/failure state
+    local blocked_info="None"
+    if [ "${stall_count:-0}" -ge 2 ]; then
+        blocked_info="Stall detected ($stall_count consecutive iterations with no changes)"
+    elif [ "${consecutive_failures:-0}" -ge 2 ]; then
+        blocked_info="Consecutive failures ($consecutive_failures)"
+    fi
+
+    # Key decisions from recent git commits
+    local key_decisions=""
+    key_decisions=$(git log --oneline -5 --format="%s" 2>/dev/null | head -5 || true)
+
+    # Budget info
+    local budget_info="unknown"
+    if [ -f "$AUTOMATON_DIR/budget.json" ]; then
+        if [ "$BUDGET_MODE" = "allowance" ]; then
+            local remaining
+            remaining=$(jq '.tokens_remaining // "unknown"' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "unknown")
+            budget_info="allowance, $remaining tokens remaining"
+        else
+            local cost_used
+            cost_used=$(jq '.used.estimated_cost_usd // 0' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "0")
+            budget_info="api, \$$cost_used / \$$BUDGET_MAX_USD spent"
+        fi
+    fi
+
+    {
+        echo "# Automaton Progress"
+        echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo ""
+        echo "Phase: $current_phase (iteration $phase_iteration)"
+        echo "Total iterations: $iteration"
+        echo "Completed: $tasks_completed/$tasks_total tasks"
+        echo "Last completed: $last_completed"
+        echo "Next pending: $next_pending"
+        echo "Currently blocked: $blocked_info"
+        echo "Budget: $budget_info"
+        echo ""
+        echo "## Recent Commits"
+        if [ -n "$key_decisions" ]; then
+            echo "$key_decisions"
+        else
+            echo "No commits yet"
+        fi
+    } > "$progress_file"
+}
+
 # Injects dynamic runtime context into the <dynamic_context> section of a prompt
 # file. Replaces placeholder content between <dynamic_context> and </dynamic_context>
 # with iteration number, budget remaining, recent diffs, and phase-specific data.
@@ -5804,6 +5891,9 @@ post_iteration() {
 
     # 8. Persist state
     write_state
+
+    # 8a. Generate progress.txt for cross-window state awareness (spec-33)
+    generate_progress_txt
 
     # 9. Write per-agent history file
     local agent_start_ts agent_end_ts files_changed git_commit
