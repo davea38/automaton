@@ -95,7 +95,7 @@ Migrates agent spawning from bare `claude -p` with piped prompts to structured `
 
 For a self-building orchestrator, tests are the only reliable way to verify behavior without human review. This spec adds test scaffolding before implementation.
 
-- [ ] Add test scaffold sub-phase (3a) to the build loop in `automaton.sh`: run 1-3 iterations of test-only writing before implementation iterations (3b), controlled by `execution.test_scaffold_iterations` config (WHY: writing tests before implementation ensures tests verify intended behavior, not just current behavior)
+- [x] Add test scaffold sub-phase (3a) to the build loop in `automaton.sh`: run 1-3 iterations of test-only writing before implementation iterations (3b), controlled by `execution.test_scaffold_iterations` config (WHY: writing tests before implementation ensures tests verify intended behavior, not just current behavior)
 - [ ] Add test annotation rules to `PROMPT_plan.md`: each task gets `<!-- test: tests/test_[feature].sh -->` or `<!-- test: none -->` (WHY: test annotations connect plan tasks to test files, enabling the scaffold sub-phase to know which tests to write)
 - [ ] Add test-first discipline rules to `PROMPT_build.md` `<rules>` section: check for existing test, write test if missing, implement, verify test passes, commit (WHY: test-first discipline catches regressions and ensures build agents verify their own work)
 - [ ] Create `tests/test_helpers.sh` with minimal bash assertion functions: `assert_equals`, `assert_exit_code`, `assert_file_exists`, `assert_contains` (WHY: automaton.sh is bash; a lightweight assertion library enables testing without external dependencies like bats)

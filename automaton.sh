@@ -59,6 +59,10 @@ load_config() {
         EXEC_PHASE_TIMEOUT_BUILD=$(jq -r '.execution.phase_timeout_seconds.build // 0' "$config_file")
         EXEC_PHASE_TIMEOUT_REVIEW=$(jq -r '.execution.phase_timeout_seconds.review // 0' "$config_file")
 
+        # -- test-first build strategy (spec-36) --
+        EXEC_TEST_FIRST_ENABLED=$(jq -r '.execution.test_first_enabled // true' "$config_file")
+        EXEC_TEST_SCAFFOLD_ITERATIONS=$(jq -r '.execution.test_scaffold_iterations // 2' "$config_file")
+
         # -- git --
         GIT_AUTO_PUSH=$(jq -r '.git.auto_push // true' "$config_file")
         GIT_AUTO_COMMIT=$(jq -r '.git.auto_commit // true' "$config_file")
@@ -140,6 +144,10 @@ load_config() {
         EXEC_PHASE_TIMEOUT_PLAN=0
         EXEC_PHASE_TIMEOUT_BUILD=0
         EXEC_PHASE_TIMEOUT_REVIEW=0
+
+        # -- test-first build strategy (spec-36) --
+        EXEC_TEST_FIRST_ENABLED="true"
+        EXEC_TEST_SCAFFOLD_ITERATIONS=2
 
         # -- git --
         GIT_AUTO_PUSH="true"
@@ -350,6 +358,8 @@ WAVE
   "corruption_count": $corruption_count,
   "replan_count": $replan_count,
   "test_failure_count": $test_failure_count,
+  "build_sub_phase": "${build_sub_phase:-implementation}",
+  "scaffold_iterations_done": ${scaffold_iterations_done:-0},
   "started_at": "$started_at",
   "last_iteration_at": "$now",
   "parallel_builders": ${EXEC_PARALLEL_BUILDERS:-1},
@@ -379,6 +389,8 @@ read_state() {
     corruption_count=$(echo "$state" | jq '.corruption_count')
     replan_count=$(echo "$state" | jq '.replan_count')
     test_failure_count=$(echo "$state" | jq '.test_failure_count // 0')
+    build_sub_phase=$(echo "$state" | jq -r '.build_sub_phase // "implementation"')
+    scaffold_iterations_done=$(echo "$state" | jq '.scaffold_iterations_done // 0')
     started_at=$(echo "$state" | jq -r '.started_at')
     resumed_from=$(echo "$state" | jq -r '.last_iteration_at')
     phase_history=$(echo "$state" | jq -c '.phase_history')
@@ -577,6 +589,8 @@ RATE
     corruption_count=0
     replan_count=0
     test_failure_count=0
+    build_sub_phase="implementation"
+    scaffold_iterations_done=0
     started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     resumed_from="null"
     phase_history="[]"
@@ -3597,6 +3611,9 @@ generate_progress_txt() {
         echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
         echo ""
         echo "Phase: $current_phase (iteration $phase_iteration)"
+        if [ "$current_phase" = "build" ] && [ "$EXEC_TEST_FIRST_ENABLED" = "true" ]; then
+            echo "Build sub-phase: ${build_sub_phase:-implementation} (scaffold: $scaffold_iterations_done/$EXEC_TEST_SCAFFOLD_ITERATIONS done)"
+        fi
         echo "Total iterations: $iteration"
         echo "Completed: $tasks_completed/$tasks_total tasks"
         echo "Last completed: $last_completed"
@@ -3640,6 +3657,17 @@ inject_dynamic_context() {
         echo ""
         echo "- Phase: $current_phase"
         echo "- Iteration: $phase_iteration"
+
+        # Build sub-phase context (spec-36)
+        if [ "$current_phase" = "build" ] && [ "$EXEC_TEST_FIRST_ENABLED" = "true" ]; then
+            if [ "${build_sub_phase:-implementation}" = "scaffold" ]; then
+                echo "- Build sub-phase: TEST SCAFFOLD (3a) — iteration $((scaffold_iterations_done + 1))/$EXEC_TEST_SCAFFOLD_ITERATIONS"
+                echo ""
+                echo "**TEST SCAFFOLD MODE**: Write test files ONLY for plan tasks with \`<!-- test: path -->\` annotations. Do NOT implement any features. Tests should fail initially (no implementation exists yet). Commit test files when done."
+            else
+                echo "- Build sub-phase: IMPLEMENTATION (3b)"
+            fi
+        fi
 
         # Budget remaining
         if [ -f "$AUTOMATON_DIR/budget.json" ]; then
@@ -4028,6 +4056,17 @@ _build_dynamic_context_stdin() {
     dynamic_content+=""$'\n'
     dynamic_content+="- Phase: $current_phase"$'\n'
     dynamic_content+="- Iteration: $phase_iteration"$'\n'
+
+    # Build sub-phase context (spec-36)
+    if [ "$current_phase" = "build" ] && [ "$EXEC_TEST_FIRST_ENABLED" = "true" ]; then
+        if [ "${build_sub_phase:-implementation}" = "scaffold" ]; then
+            dynamic_content+="- Build sub-phase: TEST SCAFFOLD (3a) — iteration $((scaffold_iterations_done + 1))/$EXEC_TEST_SCAFFOLD_ITERATIONS"$'\n'
+            dynamic_content+=""$'\n'
+            dynamic_content+="**TEST SCAFFOLD MODE**: Write test files ONLY for plan tasks with \`<!-- test: path -->\` annotations. Do NOT implement any features. Tests should fail initially (no implementation exists yet). Commit test files when done."$'\n'
+        else
+            dynamic_content+="- Build sub-phase: IMPLEMENTATION (3b)"$'\n'
+        fi
+    fi
 
     if [ -f "$AUTOMATON_DIR/budget.json" ]; then
         local remaining
@@ -6475,6 +6514,23 @@ handle_wave_errors() {
 # Returns: 0 on completion (all tasks done or orderly exit)
 # May exit: 2 via check_budget (hard stop), 3 via escalate (unrecoverable)
 run_parallel_build() {
+    # Test scaffold sub-phase (spec-36): run single-builder iterations for
+    # test scaffolding before starting parallel implementation waves.
+    if [ "$EXEC_TEST_FIRST_ENABLED" = "true" ] && [ "${build_sub_phase:-implementation}" = "scaffold" ]; then
+        log "CONDUCTOR" "Running test scaffold sub-phase (3a) as single-builder before parallel waves"
+        while [ "${build_sub_phase}" = "scaffold" ] && [ "$scaffold_iterations_done" -lt "$EXEC_TEST_SCAFFOLD_ITERATIONS" ]; do
+            if ! run_single_builder_iteration; then
+                log "CONDUCTOR" "Test scaffold iteration failed, proceeding to implementation"
+                break
+            fi
+            scaffold_iterations_done=$((scaffold_iterations_done + 1))
+            log "ORCHESTRATOR" "Test scaffold iteration $scaffold_iterations_done/$EXEC_TEST_SCAFFOLD_ITERATIONS complete"
+        done
+        build_sub_phase="implementation"
+        log "ORCHESTRATOR" "Test scaffold sub-phase (3a) complete. Transitioning to parallel implementation (3b)."
+        write_state
+    fi
+
     # Initialize wave state (may already be set from resume via read_state)
     wave_number=${wave_number:-1}
     consecutive_wave_failures=${consecutive_wave_failures:-0}
@@ -6934,6 +6990,16 @@ transition_to_phase() {
     phase_iteration=0
     PHASE_START_TIME=$(date +%s)
 
+    # Initialize build sub-phase when entering build (spec-36)
+    if [ "$new_phase" = "build" ] && [ "$EXEC_TEST_FIRST_ENABLED" = "true" ]; then
+        build_sub_phase="scaffold"
+        scaffold_iterations_done=0
+        log "ORCHESTRATOR" "Test-first enabled: starting with test scaffold sub-phase (3a), max ${EXEC_TEST_SCAFFOLD_ITERATIONS} iterations"
+    else
+        build_sub_phase="implementation"
+        scaffold_iterations_done=0
+    fi
+
     log "ORCHESTRATOR" "Phase transition → $new_phase"
     write_state
 
@@ -7099,6 +7165,25 @@ run_orchestration() {
                         continue 2
                         ;;
                 esac
+            fi
+
+            # Test scaffold sub-phase transition (spec-36)
+            if [ "$current_phase" = "build" ] && [ "${build_sub_phase:-implementation}" = "scaffold" ]; then
+                scaffold_iterations_done=$((scaffold_iterations_done + 1))
+                if [ "$scaffold_iterations_done" -ge "$EXEC_TEST_SCAFFOLD_ITERATIONS" ]; then
+                    build_sub_phase="implementation"
+                    log "ORCHESTRATOR" "Test scaffold sub-phase (3a) complete after $scaffold_iterations_done iterations. Transitioning to implementation (3b)."
+                    write_state
+                else
+                    log "ORCHESTRATOR" "Test scaffold iteration $scaffold_iterations_done/$EXEC_TEST_SCAFFOLD_ITERATIONS complete"
+                fi
+                # During scaffold, agent completion signal means scaffold is done early
+                if agent_signaled_complete && [ "${build_sub_phase}" = "scaffold" ]; then
+                    build_sub_phase="implementation"
+                    log "ORCHESTRATOR" "Agent signaled scaffold COMPLETE early. Transitioning to implementation (3b)."
+                    write_state
+                fi
+                continue
             fi
 
             # Check if agent signaled COMPLETE

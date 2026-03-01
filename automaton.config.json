@@ -47,7 +47,9 @@
       "plan": 0,
       "build": 0,
       "review": 0
-    }
+    },
+    "test_first_enabled": true,
+    "test_scaffold_iterations": 2
   },
   "git": {
     "auto_push": true,
