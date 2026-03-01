@@ -830,6 +830,9 @@ update_budget() {
             output_tokens: $output_tokens,
             cache_create: $cache_create,
             cache_read: $cache_read,
+            cache_hit_ratio: (if ($cache_read + $input_tokens + $cache_create) > 0
+                then (($cache_read / ($cache_read + $input_tokens + $cache_create)) * 100 | round / 100)
+                else 0 end),
             estimated_cost: $iter_cost,
             duration_seconds: $duration,
             task: $task,
