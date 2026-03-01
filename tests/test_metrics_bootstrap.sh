@@ -140,7 +140,7 @@ cat > "$tmpdir3/.automaton/evolution-metrics.json" <<'METRICSEOF'
       "capability": {"total_lines": 5000, "total_functions": 80, "total_specs": 30, "total_tests": 20},
       "efficiency": {"tokens_per_task": 50000, "cache_hit_ratio": 0.65, "stall_rate": 0.10},
       "quality": {"test_pass_rate": 0.90, "first_pass_success_rate": 0.75, "rollback_count": 0, "review_rework_rate": 0.10},
-      "innovation": {"garden_harvested": 0, "cycles_since_last_harvest": 0},
+      "innovation": {"garden_harvested": 0, "cycles_since_last_harvest": 1},
       "health": {"error_rate": 0.02}
     }
   ],

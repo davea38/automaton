@@ -142,6 +142,72 @@ generate_context() {
         fi
     fi
 
+    # --- Metrics trend summary (from evolution-metrics.json, spec-43 §3) ---
+    local evo_metrics_file="$AUTOMATON_DIR/evolution-metrics.json"
+    if [ -f "$evo_metrics_file" ]; then
+        local metrics_trend_data
+        metrics_trend_data=$(jq '
+            # Tracked metrics: [category, metric_name, higher_is_better]
+            def tracked: [
+                ["capability", "total_lines", true],
+                ["capability", "total_functions", true],
+                ["capability", "total_specs", true],
+                ["capability", "total_tests", true],
+                ["efficiency", "tokens_per_task", false],
+                ["efficiency", "cache_hit_ratio", true],
+                ["efficiency", "stall_rate", false],
+                ["quality", "test_pass_rate", true],
+                ["quality", "first_pass_success_rate", true],
+                ["quality", "rollback_count", false],
+                ["quality", "review_rework_rate", false],
+                ["health", "error_rate", false]
+            ];
+
+            .snapshots as $snaps |
+            ($snaps | length) as $n |
+
+            # Compute trends only if 2+ snapshots
+            (if $n >= 2 then
+                .baselines as $baselines |
+                [tracked[] | . as [$cat, $metric, $higher_better] |
+                    [$snaps[] | .[$cat][$metric] // 0] as $vals |
+                    ($vals | length) as $vn |
+                    $vals[0] as $first | $vals[$vn - 1] as $last |
+                    # Direction
+                    (if ($higher_better and $last > $first) or ($higher_better | not and $last < $first) then
+                        "improving"
+                    elif ($higher_better and $last < $first) or ($higher_better | not and $last > $first) then
+                        "degrading"
+                    else "stable" end) as $dir |
+                    # Count consecutive degrading from end
+                    (reduce range($vn - 1; 0; -1) as $i (0;
+                        if . >= 0 then
+                            ($vals[$i] - $vals[$i - 1]) as $delta |
+                            if ($higher_better and $delta < 0) or ($higher_better | not and $delta > 0) then . + 1
+                            else -1 end
+                        else . end
+                    ) | if . < 0 then 0 else . end) as $consec |
+                    {metric: $metric, direction: $dir, consecutive_degrading: $consec}
+                ]
+            else [] end) as $trends |
+
+            # Find last harvest cycle
+            ([$snaps[] | select(.innovation.cycles_since_last_harvest == 0) | .cycle_id] | last // null) as $lhc |
+
+            {
+                improving: [$trends[] | select(.direction == "improving") | .metric],
+                degrading: [$trends[] | select(.direction == "degrading") | .metric],
+                alerts: [$trends[] | select(.consecutive_degrading >= 3) | .metric],
+                cycles_completed: $n,
+                last_harvest_cycle: $lhc
+            }
+        ' "$evo_metrics_file" 2>/dev/null || echo '{}')
+        if [ "$metrics_trend_data" != "{}" ]; then
+            manifest=$(echo "$manifest" | jq --argjson mt "$metrics_trend_data" \
+                '. + {metrics_trend: $mt}')
+        fi
+    fi
+
     echo "$manifest" | jq .
 }
 
