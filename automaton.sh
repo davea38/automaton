@@ -5649,6 +5649,130 @@ _quorum_tally() {
         }'
 }
 
+# Evaluate the highest-priority bloom candidate through the quorum.
+# Selects the top bloom candidate from the garden, assembles proposal context
+# (idea details, metrics, signals), invokes all configured voters sequentially,
+# tallies votes, writes a vote record to .automaton/votes/vote-{NNN}.json,
+# and advances (harvest) or wilts the idea based on the result.
+#
+# Args: none (reads bloom candidates from garden, voters from config)
+# Returns: 0 on success (even if no candidates), 1 on error
+# Outputs: vote record path to stdout if a vote was held
+_quorum_evaluate_bloom() {
+    if [ "${QUORUM_ENABLED:-true}" != "true" ]; then
+        log "QUORUM" "Quorum disabled — skipping bloom evaluation"
+        return 0
+    fi
+
+    # Get bloom candidates sorted by priority descending
+    local candidates
+    candidates=$(_garden_get_bloom_candidates 2>/dev/null) || true
+    if [ -z "$candidates" ]; then
+        log "QUORUM" "No bloom candidates to evaluate"
+        return 0
+    fi
+
+    # Select highest-priority candidate (first line)
+    local idea_id
+    idea_id=$(echo "$candidates" | head -1)
+    local idea_file="$AUTOMATON_DIR/garden/${idea_id}.json"
+
+    if [ ! -f "$idea_file" ]; then
+        log "QUORUM" "ERROR: idea file not found: $idea_file"
+        return 1
+    fi
+
+    log "QUORUM" "Evaluating bloom candidate: $idea_id"
+
+    # Assemble proposal context from idea details
+    local proposal_json
+    proposal_json=$(jq '{
+        title: .title,
+        description: .description,
+        evidence_count: (.evidence | length),
+        priority: (.priority // 0),
+        complexity: (.estimated_complexity // "medium"),
+        tags: (.tags // []),
+        related_specs: (.related_specs // []),
+        related_signals: (.related_signals // []),
+        evidence: [.evidence[] | {type, observation, added_at}]
+    }' "$idea_file")
+
+    # Invoke all voters sequentially (spec-39: not parallel, to control costs)
+    local all_votes="{}"
+    local voter_list
+    IFS=',' read -ra voter_list <<< "$QUORUM_VOTERS"
+
+    for voter_name in "${voter_list[@]}"; do
+        voter_name=$(echo "$voter_name" | tr -d ' ')
+        log "QUORUM" "Invoking voter: $voter_name for $idea_id"
+        local vote_result
+        vote_result=$(_quorum_invoke_voter "$voter_name" "$proposal_json")
+        all_votes=$(echo "$all_votes" | jq --arg name "$voter_name" --argjson vote "$vote_result" '. + {($name): $vote}')
+    done
+
+    # Tally the votes using bloom_implementation threshold
+    local tally_result
+    tally_result=$(_quorum_tally "$all_votes" "bloom_implementation")
+
+    local result
+    result=$(echo "$tally_result" | jq -r '.result')
+
+    # Determine next vote ID from existing vote files
+    local votes_dir="$AUTOMATON_DIR/votes"
+    mkdir -p "$votes_dir"
+    local next_vote_id=1
+    local latest_vote
+    latest_vote=$(find "$votes_dir" -name 'vote-*.json' -type f 2>/dev/null | sort | tail -1)
+    if [ -n "$latest_vote" ]; then
+        next_vote_id=$(basename "$latest_vote" .json | sed 's/vote-//' | sed 's/^0*//' )
+        next_vote_id=$(( next_vote_id + 1 ))
+    fi
+    local vote_id
+    vote_id=$(printf "vote-%03d" "$next_vote_id")
+    local vote_file="$votes_dir/${vote_id}.json"
+
+    # Build the vote record
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    jq -n \
+        --arg vote_id "$vote_id" \
+        --arg idea_id "$idea_id" \
+        --arg type "bloom_implementation" \
+        --argjson proposal "$proposal_json" \
+        --argjson votes "$all_votes" \
+        --argjson tally "$tally_result" \
+        --arg created_at "$now" \
+        '{
+            vote_id: $vote_id,
+            idea_id: $idea_id,
+            type: $type,
+            proposal: $proposal,
+            votes: $votes,
+            tally: $tally,
+            created_at: $created_at
+        }' > "$vote_file"
+
+    log "QUORUM" "Vote recorded: $vote_id result=$result for $idea_id"
+
+    # Update idea with vote reference
+    local tmp_file="${idea_file}.tmp"
+    jq --arg vid "$vote_id" '.vote_id = $vid' "$idea_file" > "$tmp_file" && mv "$tmp_file" "$idea_file"
+
+    # Act on the result
+    if [ "$result" = "approved" ]; then
+        log "QUORUM" "APPROVED: $idea_id — advancing to harvest"
+        _garden_advance_stage "$idea_id" "harvest" "Quorum approved ($vote_id)" "true"
+    else
+        log "QUORUM" "REJECTED: $idea_id — wilting"
+        _garden_wilt "$idea_id" "Quorum rejected ($vote_id)"
+    fi
+
+    echo "$vote_file"
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------

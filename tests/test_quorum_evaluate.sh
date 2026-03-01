@@ -22,13 +22,13 @@ func_body=$(sed -n '/^_quorum_evaluate_bloom()/,/^[^ ]/p' "$script_file")
 assert_contains "$func_body" "_garden_get_bloom_candidates" "_quorum_evaluate_bloom calls _garden_get_bloom_candidates"
 
 # --- Test 3: Reads idea file to assemble proposal context ---
-assert_contains "$func_body" "idea_file\|idea-" "_quorum_evaluate_bloom reads idea file for proposal"
+assert_contains "$func_body" "idea_file" "_quorum_evaluate_bloom reads idea file for proposal"
 
 # --- Test 4: Assembles proposal JSON with idea details ---
 assert_contains "$func_body" "proposal" "_quorum_evaluate_bloom assembles proposal context"
 
 # --- Test 5: Iterates over voters ---
-assert_contains "$func_body" "QUORUM_VOTERS\|voters" "_quorum_evaluate_bloom iterates over configured voters"
+assert_contains "$func_body" "QUORUM_VOTERS" "_quorum_evaluate_bloom iterates over configured voters"
 
 # --- Test 6: Calls _quorum_invoke_voter ---
 assert_contains "$func_body" "_quorum_invoke_voter" "_quorum_evaluate_bloom invokes voters"
@@ -40,16 +40,16 @@ assert_contains "$func_body" "_quorum_tally" "_quorum_evaluate_bloom tallies vot
 assert_contains "$func_body" "bloom_implementation" "_quorum_evaluate_bloom uses bloom_implementation decision type"
 
 # --- Test 9: Writes vote record to .automaton/votes/ ---
-assert_contains "$func_body" "votes/" "_quorum_evaluate_bloom writes to votes directory"
+assert_contains "$func_body" "votes_dir" "_quorum_evaluate_bloom writes to votes directory"
 
 # --- Test 10: Vote record is JSON ---
 assert_contains "$func_body" "jq" "_quorum_evaluate_bloom produces JSON vote record"
 
 # --- Test 11: Records vote_id ---
-assert_contains "$func_body" "vote_id\|vote-" "_quorum_evaluate_bloom records vote ID"
+assert_contains "$func_body" "vote_id" "_quorum_evaluate_bloom records vote ID"
 
 # --- Test 12: Handles approved result — advances idea ---
-assert_contains "$func_body" "_garden_advance_stage\|harvest" "_quorum_evaluate_bloom advances idea on approval"
+assert_contains "$func_body" "_garden_advance_stage" "_quorum_evaluate_bloom advances idea on approval"
 
 # --- Test 13: Handles rejected result — wilts idea ---
 assert_contains "$func_body" "_garden_wilt" "_quorum_evaluate_bloom wilts idea on rejection"
@@ -58,7 +58,7 @@ assert_contains "$func_body" "_garden_wilt" "_quorum_evaluate_bloom wilts idea o
 assert_contains "$func_body" "log" "_quorum_evaluate_bloom logs the evaluation"
 
 # --- Test 15: Returns when no bloom candidates exist ---
-assert_contains "$func_body" "return\|no.*candidate\|No.*candidate\|empty\|0" "_quorum_evaluate_bloom handles no bloom candidates"
+assert_contains "$func_body" "No bloom candidates" "_quorum_evaluate_bloom handles no bloom candidates"
 
 # --- Test 16: Records per-voter votes in the vote record ---
 assert_contains "$func_body" "votes" "_quorum_evaluate_bloom records per-voter votes"
