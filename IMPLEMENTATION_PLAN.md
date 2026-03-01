@@ -180,7 +180,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 - [x] Add `stigmergy` configuration section to `automaton.config.json` with all fields (enabled, initial_strength, reinforce_increment, decay_floor, match_threshold, max_signals) (WHY: signal behavior is tunable — initial strength, decay rates, and matching sensitivity need configuration before any signals can be emitted) <!-- test: tests/test_signal_config.sh -->
 
-- [ ] Update `.gitignore` to add `.automaton/signals.json` as persistent git-tracked state (WHY: signals accumulate evidence across runs and must survive directory loss to maintain coordination history) <!-- test: none -->
+- [x] Update `.gitignore` to add `.automaton/signals.json` as persistent git-tracked state (WHY: signals accumulate evidence across runs and must survive directory loss to maintain coordination history) <!-- test: none -->
 
 - [ ] Implement `_signal_emit()` in `automaton.sh` that creates a new signal in `.automaton/signals.json` with full schema (id, type, title, description, strength=initial_strength, decay_rate from type defaults, observations[], related_ideas, created_at, last_reinforced_at, last_decayed_at), or reinforces an existing signal if `_signal_find_match()` returns a match (WHY: emission is the core write operation — agents leave persistent markers in the environment that guide future agents) <!-- test: tests/test_signal_emit.sh -->
 
