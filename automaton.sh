@@ -814,6 +814,105 @@ _allowance_week_end() {
         date -v+6d -jf "%Y-%m-%d" "$week_start" +%Y-%m-%d 2>/dev/null || echo "$week_start"
 }
 
+# Displays a weekly summary when resuming after a week boundary (spec-35 §7).
+# Shows tokens used, runs, tasks completed, estimated API-equivalent savings,
+# and the fresh allowance for the new week. Called from _allowance_check_rollover()
+# BEFORE resetting counters so old week data is still available.
+_display_weekly_summary() {
+    local budget_file="$AUTOMATON_DIR/budget.json"
+    if [ ! -f "$budget_file" ]; then
+        return 0
+    fi
+
+    local old_week_start old_week_end tokens_used_week
+    old_week_start=$(jq -r '.week_start // ""' "$budget_file")
+    old_week_end=$(jq -r '.week_end // ""' "$budget_file")
+    tokens_used_week=$(jq '.tokens_used_this_week // 0' "$budget_file")
+    local weekly_allowance="$BUDGET_WEEKLY_ALLOWANCE"
+
+    if [ -z "$old_week_start" ] || [ -z "$old_week_end" ]; then
+        return 0
+    fi
+
+    # Format dates for display
+    local ws_display we_display
+    ws_display=$(date -d "$old_week_start" "+%b %d" 2>/dev/null || \
+        date -jf "%Y-%m-%d" "$old_week_start" "+%b %d" 2>/dev/null || echo "$old_week_start")
+    we_display=$(date -d "$old_week_end" "+%b %d, %Y" 2>/dev/null || \
+        date -jf "%Y-%m-%d" "$old_week_end" "+%b %d, %Y" 2>/dev/null || echo "$old_week_end")
+
+    # Use cross-project data when available for accurate totals
+    local total_runs=0 project_count=1
+    local allowance_file
+    allowance_file=$(_cross_project_allowance_file)
+    if [ -f "$allowance_file" ]; then
+        local cross_total
+        cross_total=$(jq '.current_week.total_used // 0' "$allowance_file" 2>/dev/null || echo 0)
+        if [ "$cross_total" -gt "$tokens_used_week" ]; then
+            tokens_used_week="$cross_total"
+        fi
+        project_count=$(jq '.current_week.projects | length' "$allowance_file" 2>/dev/null || echo 1)
+        total_runs=$(jq '[.current_week.projects[].runs] | add // 0' "$allowance_file" 2>/dev/null || echo 0)
+    fi
+    [ "$project_count" -lt 1 ] && project_count=1
+    [ "$total_runs" -lt 1 ] && total_runs=1
+
+    # Usage percentage
+    local usage_pct
+    usage_pct=$(awk -v used="$tokens_used_week" -v total="$weekly_allowance" \
+        'BEGIN { if (total > 0) printf "%.0f", used * 100 / total; else printf "0" }')
+
+    # Tasks completed (from plan file)
+    local tasks_completed=0
+    local plan_file="${PLAN_FILE:-IMPLEMENTATION_PLAN.md}"
+    if [ -f "$plan_file" ]; then
+        tasks_completed=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null || echo 0)
+    fi
+
+    # Estimate API-equivalent cost from budget-history.json run entries within the week
+    local estimated_savings="0.00"
+    local history_file="$AUTOMATON_DIR/budget-history.json"
+    if [ -f "$history_file" ]; then
+        local run_prefix_start day_after_end run_prefix_end
+        run_prefix_start="run-${old_week_start}"
+        day_after_end=$(date -d "$old_week_end + 1 day" +%Y-%m-%d 2>/dev/null || \
+            date -jf "%Y-%m-%d" -v+1d "$old_week_end" +%Y-%m-%d 2>/dev/null || echo "9999-99-99")
+        run_prefix_end="run-${day_after_end}"
+        estimated_savings=$(jq --arg start "$run_prefix_start" --arg end "$run_prefix_end" '
+            [.runs[] | select(.run_id >= $start and .run_id < $end) | .estimated_cost_usd] |
+            add // 0 | . * 100 | round / 100
+        ' "$history_file" 2>/dev/null || echo "0.00")
+    fi
+
+    # New week boundaries
+    local new_week_start new_week_end new_ws_display new_we_display
+    new_week_start=$(_allowance_week_start)
+    new_week_end=$(_allowance_week_end "$new_week_start")
+    new_ws_display=$(date -d "$new_week_start" "+%b %d" 2>/dev/null || \
+        date -jf "%Y-%m-%d" "$new_week_start" "+%b %d" 2>/dev/null || echo "$new_week_start")
+    new_we_display=$(date -d "$new_week_end" "+%b %d, %Y" 2>/dev/null || \
+        date -jf "%Y-%m-%d" "$new_week_end" "+%b %d, %Y" 2>/dev/null || echo "$new_week_end")
+
+    # Fresh allowance for new week
+    local effective_allowance
+    effective_allowance=$(awk -v total="$weekly_allowance" -v reserve="$BUDGET_RESERVE_PERCENTAGE" \
+        'BEGIN { printf "%d", total * (1 - reserve/100) }')
+
+    _fmt_num() { printf "%'d" "$1" 2>/dev/null || echo "$1"; }
+
+    echo ""
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo " Weekly Summary: $ws_display — $we_display"
+    printf " Total tokens used:  %s / %s (%s%%)\n" "$(_fmt_num "$tokens_used_week")" "$(_fmt_num "$weekly_allowance")" "$usage_pct"
+    printf " Runs:               %s across %s project%s\n" "$total_runs" "$project_count" "$([ "$project_count" -ne 1 ] && echo 's' || echo '')"
+    printf " Tasks completed:    %s\n" "$tasks_completed"
+    printf " Estimated savings:  \$%s vs API pricing\n" "$estimated_savings"
+    echo " New week started:   $new_ws_display — $new_we_display"
+    printf " Fresh allowance:    %s tokens\n" "$(_fmt_num "$effective_allowance")"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+}
+
 # Checks if the current date is past the stored week_end in budget.json.
 # If so, archives the current week and resets counters.
 # Called during --resume in allowance mode.
@@ -837,6 +936,9 @@ _allowance_check_rollover() {
 
     # Compare dates: if today > week_end, rollover needed
     if [[ "$today" > "$stored_week_end" ]]; then
+        # Display weekly summary before resetting counters (spec-35 §7)
+        _display_weekly_summary
+
         log "ORCHESTRATOR" "Allowance week rollover: $stored_week_end has passed. Resetting weekly counters."
 
         local new_week_start new_week_end effective_allowance tmp
@@ -1589,9 +1691,16 @@ check_budget() {
         effective_allowance=$(jq '.limits.effective_allowance' "$budget_file")
         week_end=$(jq -r '.week_end' "$budget_file")
 
-        # Hard stop: weekly allowance exhausted
+        # Hard stop: weekly allowance exhausted (spec-35 §8)
+        # Graceful exhaustion: iteration already completed (check_budget runs in
+        # post_iteration), save state and run summary, then exit code 2.
         if [ "$tokens_remaining" -le 0 ]; then
-            log "ORCHESTRATOR" "Weekly token allowance exhausted (${tokens_used}/${effective_allowance}). Resets after ${week_end}. Run --resume after reset."
+            local reset_day_name
+            reset_day_name=$(date -d "$week_end + 1 day" "+%A" 2>/dev/null || \
+                date -jf "%Y-%m-%d" -v+1d "$week_end" "+%A" 2>/dev/null || echo "$week_end")
+            log "ORCHESTRATOR" "Weekly allowance exhausted. Resets on ${reset_day_name}. Run --resume after reset."
+            write_run_summary 2 2>/dev/null || true
+            commit_persistent_state "${current_phase:-build}" "${iteration:-0}" 2>/dev/null || true
             write_state
             exit 2
         fi
@@ -1608,6 +1717,8 @@ check_budget() {
             run_tokens=$(jq '(.used.total_input + .used.total_output)' "$budget_file")
             if [ "$run_tokens" -ge "$daily_budget" ]; then
                 log "ORCHESTRATOR" "Daily budget pacing limit reached (${run_tokens}/${daily_budget} tokens). Saving state. Run --resume tomorrow or after adjusting budget."
+                write_run_summary 2 2>/dev/null || true
+                commit_persistent_state "${current_phase:-build}" "${iteration:-0}" 2>/dev/null || true
                 write_state
                 exit 2
             fi
