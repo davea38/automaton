@@ -62,6 +62,7 @@ load_config() {
         # -- test-first build strategy (spec-36) --
         EXEC_TEST_FIRST_ENABLED=$(jq -r '.execution.test_first_enabled // true' "$config_file")
         EXEC_TEST_SCAFFOLD_ITERATIONS=$(jq -r '.execution.test_scaffold_iterations // 2' "$config_file")
+        EXEC_TEST_FRAMEWORK=$(jq -r '.execution.test_framework // "assertions"' "$config_file")
 
         # -- git --
         GIT_AUTO_PUSH=$(jq -r '.git.auto_push // true' "$config_file")
@@ -148,6 +149,7 @@ load_config() {
         # -- test-first build strategy (spec-36) --
         EXEC_TEST_FIRST_ENABLED="true"
         EXEC_TEST_SCAFFOLD_ITERATIONS=2
+        EXEC_TEST_FRAMEWORK="assertions"
 
         # -- git --
         GIT_AUTO_PUSH="true"
@@ -4142,6 +4144,7 @@ _build_dynamic_context_stdin() {
             dynamic_content+="- Build sub-phase: TEST SCAFFOLD (3a) — iteration $((scaffold_iterations_done + 1))/$EXEC_TEST_SCAFFOLD_ITERATIONS"$'\n'
             dynamic_content+=""$'\n'
             dynamic_content+="**TEST SCAFFOLD MODE**: Write test files ONLY for plan tasks with \`<!-- test: path -->\` annotations. Do NOT implement any features. Tests should fail initially (no implementation exists yet). Commit test files when done."$'\n'
+            dynamic_content+="- Test framework: $EXEC_TEST_FRAMEWORK"$'\n'
         else
             dynamic_content+="- Build sub-phase: IMPLEMENTATION (3b)"$'\n'
         fi
@@ -7073,7 +7076,7 @@ transition_to_phase() {
     if [ "$new_phase" = "build" ] && [ "$EXEC_TEST_FIRST_ENABLED" = "true" ]; then
         build_sub_phase="scaffold"
         scaffold_iterations_done=0
-        log "ORCHESTRATOR" "Test-first enabled: starting with test scaffold sub-phase (3a), max ${EXEC_TEST_SCAFFOLD_ITERATIONS} iterations"
+        log "ORCHESTRATOR" "Test-first enabled: starting with test scaffold sub-phase (3a), max ${EXEC_TEST_SCAFFOLD_ITERATIONS} iterations, framework=${EXEC_TEST_FRAMEWORK}"
     else
         build_sub_phase="implementation"
         scaffold_iterations_done=0
