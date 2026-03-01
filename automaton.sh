@@ -4837,6 +4837,64 @@ _garden_rebuild_index() {
         }' > "$index_file"
 }
 
+# Auto-wilts seeds older than GARDEN_SEED_TTL_DAYS and sprouts older than
+# GARDEN_SPROUT_TTL_DAYS that have received no new evidence. TTL for seeds
+# is measured from creation date; TTL for sprouts is measured from the most
+# recent evidence timestamp (or creation date if no evidence).
+_garden_prune_expired() {
+    local garden_dir="$AUTOMATON_DIR/garden"
+
+    local idea_files
+    idea_files=$(find "$garden_dir" -name 'idea-*.json' -type f 2>/dev/null | sort)
+    [ -n "$idea_files" ] || return 0
+
+    local now_epoch
+    now_epoch=$(date -u +%s)
+    local seed_ttl_secs=$((GARDEN_SEED_TTL_DAYS * 86400))
+    local sprout_ttl_secs=$((GARDEN_SPROUT_TTL_DAYS * 86400))
+    local pruned=0
+
+    for f in $idea_files; do
+        [ -f "$f" ] || continue
+
+        local stage
+        stage=$(jq -r '.stage' "$f")
+
+        if [ "$stage" = "seed" ]; then
+            # Seeds: TTL from creation date
+            local created_at
+            created_at=$(jq -r '.origin.created_at' "$f")
+            local created_epoch
+            created_epoch=$(date -u -d "$created_at" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null || echo "$now_epoch")
+            local age_secs=$((now_epoch - created_epoch))
+            if [ "$age_secs" -ge "$seed_ttl_secs" ]; then
+                local idea_id
+                idea_id=$(jq -r '.id' "$f")
+                _garden_wilt "$idea_id" "TTL expired: seed received no evidence after ${GARDEN_SEED_TTL_DAYS} days"
+                pruned=$((pruned + 1))
+            fi
+        elif [ "$stage" = "sprout" ]; then
+            # Sprouts: TTL from most recent evidence timestamp
+            local last_evidence_at
+            last_evidence_at=$(jq -r '(.evidence | last | .added_at) // .origin.created_at' "$f")
+            local last_evidence_epoch
+            last_evidence_epoch=$(date -u -d "$last_evidence_at" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_evidence_at" +%s 2>/dev/null || echo "$now_epoch")
+            local stale_secs=$((now_epoch - last_evidence_epoch))
+            if [ "$stale_secs" -ge "$sprout_ttl_secs" ]; then
+                local idea_id
+                idea_id=$(jq -r '.id' "$f")
+                _garden_wilt "$idea_id" "TTL expired: sprout received no new evidence after ${GARDEN_SPROUT_TTL_DAYS} days"
+                pruned=$((pruned + 1))
+            fi
+        fi
+        # bloom, harvest, wilt stages are immune to TTL pruning
+    done
+
+    if [ "$pruned" -gt 0 ]; then
+        log "GARDEN" "Pruned $pruned expired ideas"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------

@@ -160,7 +160,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 - [x] Implement `_garden_rebuild_index()` in `automaton.sh` that regenerates `_index.json` from all idea files with total counts, by_stage breakdown, bloom_candidates list sorted by priority, recent_activity, next_id, and updated_at (WHY: the index provides a lightweight summary for bootstrap and CLI display without reading every idea file) <!-- test: tests/test_garden_index.sh -->
 
-- [ ] Implement `_garden_prune_expired()` in `automaton.sh` that auto-wilts seeds older than `seed_ttl_days` and sprouts older than `sprout_ttl_days` that have received no new evidence (WHY: TTL-based pruning prevents the garden from filling up with stale ideas that will never mature) <!-- test: tests/test_garden_prune.sh -->
+- [x] Implement `_garden_prune_expired()` in `automaton.sh` that auto-wilts seeds older than `seed_ttl_days` and sprouts older than `sprout_ttl_days` that have received no new evidence (WHY: TTL-based pruning prevents the garden from filling up with stale ideas that will never mature) <!-- test: tests/test_garden_prune.sh -->
 
 - [ ] Implement `_garden_find_duplicates()` in `automaton.sh` that checks for existing non-wilted ideas with matching tags before creating a new seed, returning the existing idea ID if found (WHY: duplicate detection prevents the same metric breach or signal from spawning multiple identical ideas — the existing idea gets watered instead) <!-- test: tests/test_garden_duplicates.sh -->
 
