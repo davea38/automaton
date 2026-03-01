@@ -10744,6 +10744,58 @@ ARG_OVERRIDE=false
 ARG_PAUSE_EVOLUTION=false
 ARG_SIGNALS=false
 
+_show_help() {
+    cat <<'HELPTEXT'
+Usage: automaton.sh [OPTIONS]
+
+Multi-phase orchestrator for autonomous Claude agent workflows.
+
+Standard Mode:
+  --resume              Resume from saved state (.automaton/state.json)
+  --skip-research       Skip Phase 1 (research), start at Phase 2 (plan)
+  --skip-review         Skip Phase 4 (review), mark COMPLETE after build
+  --config FILE         Use an alternate config file (default: automaton.config.json)
+  --dry-run             Load config, run Gate 1, show settings, then exit
+  --self                Self-build mode: improve automaton itself (spec-25)
+  --self --continue     Auto-pick highest-priority backlog item and run (spec-26)
+  --stats               Display run history and performance trends (spec-26)
+  --budget-check        Show weekly allowance status without starting a run (spec-35)
+  --help, -h            Show this help message
+
+Evolution Mode:
+  --evolve              Start autonomous evolution loop (implies --self)
+  --evolve --cycles N   Run exactly N evolution cycles
+  --evolve --dry-run    Show REFLECT analysis without acting
+  --evolve --resume     Resume interrupted evolution
+
+Garden:
+  --plant "idea"        Plant a new seed in the garden
+  --garden              Display garden summary
+  --garden-detail ID    Show full idea details
+  --water ID "evidence" Add evidence to an idea
+  --prune ID "reason"   Wilt an idea with a reason
+  --promote ID          Force-promote idea to bloom
+
+Observation:
+  --health              Display health metrics dashboard
+  --signals             Display active stigmergic signals
+  --inspect ID          Show vote record details
+
+Governance:
+  --constitution        Display the current constitution
+  --amend               Propose a constitutional amendment
+  --override            Override a quorum decision
+  --pause-evolution     Pause running evolution loop
+
+Exit codes:
+  0   All phases complete, review passed
+  1   General error or max consecutive failures
+  2   Budget exhausted (resumable with --resume)
+  3   Escalation required (human intervention needed)
+  130 Interrupted by user (resumable with --resume)
+HELPTEXT
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
         --resume)
@@ -10882,55 +10934,7 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --help|-h)
-            cat <<'USAGE'
-Usage: automaton.sh [OPTIONS]
-
-Multi-phase orchestrator for autonomous Claude agent workflows.
-
-Standard Mode:
-  --resume              Resume from saved state (.automaton/state.json)
-  --skip-research       Skip Phase 1 (research), start at Phase 2 (plan)
-  --skip-review         Skip Phase 4 (review), mark COMPLETE after build
-  --config FILE         Use an alternate config file (default: automaton.config.json)
-  --dry-run             Load config, run Gate 1, show settings, then exit
-  --self                Self-build mode: improve automaton itself (spec-25)
-  --self --continue     Auto-pick highest-priority backlog item and run (spec-26)
-  --stats               Display run history and performance trends (spec-26)
-  --budget-check        Show weekly allowance status without starting a run (spec-35)
-  --help, -h            Show this help message
-
-Evolution Mode:
-  --evolve              Start autonomous evolution loop (implies --self)
-  --evolve --cycles N   Run exactly N evolution cycles
-  --evolve --dry-run    Show REFLECT analysis without acting
-  --evolve --resume     Resume interrupted evolution
-
-Garden:
-  --plant "idea"        Plant a new seed in the garden
-  --garden              Display garden summary
-  --garden-detail ID    Show full idea details
-  --water ID "evidence" Add evidence to an idea
-  --prune ID "reason"   Wilt an idea with a reason
-  --promote ID          Force-promote idea to bloom
-
-Observation:
-  --health              Display health metrics dashboard
-  --signals             Display active stigmergic signals
-  --inspect ID          Show vote record details
-
-Governance:
-  --constitution        Display the current constitution
-  --amend               Propose a constitutional amendment
-  --override            Override a quorum decision
-  --pause-evolution     Pause running evolution loop
-
-Exit codes:
-  0   All phases complete, review passed
-  1   General error or max consecutive failures
-  2   Budget exhausted (resumable with --resume)
-  3   Escalation required (human intervention needed)
-  130 Interrupted by user (resumable with --resume)
-USAGE
+            _show_help
             exit 0
             ;;
         *)
