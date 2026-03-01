@@ -7037,6 +7037,114 @@ build_agent_teams_command() {
 
 # Agent Teams build phase (spec-28). Uses the Claude Code Agent Teams API
 # instead of tmux + worktree wave orchestration. Teammates self-claim tasks
+# Aggregates budget from Agent Teams session using subagent_usage.json
+# (populated by SubagentStart/SubagentStop hooks from spec-31) and the
+# lead session's stream-json token output.
+#
+# WHY: Agent Teams does not expose per-teammate stream-json token usage.
+# This function reads subagent_usage.json for individual teammate data
+# when available, and falls back to dividing the lead session's aggregate
+# tokens by teammate count for approximate per-teammate attribution.
+# (spec-28 §9)
+#
+# Usage: aggregate_agent_teams_budget
+# Reads: .automaton/subagent_usage.json, LAST_INPUT_TOKENS, LAST_OUTPUT_TOKENS
+# Writes: budget.json via update_budget()
+aggregate_agent_teams_budget() {
+    local usage_file="$AUTOMATON_DIR/subagent_usage.json"
+    local teammate_count="${MAX_BUILDERS:-3}"
+
+    log "ORCHESTRATOR" "Per-teammate token attribution is approximate in agent-teams mode"
+
+    # If subagent_usage.json does not exist, fall through to lead session fallback
+    if [ -f "$usage_file" ]; then
+        local completed_entries
+        completed_entries=$(jq '[.[] | select(.status == "completed")] | length' "$usage_file" 2>/dev/null || echo 0)
+
+        if [ "$completed_entries" -gt 0 ]; then
+            log "ORCHESTRATOR" "Agent Teams budget: found $completed_entries completed subagent entries in subagent_usage.json"
+
+            # Process each completed subagent entry
+            local i=0
+            while [ "$i" -lt "$completed_entries" ]; do
+                local entry
+                entry=$(jq --argjson idx "$i" '[.[] | select(.status == "completed")][$idx]' "$usage_file" 2>/dev/null)
+
+                local agent_name input output cache_create cache_read
+                agent_name=$(jq -r '.agent_name // "teammate"' <<< "$entry")
+                input=$(jq '.tokens.input // 0' <<< "$entry")
+                output=$(jq '.tokens.output // 0' <<< "$entry")
+                cache_create=$(jq '.tokens.cache_create // 0' <<< "$entry")
+                cache_read=$(jq '.tokens.cache_read // 0' <<< "$entry")
+
+                # Skip entries with zero tokens (hook didn't capture usage)
+                if [ "$input" -eq 0 ] && [ "$output" -eq 0 ]; then
+                    i=$((i + 1))
+                    continue
+                fi
+
+                local cost duration
+                cost=$(estimate_cost "$MODEL_BUILDING" "$input" "$output" "$cache_create" "$cache_read")
+
+                local started_at stopped_at
+                started_at=$(jq -r '.started_at // empty' <<< "$entry")
+                stopped_at=$(jq -r '.stopped_at // empty' <<< "$entry")
+                duration=0
+                if [ -n "$started_at" ] && [ -n "$stopped_at" ]; then
+                    local start_epoch stop_epoch
+                    start_epoch=$(date -d "$started_at" +%s 2>/dev/null || echo 0)
+                    stop_epoch=$(date -d "$stopped_at" +%s 2>/dev/null || echo 0)
+                    if [ "$start_epoch" -gt 0 ] && [ "$stop_epoch" -gt 0 ]; then
+                        duration=$((stop_epoch - start_epoch))
+                    fi
+                fi
+
+                update_budget "$MODEL_BUILDING" "$input" "$output" \
+                    "$cache_create" "$cache_read" \
+                    "$cost" "$duration" "agent-teams ${agent_name}" "success"
+
+                i=$((i + 1))
+            done
+            return 0
+        fi
+    fi
+
+    # Fallback: no subagent_usage.json or no completed entries.
+    # Use the lead session's aggregate tokens (LAST_INPUT_TOKENS etc.)
+    # divided by teammate count as approximate per-teammate attribution.
+    local lead_input="${LAST_INPUT_TOKENS:-0}"
+    local lead_output="${LAST_OUTPUT_TOKENS:-0}"
+    local lead_cache_create="${LAST_CACHE_CREATE:-0}"
+    local lead_cache_read="${LAST_CACHE_READ:-0}"
+
+    if [ "$lead_input" -eq 0 ] && [ "$lead_output" -eq 0 ]; then
+        log "ORCHESTRATOR" "WARN: No token data available for agent-teams budget tracking"
+        return 0
+    fi
+
+    log "ORCHESTRATOR" "Agent Teams budget fallback: dividing lead aggregate by $teammate_count teammates"
+
+    # Divide aggregate tokens among teammates for approximate attribution
+    local per_teammate_input per_teammate_output per_teammate_cc per_teammate_cr
+    per_teammate_input=$((lead_input / teammate_count))
+    per_teammate_output=$((lead_output / teammate_count))
+    per_teammate_cc=$((lead_cache_create / teammate_count))
+    per_teammate_cr=$((lead_cache_read / teammate_count))
+
+    local t=1
+    while [ "$t" -le "$teammate_count" ]; do
+        local cost
+        cost=$(estimate_cost "$MODEL_BUILDING" "$per_teammate_input" "$per_teammate_output" \
+            "$per_teammate_cc" "$per_teammate_cr")
+
+        update_budget "$MODEL_BUILDING" "$per_teammate_input" "$per_teammate_output" \
+            "$per_teammate_cc" "$per_teammate_cr" \
+            "$cost" "0" "agent-teams teammate-${t} (approximate)" "success"
+
+        t=$((t + 1))
+    done
+}
+
 # from a shared task list populated from IMPLEMENTATION_PLAN.md.
 #
 # WHY: Agent Teams provides native parallel execution with self-claiming,
@@ -7101,6 +7209,12 @@ run_agent_teams_build() {
     if [ "$agent_exit_code" -ne 0 ]; then
         log "ORCHESTRATOR" "WARN: Agent Teams session exited with code $agent_exit_code"
     fi
+
+    # Extract tokens from the lead session output for fallback attribution
+    extract_tokens "$agent_result"
+
+    # Aggregate budget from subagent hooks or lead session (spec-28 §9)
+    aggregate_agent_teams_budget
 
     return 0
 }
