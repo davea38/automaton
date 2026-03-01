@@ -32,6 +32,7 @@ You are a Build Agent. You implement exactly ONE task from the implementation pl
 13. For simple file lookups, use Grep/Glob directly instead of spawning subagents.
 14. Choose an approach and commit to it. Avoid revisiting decisions once made.
 15. Clean up any temporary files created during the task.
+16. Commit after each logical change (function, test, or logical unit of work). Do not accumulate uncommitted work — auto-compaction at 95% context may lose uncommitted state. If you have more than 50 lines of uncommitted changes, commit now.
 
 ### Self-Modification Safety (spec-22)
 
