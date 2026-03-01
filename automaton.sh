@@ -6274,6 +6274,113 @@ _metrics_get_latest() {
     fi
 }
 
+# Analyzes trends across the last N snapshots. For each tracked metric computes
+# direction (improving/degrading/stable), rate of change per cycle, and alert
+# status when degrading for degradation_alert_threshold consecutive cycles.
+# Returns a JSON array of trend observations.
+#
+# Usage: trends=$(_metrics_analyze_trends [window])
+_metrics_analyze_trends() {
+    if [ "${METRICS_ENABLED:-true}" != "true" ]; then echo "[]"; return 0; fi
+
+    local window="${1:-5}"
+    local metrics_file="$AUTOMATON_DIR/evolution-metrics.json"
+    if [ ! -f "$metrics_file" ]; then echo "[]"; return 0; fi
+
+    local snap_count
+    snap_count=$(jq '.snapshots | length' "$metrics_file" 2>/dev/null || echo 0)
+    if [ "$snap_count" -lt 2 ]; then echo "[]"; return 0; fi
+
+    # Use jq to compute all trends in a single pass
+    jq --argjson window "$window" '
+        # Metrics config: [category, metric_name, higher_is_better]
+        def tracked_metrics: [
+            ["capability", "total_lines", true],
+            ["capability", "total_functions", true],
+            ["capability", "total_specs", true],
+            ["capability", "total_tests", true],
+            ["efficiency", "tokens_per_task", false],
+            ["efficiency", "cache_hit_ratio", true],
+            ["efficiency", "stall_rate", false],
+            ["quality", "test_pass_rate", true],
+            ["quality", "first_pass_success_rate", true],
+            ["quality", "rollback_count", false],
+            ["quality", "review_rework_rate", false],
+            ["health", "error_rate", false]
+        ];
+
+        .snapshots[-$window:] as $snaps |
+        .baselines as $baselines |
+
+        if ($snaps | length) < 2 then []
+        else
+            [tracked_metrics[] | . as [$cat, $metric, $higher_better] |
+                # Extract values for this metric from the window
+                [$snaps[] | .[$cat][$metric] // 0] as $values |
+                ($values | length) as $n |
+
+                # First and last values in window
+                $values[0] as $first |
+                $values[$n - 1] as $last |
+
+                # Rate of change: percentage change per cycle
+                (if $first == 0 then
+                    (if $last == 0 then 0 else 100 end)
+                else
+                    (($last - $first) / $first * 100 / ($n - 1))
+                end) as $rate |
+
+                # Check if stable relative to baseline (within 5%)
+                ($baselines[$cat][$metric] // null) as $baseline |
+                (if $baseline != null and $baseline != 0 then
+                    ((($last - $baseline) / $baseline) | fabs) < 0.05
+                else
+                    false
+                end) as $within_baseline |
+
+                # Count consecutive degrading cycles from the end
+                (reduce range($n - 1; 0; -1) as $i (
+                    0;
+                    if . >= 0 then
+                        ($values[$i] - $values[$i - 1]) as $delta |
+                        if ($higher_better and $delta < 0) or ($higher_better | not and $delta > 0) then
+                            . + 1
+                        else
+                            -1  # stop counting
+                        end
+                    else .
+                    end
+                ) | if . < 0 then 0 else . end) as $consec_degrading |
+
+                # Determine direction
+                (if $within_baseline and ($rate | fabs) < 5 then
+                    "stable"
+                elif ($higher_better and $last > $first) or ($higher_better | not and $last < $first) then
+                    "improving"
+                elif ($higher_better and $last < $first) or ($higher_better | not and $last > $first) then
+                    "degrading"
+                else
+                    "stable"
+                end) as $direction |
+
+                # Alert if degrading for 3+ consecutive cycles
+                ($direction == "degrading" and $consec_degrading >= 3) as $alert |
+
+                {
+                    category: $cat,
+                    metric: $metric,
+                    direction: $direction,
+                    rate: ($rate * 100 | round / 100),
+                    alert: $alert,
+                    current: $last,
+                    baseline: ($baseline // null),
+                    consecutive_degrading: $consec_degrading
+                }
+            ]
+        end
+    ' "$metrics_file"
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
