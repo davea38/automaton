@@ -8178,6 +8178,118 @@ _evolve_ideate() {
     return 0
 }
 
+# EVALUATE phase (spec-41 §5): runs the agent quorum on bloom-stage ideas.
+# Selects the highest-priority bloom candidate, invokes _quorum_evaluate_bloom(),
+# and writes evaluate.json to the cycle directory. Skips to OBSERVE if no bloom
+# candidates exist. Only the highest-priority candidate is evaluated per cycle
+# (Article VI: incremental growth).
+#
+# Usage: _evolve_evaluate <cycle_id>
+# Args:  cycle_id — the current evolution cycle number
+_evolve_evaluate() {
+    local cycle_id="${1:?_evolve_evaluate requires cycle_id}"
+    local cycle_dir="$AUTOMATON_DIR/evolution/cycle-${cycle_id}"
+    mkdir -p "$cycle_dir"
+
+    log "EVOLVE" "EVALUATE phase starting (cycle=$cycle_id)"
+
+    # Read ideate.json for bloom candidates context
+    local ideate_file="$cycle_dir/ideate.json"
+    local bloom_candidates_count=0
+    if [ -f "$ideate_file" ]; then
+        bloom_candidates_count=$(jq '.bloom_candidates | length' "$ideate_file" 2>/dev/null || echo 0)
+    fi
+
+    # Get bloom candidates from the garden
+    local candidates=""
+    candidates=$(_garden_get_bloom_candidates 2>/dev/null) || true
+
+    if [ -z "$candidates" ]; then
+        log "EVOLVE" "EVALUATE: No bloom candidates — skipping to OBSERVE"
+
+        local now
+        now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        jq -n \
+            --argjson cycle_id "$cycle_id" \
+            --arg timestamp "$now" \
+            --argjson bloom_candidates_count "$bloom_candidates_count" \
+            --arg evaluated "none" \
+            --arg vote_id "none" \
+            --arg result "skipped" \
+            --arg conditions "[]" \
+            --argjson tokens_used 0 \
+            '{
+                cycle_id: $cycle_id,
+                timestamp: $timestamp,
+                bloom_candidates_count: $bloom_candidates_count,
+                evaluated: $evaluated,
+                vote_id: $vote_id,
+                result: $result,
+                conditions: $conditions,
+                tokens_used: $tokens_used
+            }' > "$cycle_dir/evaluate.json"
+
+        return 0
+    fi
+
+    # Select highest-priority candidate (first line from sorted output)
+    local idea_id
+    idea_id=$(echo "$candidates" | head -1)
+    local candidate_count
+    candidate_count=$(echo "$candidates" | wc -l | tr -d ' ')
+    bloom_candidates_count=$candidate_count
+
+    log "EVOLVE" "EVALUATE: $candidate_count bloom candidate(s), evaluating $idea_id"
+
+    # Reset quorum cycle token counter for this evaluation
+    _QUORUM_CYCLE_TOKENS=0
+
+    # Invoke the quorum evaluation (handles voting, vote record, and idea advancement/wilting)
+    local vote_file=""
+    vote_file=$(_quorum_evaluate_bloom 2>/dev/null) || true
+
+    # Extract vote result from the vote record
+    local vote_id="none"
+    local eval_result="unknown"
+    local conditions="[]"
+    local tokens_used="${_QUORUM_CYCLE_TOKENS:-0}"
+
+    if [ -n "$vote_file" ] && [ -f "$vote_file" ]; then
+        vote_id=$(jq -r '.vote_id // "none"' "$vote_file" 2>/dev/null || echo "none")
+        eval_result=$(jq -r '.tally.result // "unknown"' "$vote_file" 2>/dev/null || echo "unknown")
+        conditions=$(jq '.tally.conditions // []' "$vote_file" 2>/dev/null || echo "[]")
+    elif [ "${QUORUM_ENABLED:-true}" != "true" ]; then
+        eval_result="approved"
+        vote_id="auto-approved"
+    fi
+
+    # Write evaluate.json
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    jq -n \
+        --argjson cycle_id "$cycle_id" \
+        --arg timestamp "$now" \
+        --argjson bloom_candidates_count "$bloom_candidates_count" \
+        --arg evaluated "$idea_id" \
+        --arg vote_id "$vote_id" \
+        --arg result "$eval_result" \
+        --argjson conditions "$conditions" \
+        --argjson tokens_used "$tokens_used" \
+        '{
+            cycle_id: $cycle_id,
+            timestamp: $timestamp,
+            bloom_candidates_count: $bloom_candidates_count,
+            evaluated: $evaluated,
+            vote_id: $vote_id,
+            result: $result,
+            conditions: $conditions,
+            tokens_used: $tokens_used
+        }' > "$cycle_dir/evaluate.json"
+
+    log "EVOLVE" "EVALUATE phase complete: evaluated=$idea_id result=$eval_result vote=$vote_id tokens=$tokens_used"
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
