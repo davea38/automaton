@@ -4946,6 +4946,45 @@ _garden_find_duplicates() {
     return 1
 }
 
+# Returns sprout-stage ideas eligible for bloom transition, sorted by priority
+# descending. An idea is eligible when its evidence count >= bloom_threshold
+# and its priority >= bloom_priority_threshold.
+# Outputs one idea ID per line (highest priority first).
+#
+# Returns: 0 if candidates found, 1 if none
+_garden_get_bloom_candidates() {
+    local garden_dir="$AUTOMATON_DIR/garden"
+    local idea_files
+    idea_files=$(find "$garden_dir" -name 'idea-*.json' -type f 2>/dev/null | sort)
+    [ -n "$idea_files" ] || return 1
+
+    local candidates=""
+
+    for f in $idea_files; do
+        [ -f "$f" ] || continue
+
+        local stage
+        stage=$(jq -r '.stage' "$f")
+        [ "$stage" = "sprout" ] || continue
+
+        local evidence_count priority
+        evidence_count=$(jq '.evidence | length' "$f")
+        priority=$(jq -r '.priority // 0' "$f")
+
+        if [ "$evidence_count" -ge "$GARDEN_BLOOM_THRESHOLD" ] && [ "$priority" -ge "$GARDEN_BLOOM_PRIORITY_THRESHOLD" ]; then
+            local idea_id
+            idea_id=$(jq -r '.id' "$f")
+            candidates="${candidates}${priority} ${idea_id}"$'\n'
+        fi
+    done
+
+    [ -n "$candidates" ] || return 1
+
+    # Sort by priority descending, output only idea IDs
+    echo "$candidates" | sort -t' ' -k1 -nr | awk '{print $2}'
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------

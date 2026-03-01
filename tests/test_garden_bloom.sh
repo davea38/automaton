@@ -21,7 +21,13 @@ assert_contains "$func_body" "GARDEN_BLOOM_THRESHOLD" "function checks bloom evi
 assert_contains "$func_body" "GARDEN_BLOOM_PRIORITY_THRESHOLD" "function checks bloom priority threshold"
 
 # --- Test 4: Function sorts by priority ---
-assert_contains "$func_body" "sort\|priority" "function sorts results by priority"
+if echo "$func_body" | grep -q 'sort'; then
+    echo "PASS: function sorts results by priority"
+    ((_TEST_PASS_COUNT++))
+else
+    echo "FAIL: function should sort results by priority" >&2
+    ((_TEST_FAIL_COUNT++))
+fi
 
 # --- Functional tests using temp garden ---
 TMPDIR_TEST=$(mktemp -d)
