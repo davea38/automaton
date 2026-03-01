@@ -329,6 +329,9 @@ RATE
     # Create budget.json with limits from config and zeroed counters
     initialize_budget
 
+    # Initialize structured learnings file (spec-34)
+    init_learnings
+
     # Create empty session.log (log() appends to this)
     : > "$AUTOMATON_DIR/session.log"
 
@@ -1355,6 +1358,253 @@ self_build_check_scope() {
     fi
 
     return 0
+}
+
+# ---------------------------------------------------------------------------
+# Structured Learnings (spec-34)
+# ---------------------------------------------------------------------------
+
+# Initializes .automaton/learnings.json if it does not exist.
+# Called from initialize() to ensure the file is present before any phase runs.
+init_learnings() {
+    local learnings_file="$AUTOMATON_DIR/learnings.json"
+    if [ -f "$learnings_file" ]; then
+        return 0
+    fi
+
+    mkdir -p "$AUTOMATON_DIR"
+    cat > "$learnings_file" <<'LEARN'
+{
+  "version": 1,
+  "entries": []
+}
+LEARN
+    log "ORCHESTRATOR" "Initialized structured learnings at $learnings_file"
+}
+
+# Adds a new learning entry to learnings.json.
+# Args: category summary [detail] [confidence] [source_phase] [tags_csv]
+# category: one of convention, architecture, debugging, tooling, performance, safety
+# confidence: high, medium, low (default: medium)
+# tags_csv: comma-separated tags (default: empty)
+# Returns: 0 on success, 1 on error
+add_learning() {
+    local category="$1"
+    local summary="$2"
+    local detail="${3:-}"
+    local confidence="${4:-medium}"
+    local source_phase="${5:-${current_phase:-unknown}}"
+    local tags_csv="${6:-}"
+    local learnings_file="$AUTOMATON_DIR/learnings.json"
+    local tmp="$AUTOMATON_DIR/learnings.json.tmp"
+
+    if [ ! -f "$learnings_file" ]; then
+        init_learnings
+    fi
+
+    # Validate category
+    case "$category" in
+        convention|architecture|debugging|tooling|performance|safety) ;;
+        *)
+            log "ORCHESTRATOR" "WARN: Invalid learning category '$category'"
+            return 1
+            ;;
+    esac
+
+    # Validate confidence
+    case "$confidence" in
+        high|medium|low) ;;
+        *)
+            log "ORCHESTRATOR" "WARN: Invalid learning confidence '$confidence'"
+            return 1
+            ;;
+    esac
+
+    # Generate next ID
+    local next_id
+    next_id=$(jq -r '
+        .entries | map(.id) | map(ltrimstr("learn-") | tonumber) |
+        (if length == 0 then 0 else max end) + 1 |
+        "learn-" + (. | tostring | if length < 3 then ("000" + .)[-3:] else . end)
+    ' "$learnings_file")
+
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Convert tags CSV to JSON array
+    local tags_json
+    if [ -z "$tags_csv" ]; then
+        tags_json="[]"
+    else
+        tags_json=$(echo "$tags_csv" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | jq -R -s 'split("\n") | map(select(. != ""))')
+    fi
+
+    jq --arg id "$next_id" \
+       --arg cat "$category" \
+       --arg sum "$summary" \
+       --arg det "$detail" \
+       --arg conf "$confidence" \
+       --arg phase "$source_phase" \
+       --argjson iter "${iteration:-0}" \
+       --arg ts "$timestamp" \
+       --argjson tags "$tags_json" \
+       '.entries += [{
+           id: $id,
+           category: $cat,
+           summary: $sum,
+           detail: $det,
+           confidence: $conf,
+           source_phase: $phase,
+           source_iteration: $iter,
+           created_at: $ts,
+           updated_at: $ts,
+           tags: $tags,
+           active: true
+       }]' "$learnings_file" > "$tmp"
+    mv "$tmp" "$learnings_file"
+
+    log "ORCHESTRATOR" "Learning added: $next_id ($category) — $summary"
+}
+
+# Queries learnings from learnings.json with optional filters.
+# Args: [--category CAT] [--confidence CONF] [--tag TAG] [--active-only] [--ids-only]
+# Outputs: JSON array of matching entries (or IDs if --ids-only).
+query_learnings() {
+    local learnings_file="$AUTOMATON_DIR/learnings.json"
+    if [ ! -f "$learnings_file" ]; then
+        echo "[]"
+        return 0
+    fi
+
+    local filter_cat="" filter_conf="" filter_tag="" active_only="false" ids_only="false"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --category)   filter_cat="$2"; shift 2 ;;
+            --confidence) filter_conf="$2"; shift 2 ;;
+            --tag)        filter_tag="$2"; shift 2 ;;
+            --active-only) active_only="true"; shift ;;
+            --ids-only)   ids_only="true"; shift ;;
+            *) shift ;;
+        esac
+    done
+
+    jq --arg cat "$filter_cat" \
+       --arg conf "$filter_conf" \
+       --arg tag "$filter_tag" \
+       --arg active "$active_only" \
+       --arg ids "$ids_only" \
+       '.entries |
+        (if $active == "true" then map(select(.active == true)) else . end) |
+        (if $cat != "" then map(select(.category == $cat)) else . end) |
+        (if $conf != "" then map(select(.confidence == $conf)) else . end) |
+        (if $tag != "" then map(select(.tags | index($tag) != null)) else . end) |
+        (if $ids == "true" then map(.id) else . end)
+       ' "$learnings_file"
+}
+
+# Deactivates a learning by ID (sets active to false).
+# Args: id [reason]
+# Returns: 0 on success, 1 if not found
+deactivate_learning() {
+    local target_id="$1"
+    local reason="${2:-superseded}"
+    local learnings_file="$AUTOMATON_DIR/learnings.json"
+    local tmp="$AUTOMATON_DIR/learnings.json.tmp"
+
+    if [ ! -f "$learnings_file" ]; then
+        return 1
+    fi
+
+    local found
+    found=$(jq --arg id "$target_id" '.entries | map(select(.id == $id)) | length' "$learnings_file")
+    if [ "$found" -eq 0 ]; then
+        log "ORCHESTRATOR" "WARN: Learning '$target_id' not found"
+        return 1
+    fi
+
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    jq --arg id "$target_id" \
+       --arg ts "$timestamp" \
+       --arg reason "$reason" \
+       '.entries |= map(
+           if .id == $id then
+               .active = false | .updated_at = $ts | .detail = (.detail + " [deactivated: " + $reason + "]")
+           else . end
+       )' "$learnings_file" > "$tmp"
+    mv "$tmp" "$learnings_file"
+
+    log "ORCHESTRATOR" "Learning deactivated: $target_id ($reason)"
+}
+
+# Updates a learning's summary, detail, or confidence by ID.
+# Args: id field value
+# field: one of summary, detail, confidence
+# Returns: 0 on success, 1 if not found or invalid field
+update_learning() {
+    local target_id="$1"
+    local field="$2"
+    local value="$3"
+    local learnings_file="$AUTOMATON_DIR/learnings.json"
+    local tmp="$AUTOMATON_DIR/learnings.json.tmp"
+
+    if [ ! -f "$learnings_file" ]; then
+        return 1
+    fi
+
+    # Validate field
+    case "$field" in
+        summary|detail|confidence) ;;
+        *)
+            log "ORCHESTRATOR" "WARN: Invalid learning field '$field'"
+            return 1
+            ;;
+    esac
+
+    # Validate confidence value if updating confidence
+    if [ "$field" = "confidence" ]; then
+        case "$value" in
+            high|medium|low) ;;
+            *)
+                log "ORCHESTRATOR" "WARN: Invalid confidence value '$value'"
+                return 1
+                ;;
+        esac
+    fi
+
+    local found
+    found=$(jq --arg id "$target_id" '.entries | map(select(.id == $id)) | length' "$learnings_file")
+    if [ "$found" -eq 0 ]; then
+        log "ORCHESTRATOR" "WARN: Learning '$target_id' not found"
+        return 1
+    fi
+
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    jq --arg id "$target_id" \
+       --arg field "$field" \
+       --arg val "$value" \
+       --arg ts "$timestamp" \
+       '.entries |= map(
+           if .id == $id then
+               .[$field] = $val | .updated_at = $ts
+           else . end
+       )' "$learnings_file" > "$tmp"
+    mv "$tmp" "$learnings_file"
+
+    log "ORCHESTRATOR" "Learning updated: $target_id.$field"
+}
+
+# Returns count of active learnings, useful for status/dashboard.
+count_active_learnings() {
+    local learnings_file="$AUTOMATON_DIR/learnings.json"
+    if [ ! -f "$learnings_file" ]; then
+        echo "0"
+        return 0
+    fi
+    jq '.entries | map(select(.active == true)) | length' "$learnings_file"
 }
 
 # ---------------------------------------------------------------------------
