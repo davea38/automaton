@@ -13,7 +13,7 @@ You are in BUILDING mode. You will implement exactly ONE task, then stop.
 ## Phase 1 - Pick One Task
 
 From `IMPLEMENTATION_PLAN.md` (or `.automaton/backlog.md` in self-build mode), select the most important incomplete task.
-Ultrathink about which task should come next based on dependencies and priority.
+Consider which task should come next based on dependencies and priority.
 
 ## Phase 2 - Investigate Before Building
 
@@ -73,5 +73,5 @@ When `.automaton/backlog.md` exists and you are in self-build mode:
 103. Implement completely. No placeholders, no stubs, no "coming soon".
 104. Periodically clean completed items from the plan, but always keep at least 5 recent `[x]` checkboxes visible (the loop script counts them to verify completion).
 105. Update `AGENTS.md` with operational learnings - but keep it under 60 lines.
-106. If you find spec inconsistencies, use an Opus subagent with ultrathink to resolve them and update the specs.
+106. If you find spec inconsistencies, use an Opus subagent to resolve them and update the specs.
 107. When every task in `IMPLEMENTATION_PLAN.md` has an [x] and no `[ ]` remain, output <promise>COMPLETE</promise>.

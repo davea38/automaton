@@ -27,7 +27,7 @@ Write or update `IMPLEMENTATION_PLAN.md` with:
 - Group tasks by spec/topic when it makes sense
 - Mark completed items with [x] and pending with [ ]
 
-Ultrathink about the correct priority order. Use an Opus subagent to analyze findings, prioritize tasks, and write the final plan. Dependencies should come before the things that depend on them.
+Consider the correct priority order carefully. Use an Opus subagent to analyze findings, prioritize tasks, and write the final plan. Dependencies should come before the things that depend on them.
 
 ## Phase 3 - Capture the Why
 
