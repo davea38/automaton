@@ -125,5 +125,11 @@
     "max_cost_per_cycle_usd": 1,
     "rejection_cooldown_cycles": 5,
     "model": "sonnet"
+  },
+  "metrics": {
+    "enabled": true,
+    "trend_window": 5,
+    "degradation_alert_threshold": 3,
+    "snapshot_retention": 100
   }
 }

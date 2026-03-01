@@ -149,6 +149,12 @@ load_config() {
         QUORUM_MAX_COST_PER_CYCLE=$(jq -r '.quorum.max_cost_per_cycle_usd // 1.00' "$config_file")
         QUORUM_REJECTION_COOLDOWN=$(jq -r '.quorum.rejection_cooldown_cycles // 5' "$config_file")
         QUORUM_MODEL=$(jq -r '.quorum.model // "sonnet"' "$config_file")
+
+        # -- metrics (spec-43) --
+        METRICS_ENABLED=$(jq -r '.metrics.enabled // true' "$config_file")
+        METRICS_TREND_WINDOW=$(jq -r '.metrics.trend_window // 5' "$config_file")
+        METRICS_DEGRADATION_ALERT_THRESHOLD=$(jq -r '.metrics.degradation_alert_threshold // 3' "$config_file")
+        METRICS_SNAPSHOT_RETENTION=$(jq -r '.metrics.snapshot_retention // 100' "$config_file")
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -273,6 +279,12 @@ load_config() {
         QUORUM_MAX_COST_PER_CYCLE="1.00"
         QUORUM_REJECTION_COOLDOWN=5
         QUORUM_MODEL="sonnet"
+
+        # -- metrics (spec-43) --
+        METRICS_ENABLED="true"
+        METRICS_TREND_WINDOW=5
+        METRICS_DEGRADATION_ALERT_THRESHOLD=3
+        METRICS_SNAPSHOT_RETENTION=100
     fi
 }
 

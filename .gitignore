@@ -33,3 +33,4 @@
 # .automaton/garden/_index.json   # Garden index (regenerated but tracked for bootstrap)
 # .automaton/signals.json         # Stigmergic signals (accumulated across runs)
 # .automaton/votes/               # Quorum vote records (audit trail, spec-39)
+# .automaton/evolution-metrics.json  # Growth metrics snapshots and baselines (spec-43)

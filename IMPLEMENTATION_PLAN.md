@@ -240,9 +240,9 @@ These specs build on the garden and signals to add collective decision-making an
 
 #### 43.1 Metrics Data Layer
 
-- [ ] Add `metrics` configuration section to `automaton.config.json` with all fields (enabled, trend_window, degradation_alert_threshold, snapshot_retention) (WHY: trend analysis window and alert thresholds need configuration before snapshots can be analyzed) <!-- test: tests/test_metrics_config.sh -->
+- [x] Add `metrics` configuration section to `automaton.config.json` with all fields (enabled, trend_window, degradation_alert_threshold, snapshot_retention) (WHY: trend analysis window and alert thresholds need configuration before snapshots can be analyzed) <!-- test: tests/test_metrics_config.sh -->
 
-- [ ] Update `.gitignore` to add `.automaton/evolution-metrics.json` as persistent git-tracked state (WHY: metrics snapshots accumulate across cycles and must persist for trend analysis and historical comparison) <!-- test: none -->
+- [x] Update `.gitignore` to add `.automaton/evolution-metrics.json` as persistent git-tracked state (WHY: metrics snapshots accumulate across cycles and must persist for trend analysis and historical comparison) <!-- test: none -->
 
 - [ ] Implement `_metrics_snapshot()` in `automaton.sh` that collects all 5 metric categories — capability (line/function/spec/test counts from source files), efficiency (tokens/task, cache ratio, stall rate from run metadata), quality (test pass rate, rollbacks, syntax errors from results files), innovation (garden/signal/vote counts from their state files), health (budget utilization, convergence risk, circuit breakers, error rate) — and appends the snapshot to `.automaton/evolution-metrics.json` (WHY: snapshots are the raw data for all trend analysis — each data point captures the system's complete quantitative state at a moment in time) <!-- test: tests/test_metrics_snapshot.sh -->
 
