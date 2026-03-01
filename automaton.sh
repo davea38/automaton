@@ -8494,6 +8494,215 @@ _write_implement_json() {
 }
 
 # ---------------------------------------------------------------------------
+# Evolution: OBSERVE Phase (spec-41 §7)
+# ---------------------------------------------------------------------------
+
+# Validates the impact of an evolution implementation by comparing pre-cycle
+# and post-cycle metrics, running sandbox tests, and deciding the outcome:
+# - harvest: merge branch, advance idea to harvest, emit promising_approach
+# - wilt: rollback, emit quality_concern signal
+# - neutral: merge branch, emit attention_needed signal
+#
+# Reads implement.json from the cycle directory to determine which idea and
+# branch to evaluate. Writes observe.json with the outcome and metrics delta.
+#
+# Usage: _evolve_observe "001"
+# Returns: 0 on success (including skipped), 1 on unrecoverable error
+_evolve_observe() {
+    local cycle_id="${1:?_evolve_observe requires cycle_id}"
+    local cycle_dir="$AUTOMATON_DIR/evolution/cycle-${cycle_id}"
+    mkdir -p "$cycle_dir"
+
+    log "EVOLVE" "OBSERVE phase starting (cycle=$cycle_id)"
+
+    # Read implement.json to determine idea and branch
+    local impl_file="$cycle_dir/implement.json"
+    if [ ! -f "$impl_file" ]; then
+        log "EVOLVE" "OBSERVE: No implement.json found — skipping"
+        _write_observe_json "$cycle_dir" "$cycle_id" "" "{}" "{}" "{}" "0.00" "skipped" 0
+        return 0
+    fi
+
+    local impl_status
+    impl_status=$(jq -r '.status // "unknown"' "$impl_file" 2>/dev/null || echo "unknown")
+    local idea_id
+    idea_id=$(jq -r '.idea_id // "none"' "$impl_file" 2>/dev/null || echo "none")
+    local branch
+    branch=$(jq -r '.branch // "none"' "$impl_file" 2>/dev/null || echo "none")
+
+    # Skip if implementation was not completed
+    if [ "$impl_status" != "completed" ] || [ "$idea_id" = "none" ]; then
+        log "EVOLVE" "OBSERVE: Implementation status=$impl_status — skipping observation"
+        _write_observe_json "$cycle_dir" "$cycle_id" "$idea_id" "{}" "{}" "{}" "0.00" "skipped" 0
+        return 0
+    fi
+
+    log "EVOLVE" "OBSERVE: Evaluating idea=$idea_id branch=$branch"
+
+    # 1. Take a post-cycle metrics snapshot
+    _metrics_snapshot "$cycle_id" 2>/dev/null || true
+
+    # 2. Get pre-cycle and post-cycle snapshots for comparison
+    local metrics_file="$AUTOMATON_DIR/evolution-metrics.json"
+    local pre_snapshot="{}" post_snapshot="{}"
+
+    if [ -f "$metrics_file" ]; then
+        local snap_count
+        snap_count=$(jq '.snapshots | length' "$metrics_file" 2>/dev/null || echo 0)
+        if [ "$snap_count" -ge 2 ]; then
+            pre_snapshot=$(jq '.snapshots[-2]' "$metrics_file" 2>/dev/null || echo "{}")
+            post_snapshot=$(jq '.snapshots[-1]' "$metrics_file" 2>/dev/null || echo "{}")
+        elif [ "$snap_count" -ge 1 ]; then
+            post_snapshot=$(jq '.snapshots[-1]' "$metrics_file" 2>/dev/null || echo "{}")
+        fi
+    fi
+
+    # 3. Compare pre and post metrics
+    local comparison="{}"
+    comparison=$(_metrics_compare "$pre_snapshot" "$post_snapshot" 2>/dev/null || echo '{"deltas":[],"summary":{"improved":0,"degraded":0,"unchanged":0}}')
+
+    local improved degraded
+    improved=$(echo "$comparison" | jq '.summary.improved // 0' 2>/dev/null || echo 0)
+    degraded=$(echo "$comparison" | jq '.summary.degraded // 0' 2>/dev/null || echo 0)
+
+    # 4. Run sandbox testing on the evolution branch
+    local sandbox_passed="true"
+    if ! _safety_sandbox_test "$branch" 2>/dev/null; then
+        sandbox_passed="false"
+    fi
+
+    # 5. Compute test pass rate from post snapshot
+    local test_pass_rate="0.00"
+    test_pass_rate=$(echo "$post_snapshot" | jq -r '.quality.test_pass_rate // "0.00"' 2>/dev/null || echo "0.00")
+
+    # 6. Decide outcome based on metrics delta and sandbox results
+    local outcome="neutral"
+    local signals_emitted=0
+
+    if [ "$sandbox_passed" = "false" ]; then
+        # Sandbox failure → regression → rollback
+        outcome="wilt"
+    elif [ "$degraded" -gt "$improved" ]; then
+        # More metrics degraded than improved → regression
+        outcome="wilt"
+    elif [ "$improved" -gt 0 ] && [ "$degraded" -eq 0 ]; then
+        # Improvement detected with no regression → harvest
+        outcome="harvest"
+    elif [ "$improved" -gt "$degraded" ]; then
+        # Net improvement → harvest
+        outcome="harvest"
+    fi
+    # Default: neutral (no measurable change or mixed results with no net direction)
+
+    log "EVOLVE" "OBSERVE: outcome=$outcome improved=$improved degraded=$degraded sandbox=$sandbox_passed"
+
+    # 7. Execute the outcome
+    case "$outcome" in
+        harvest)
+            # Merge the evolution branch into working branch
+            if _safety_branch_merge "$cycle_id" "$idea_id" 2>/dev/null; then
+                # Advance idea to harvest stage
+                _garden_advance_stage "$idea_id" "harvest" "Cycle $cycle_id: metrics improved" "true" 2>/dev/null || true
+
+                # Emit promising_approach signal
+                _signal_emit "promising_approach" \
+                    "Implementation of $idea_id improved metrics" \
+                    "Cycle $cycle_id: $improved metrics improved, $degraded degraded" \
+                    "evolve" "$cycle_id" "" 2>/dev/null || true
+                signals_emitted=$((signals_emitted + 1))
+
+                log "EVOLVE" "OBSERVE: Harvested idea=$idea_id — branch merged"
+            else
+                # Merge failed — treat as regression
+                outcome="wilt"
+                log "EVOLVE" "OBSERVE: Merge failed — falling back to rollback"
+                _safety_rollback "$cycle_id" "$idea_id" "Merge failure during OBSERVE" 2>/dev/null || true
+                signals_emitted=$((signals_emitted + 1))
+            fi
+            ;;
+        wilt)
+            # Rollback: abandon branch, wilt idea, emit quality_concern
+            _safety_rollback "$cycle_id" "$idea_id" "Regression detected in OBSERVE phase" 2>/dev/null || true
+            signals_emitted=$((signals_emitted + 1))
+            log "EVOLVE" "OBSERVE: Wilted idea=$idea_id — rolled back"
+            ;;
+        neutral)
+            # Merge with attention signal
+            if _safety_branch_merge "$cycle_id" "$idea_id" 2>/dev/null; then
+                # Advance idea to harvest (merged but needs monitoring)
+                _garden_advance_stage "$idea_id" "harvest" "Cycle $cycle_id: neutral result, merged for monitoring" "true" 2>/dev/null || true
+
+                # Emit attention_needed signal
+                _signal_emit "attention_needed" \
+                    "Implementation of $idea_id had no measurable impact" \
+                    "Cycle $cycle_id: $improved improved, $degraded degraded — monitor in future cycles" \
+                    "evolve" "$cycle_id" "" 2>/dev/null || true
+                signals_emitted=$((signals_emitted + 1))
+
+                log "EVOLVE" "OBSERVE: Merged idea=$idea_id with attention_needed signal"
+            else
+                outcome="wilt"
+                log "EVOLVE" "OBSERVE: Merge failed for neutral outcome — falling back to rollback"
+                _safety_rollback "$cycle_id" "$idea_id" "Merge failure during OBSERVE (neutral)" 2>/dev/null || true
+                signals_emitted=$((signals_emitted + 1))
+            fi
+            ;;
+    esac
+
+    # 8. Rebuild the garden index to reflect any stage changes
+    _garden_rebuild_index 2>/dev/null || true
+
+    # 9. Build delta summary for observe.json
+    local delta_json="{}"
+    delta_json=$(echo "$comparison" | jq '.deltas | map({(.metric): .delta}) | add // {}' 2>/dev/null || echo "{}")
+
+    # Extract pre/post summaries for the output
+    local pre_metrics_json="{}"
+    local post_metrics_json="{}"
+    pre_metrics_json=$(echo "$comparison" | jq '[.deltas[] | {(.metric): .before}] | add // {}' 2>/dev/null || echo "{}")
+    post_metrics_json=$(echo "$comparison" | jq '[.deltas[] | {(.metric): .after}] | add // {}' 2>/dev/null || echo "{}")
+
+    # Write observe.json
+    _write_observe_json "$cycle_dir" "$cycle_id" "$idea_id" \
+        "$pre_metrics_json" "$post_metrics_json" "$delta_json" \
+        "$test_pass_rate" "$outcome" "$signals_emitted"
+
+    log "EVOLVE" "OBSERVE phase complete: idea=$idea_id outcome=$outcome signals=$signals_emitted"
+    return 0
+}
+
+# Helper: write observe.json with all required fields.
+_write_observe_json() {
+    local cycle_dir="$1" cycle_id="$2" idea_id="$3"
+    local pre_metrics="$4" post_metrics="$5" delta="$6"
+    local test_pass_rate="$7" outcome="$8" signals_emitted="$9"
+
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    jq -n \
+        --argjson cycle_id "${cycle_id:-0}" \
+        --arg timestamp "$now" \
+        --arg idea_id "${idea_id:-none}" \
+        --argjson pre_metrics "${pre_metrics:-{}}" \
+        --argjson post_metrics "${post_metrics:-{}}" \
+        --argjson delta "${delta:-{}}" \
+        --arg test_pass_rate "${test_pass_rate:-0.00}" \
+        --arg outcome "${outcome:-unknown}" \
+        --argjson signals_emitted "${signals_emitted:-0}" \
+        '{
+            cycle_id: $cycle_id,
+            timestamp: $timestamp,
+            idea_id: $idea_id,
+            pre_metrics: $pre_metrics,
+            post_metrics: $post_metrics,
+            delta: $delta,
+            test_pass_rate: $test_pass_rate,
+            outcome: $outcome,
+            signals_emitted: $signals_emitted
+        }' > "$cycle_dir/observe.json"
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
