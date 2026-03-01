@@ -388,7 +388,7 @@ This spec adds the human-facing commands that wrap all evolution subsystems in a
 
 - [x] Implement `_display_signals()` in `automaton.sh` that renders a formatted table of active signals with ID, type, strength, title, observation count, and linked idea status, plus summary counts of unlinked and strong signals (WHY: the signals view shows what the system is "noticing" — unlinked signals are opportunities for the human to plant related ideas) <!-- test: tests/test_display_signals.sh -->
 
-- [ ] Implement `_display_vote()` in `automaton.sh` that renders a vote record with per-voter breakdown (vote, confidence, risk, reasoning), tally result, merged conditions, and cost — accepting either a vote ID or idea ID (WHY: vote inspection lets the human understand why an idea was approved or rejected and what conditions were set) <!-- test: tests/test_display_vote.sh -->
+- [x] Implement `_display_vote()` in `automaton.sh` that renders a vote record with per-voter breakdown (vote, confidence, risk, reasoning), tally result, merged conditions, and cost — accepting either a vote ID or idea ID (WHY: vote inspection lets the human understand why an idea was approved or rejected and what conditions were set) <!-- test: tests/test_display_vote.sh -->
 
 - [ ] Implement `_display_constitution()` in `automaton.sh` that renders the constitution article summary with version, amendment count, and per-article protection levels (WHY: the constitution view provides a quick overview of governance without reading the full markdown file) <!-- test: tests/test_display_constitution.sh -->
 
