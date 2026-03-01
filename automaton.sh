@@ -7392,6 +7392,45 @@ _cli_water() {
     fi
 }
 
+# Wilts a garden idea with a reason and displays confirmation.
+# Called by --prune ID "reason" CLI command.
+#
+# Args: idea_id reason
+# Returns: 0 on success, 1 on failure
+_cli_prune() {
+    local idea_id="${1:?_cli_prune requires an idea ID}"
+    local reason="${2:?_cli_prune requires a reason}"
+
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then
+        echo "Error: Garden is not enabled. Set garden.enabled=true in automaton.config.json." >&2
+        return 1
+    fi
+
+    local garden_dir="$AUTOMATON_DIR/garden"
+    local idea_file="$garden_dir/${idea_id}.json"
+
+    if [ ! -f "$idea_file" ]; then
+        echo "Error: Idea $idea_id not found." >&2
+        return 1
+    fi
+
+    # Read title before wilting
+    local title
+    title=$(jq -r '.title' "$idea_file")
+
+    # Wilt the idea
+    _garden_wilt "$idea_id" "$reason"
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to prune idea $idea_id." >&2
+        return 1
+    fi
+
+    # Display confirmation
+    echo "Pruned ${idea_id}: \"${title}\" → wilted"
+    echo "Reason: ${reason}"
+}
+
 # ---------------------------------------------------------------------------
 # Constitutional Principles (spec-40)
 # ---------------------------------------------------------------------------
