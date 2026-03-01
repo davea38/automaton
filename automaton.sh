@@ -7404,6 +7404,206 @@ _safety_sandbox_test() {
 }
 
 # ---------------------------------------------------------------------------
+# Safety: Circuit Breakers (spec-45 §2)
+# ---------------------------------------------------------------------------
+
+# Path to the circuit breakers state file (ephemeral, resets each evolution run).
+_BREAKERS_FILE="${AUTOMATON_DIR:-.automaton}/evolution/circuit-breakers.json"
+
+# Initialize the circuit breakers state file with all 5 breakers in un-tripped state.
+# Called by _safety_reset_breakers and on first access when the file does not exist.
+_safety_init_breakers_file() {
+    local dir
+    dir="$(dirname "$_BREAKERS_FILE")"
+    mkdir -p "$dir"
+    cat > "$_BREAKERS_FILE" <<'BREAKERS_EOF'
+{
+  "budget_ceiling": { "tripped": false, "trip_count": 0, "last_trip": null },
+  "error_cascade": { "tripped": false, "consecutive_failures": 0, "last_trip": null },
+  "regression_cascade": { "tripped": false, "consecutive_regressions": 0, "last_trip": null },
+  "complexity_ceiling": { "tripped": false, "trip_count": 0, "last_trip": null },
+  "test_degradation": { "tripped": false, "trip_count": 0, "last_trip": null }
+}
+BREAKERS_EOF
+}
+
+# Ensure the breakers file exists, creating it with defaults if needed.
+_safety_ensure_breakers_file() {
+    if [ ! -f "$_BREAKERS_FILE" ]; then
+        _safety_init_breakers_file
+    fi
+}
+
+# Check all 5 circuit breakers against current system state and trip any that
+# exceed their thresholds. This is called during evolution cycles to detect
+# safety violations proactively.
+#
+# Breakers checked:
+#   1. budget_ceiling   — evolution cycle cost exceeds max_cost_per_cycle_usd
+#   2. error_cascade    — consecutive_failures >= SAFETY_MAX_CONSECUTIVE_FAILURES
+#   3. regression_cascade — consecutive_regressions >= SAFETY_MAX_CONSECUTIVE_REGRESSIONS
+#   4. complexity_ceiling — automaton.sh lines > SAFETY_MAX_TOTAL_LINES or
+#                           function count > SAFETY_MAX_TOTAL_FUNCTIONS
+#   5. test_degradation — test pass rate < SAFETY_MIN_TEST_PASS_RATE
+#
+# Returns: 0 always (tripped breakers are recorded in state, use
+#          _safety_any_breaker_tripped to check)
+_safety_check_breakers() {
+    _safety_ensure_breakers_file
+
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    # --- 1. Budget ceiling ---
+    # Budget ceiling is checked externally by _evolve_check_budget (spec-41).
+    # Here we just read the state — it is tripped by _safety_update_breaker.
+
+    # --- 2. Error cascade ---
+    local consecutive_failures
+    consecutive_failures=$(jq -r '.error_cascade.consecutive_failures // 0' "$_BREAKERS_FILE")
+    if [ "$consecutive_failures" -ge "${SAFETY_MAX_CONSECUTIVE_FAILURES:-3}" ]; then
+        jq --arg ts "$now" '.error_cascade.tripped = true | .error_cascade.last_trip = $ts' \
+            "$_BREAKERS_FILE" > "${_BREAKERS_FILE}.tmp" && mv "${_BREAKERS_FILE}.tmp" "$_BREAKERS_FILE"
+        log "SAFETY" "BREAKER TRIPPED: error_cascade ($consecutive_failures consecutive failures)"
+    fi
+
+    # --- 3. Regression cascade ---
+    local consecutive_regressions
+    consecutive_regressions=$(jq -r '.regression_cascade.consecutive_regressions // 0' "$_BREAKERS_FILE")
+    if [ "$consecutive_regressions" -ge "${SAFETY_MAX_CONSECUTIVE_REGRESSIONS:-2}" ]; then
+        jq --arg ts "$now" '.regression_cascade.tripped = true | .regression_cascade.last_trip = $ts' \
+            "$_BREAKERS_FILE" > "${_BREAKERS_FILE}.tmp" && mv "${_BREAKERS_FILE}.tmp" "$_BREAKERS_FILE"
+        log "SAFETY" "BREAKER TRIPPED: regression_cascade ($consecutive_regressions consecutive regressions)"
+    fi
+
+    # --- 4. Complexity ceiling ---
+    local total_lines=0 total_functions=0
+    if [ -f "automaton.sh" ]; then
+        total_lines=$(wc -l < automaton.sh)
+        total_functions=$(grep -c '^[a-zA-Z_][a-zA-Z0-9_]*()' automaton.sh || true)
+    fi
+    if [ "$total_lines" -gt "${SAFETY_MAX_TOTAL_LINES:-15000}" ] || \
+       [ "$total_functions" -gt "${SAFETY_MAX_TOTAL_FUNCTIONS:-300}" ]; then
+        jq --arg ts "$now" \
+            '.complexity_ceiling.tripped = true | .complexity_ceiling.trip_count += 1 | .complexity_ceiling.last_trip = $ts' \
+            "$_BREAKERS_FILE" > "${_BREAKERS_FILE}.tmp" && mv "${_BREAKERS_FILE}.tmp" "$_BREAKERS_FILE"
+        log "SAFETY" "BREAKER TRIPPED: complexity_ceiling (lines=$total_lines, functions=$total_functions)"
+    fi
+
+    # --- 5. Test degradation ---
+    local pass_rate="1.00"
+    local latest_snapshot
+    latest_snapshot=$(_metrics_get_latest 2>/dev/null || echo "")
+    if [ -n "$latest_snapshot" ] && [ "$latest_snapshot" != "null" ]; then
+        pass_rate=$(echo "$latest_snapshot" | jq -r '.quality.test_pass_rate // 1.0' 2>/dev/null || echo "1.00")
+    fi
+    local is_degraded
+    is_degraded=$(awk -v rate="$pass_rate" -v min="${SAFETY_MIN_TEST_PASS_RATE:-0.80}" \
+        'BEGIN { print (rate < min) ? "1" : "0" }')
+    if [ "$is_degraded" = "1" ]; then
+        jq --arg ts "$now" \
+            '.test_degradation.tripped = true | .test_degradation.trip_count += 1 | .test_degradation.last_trip = $ts' \
+            "$_BREAKERS_FILE" > "${_BREAKERS_FILE}.tmp" && mv "${_BREAKERS_FILE}.tmp" "$_BREAKERS_FILE"
+        log "SAFETY" "BREAKER TRIPPED: test_degradation (pass_rate=$pass_rate < min=${SAFETY_MIN_TEST_PASS_RATE:-0.80})"
+    fi
+
+    return 0
+}
+
+# Update a specific circuit breaker after an event (phase failure, regression,
+# budget exceeded). Increments the appropriate counter and trips the breaker
+# if the threshold is reached.
+#
+# Usage: _safety_update_breaker "error_cascade"
+#        _safety_update_breaker "regression_cascade"
+#        _safety_update_breaker "budget_ceiling"
+#        _safety_update_breaker "complexity_ceiling"
+#        _safety_update_breaker "test_degradation"
+# Returns: 0 on success, 1 on unknown breaker name
+_safety_update_breaker() {
+    local breaker_name="$1"
+    _safety_ensure_breakers_file
+
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    case "$breaker_name" in
+        budget_ceiling)
+            jq --arg ts "$now" \
+                '.budget_ceiling.tripped = true | .budget_ceiling.trip_count += 1 | .budget_ceiling.last_trip = $ts' \
+                "$_BREAKERS_FILE" > "${_BREAKERS_FILE}.tmp" && mv "${_BREAKERS_FILE}.tmp" "$_BREAKERS_FILE"
+            log "SAFETY" "BREAKER TRIPPED: budget_ceiling"
+            ;;
+        error_cascade)
+            jq --arg ts "$now" \
+                '.error_cascade.consecutive_failures += 1' \
+                "$_BREAKERS_FILE" > "${_BREAKERS_FILE}.tmp" && mv "${_BREAKERS_FILE}.tmp" "$_BREAKERS_FILE"
+            # Check if threshold reached
+            local failures
+            failures=$(jq -r '.error_cascade.consecutive_failures' "$_BREAKERS_FILE")
+            if [ "$failures" -ge "${SAFETY_MAX_CONSECUTIVE_FAILURES:-3}" ]; then
+                jq --arg ts "$now" \
+                    '.error_cascade.tripped = true | .error_cascade.last_trip = $ts' \
+                    "$_BREAKERS_FILE" > "${_BREAKERS_FILE}.tmp" && mv "${_BREAKERS_FILE}.tmp" "$_BREAKERS_FILE"
+                log "SAFETY" "BREAKER TRIPPED: error_cascade ($failures consecutive failures)"
+            else
+                log "SAFETY" "error_cascade: $failures consecutive failures (threshold: ${SAFETY_MAX_CONSECUTIVE_FAILURES:-3})"
+            fi
+            ;;
+        regression_cascade)
+            jq --arg ts "$now" \
+                '.regression_cascade.consecutive_regressions += 1' \
+                "$_BREAKERS_FILE" > "${_BREAKERS_FILE}.tmp" && mv "${_BREAKERS_FILE}.tmp" "$_BREAKERS_FILE"
+            # Check if threshold reached
+            local regressions
+            regressions=$(jq -r '.regression_cascade.consecutive_regressions' "$_BREAKERS_FILE")
+            if [ "$regressions" -ge "${SAFETY_MAX_CONSECUTIVE_REGRESSIONS:-2}" ]; then
+                jq --arg ts "$now" \
+                    '.regression_cascade.tripped = true | .regression_cascade.last_trip = $ts' \
+                    "$_BREAKERS_FILE" > "${_BREAKERS_FILE}.tmp" && mv "${_BREAKERS_FILE}.tmp" "$_BREAKERS_FILE"
+                log "SAFETY" "BREAKER TRIPPED: regression_cascade ($regressions consecutive regressions)"
+            else
+                log "SAFETY" "regression_cascade: $regressions consecutive regressions (threshold: ${SAFETY_MAX_CONSECUTIVE_REGRESSIONS:-2})"
+            fi
+            ;;
+        complexity_ceiling)
+            jq --arg ts "$now" \
+                '.complexity_ceiling.tripped = true | .complexity_ceiling.trip_count += 1 | .complexity_ceiling.last_trip = $ts' \
+                "$_BREAKERS_FILE" > "${_BREAKERS_FILE}.tmp" && mv "${_BREAKERS_FILE}.tmp" "$_BREAKERS_FILE"
+            log "SAFETY" "BREAKER TRIPPED: complexity_ceiling"
+            ;;
+        test_degradation)
+            jq --arg ts "$now" \
+                '.test_degradation.tripped = true | .test_degradation.trip_count += 1 | .test_degradation.last_trip = $ts' \
+                "$_BREAKERS_FILE" > "${_BREAKERS_FILE}.tmp" && mv "${_BREAKERS_FILE}.tmp" "$_BREAKERS_FILE"
+            log "SAFETY" "BREAKER TRIPPED: test_degradation"
+            ;;
+        *)
+            log "SAFETY" "ERROR: Unknown breaker name: $breaker_name"
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+# Check if any circuit breaker is currently tripped.
+# Returns: 0 if at least one breaker is tripped, 1 if none are tripped
+_safety_any_breaker_tripped() {
+    _safety_ensure_breakers_file
+
+    local tripped_count
+    tripped_count=$(jq '[.[] | select(.tripped == true)] | length' "$_BREAKERS_FILE" 2>/dev/null || echo 0)
+    [ "$tripped_count" -gt 0 ]
+}
+
+# Reset all circuit breakers to un-tripped state with zero counters.
+# Called on fresh --evolve start or with --evolve --reset-breakers.
+_safety_reset_breakers() {
+    _safety_init_breakers_file
+    log "SAFETY" "All circuit breakers reset"
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
