@@ -172,7 +172,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 - [x] Add `garden_summary` field to the bootstrap manifest in `.automaton/init.sh` sourced from `_index.json` (total, seeds, sprouts, blooms, top_bloom) (WHY: evolution agents need garden state in their prompt context without reading individual idea files) <!-- test: tests/test_garden_bootstrap.sh -->
 
-- [ ] Implement backward compatibility: when `garden.enabled` is false, skip all garden operations and fall back to `.automaton/backlog.md` behavior from spec-25 (WHY: existing users who do not want the garden can continue using the flat backlog without any breakage) <!-- test: tests/test_garden_config.sh -->
+- [x] Implement backward compatibility: when `garden.enabled` is false, skip all garden operations and fall back to `.automaton/backlog.md` behavior from spec-25 (WHY: existing users who do not want the garden can continue using the flat backlog without any breakage) <!-- test: tests/test_garden_config.sh -->
 
 ### Spec 42 — Stigmergic Coordination
 

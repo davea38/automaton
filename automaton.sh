@@ -4405,6 +4405,7 @@ append_iteration_memory() {
 # Outputs: the new idea ID (e.g. "idea-001") on stdout
 # Returns: 0 on success, 1 on failure
 _garden_plant_seed() {
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then return 1; fi
     local title="${1:?_garden_plant_seed requires title}"
     local description="${2:?_garden_plant_seed requires description}"
     local origin_type="${3:?_garden_plant_seed requires origin_type}"
@@ -4498,6 +4499,7 @@ IDXEOF
 # Args: idea_id evidence_type observation added_by
 # Returns: 0 on success, 1 if idea not found
 _garden_water() {
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then return 1; fi
     local idea_id="${1:?_garden_water requires idea_id}"
     local evidence_type="${2:?_garden_water requires evidence_type}"
     local observation="${3:?_garden_water requires observation}"
@@ -4550,6 +4552,7 @@ _garden_water() {
 # Args: idea_id target_stage reason [force]
 # Returns: 0 on success, 1 on failure
 _garden_advance_stage() {
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then return 1; fi
     local idea_id="${1:?_garden_advance_stage requires idea_id}"
     local target_stage="${2:?_garden_advance_stage requires target_stage}"
     local reason="${3:?_garden_advance_stage requires reason}"
@@ -4621,6 +4624,7 @@ _garden_advance_stage() {
 # Args: idea_id reason
 # Returns: 0 on success, 1 on failure
 _garden_wilt() {
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then return 1; fi
     local idea_id="${1:?_garden_wilt requires idea_id}"
     local reason="${2:?_garden_wilt requires reason}"
 
@@ -4663,6 +4667,7 @@ _garden_wilt() {
 #
 # Updates each idea's priority field in-place. Skips wilted and harvested ideas.
 _garden_recompute_priorities() {
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then return 0; fi
     local garden_dir="$AUTOMATON_DIR/garden"
     local signals_file="$AUTOMATON_DIR/signals.json"
 
@@ -4762,6 +4767,7 @@ _garden_recompute_priorities() {
 # Provides total counts, by_stage breakdown, bloom_candidates sorted by priority,
 # recent_activity, next_id, and updated_at.
 _garden_rebuild_index() {
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then return 0; fi
     local garden_dir="$AUTOMATON_DIR/garden"
     local index_file="$garden_dir/_index.json"
     local now
@@ -4856,6 +4862,7 @@ _garden_rebuild_index() {
 # is measured from creation date; TTL for sprouts is measured from the most
 # recent evidence timestamp (or creation date if no evidence).
 _garden_prune_expired() {
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then return 0; fi
     local garden_dir="$AUTOMATON_DIR/garden"
 
     local idea_files
@@ -4917,6 +4924,7 @@ _garden_prune_expired() {
 # Args: tags_csv (comma-separated tags to match against)
 # Returns: 0 and prints idea ID if duplicate found, 1 if no match
 _garden_find_duplicates() {
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then return 1; fi
     local tags_csv="${1:?_garden_find_duplicates requires tags_csv}"
 
     local garden_dir="$AUTOMATON_DIR/garden"
@@ -4967,6 +4975,7 @@ _garden_find_duplicates() {
 #
 # Returns: 0 if candidates found, 1 if none
 _garden_get_bloom_candidates() {
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then return 1; fi
     local garden_dir="$AUTOMATON_DIR/garden"
     local idea_files
     idea_files=$(find "$garden_dir" -name 'idea-*.json' -type f 2>/dev/null | sort)
