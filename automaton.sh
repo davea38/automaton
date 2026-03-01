@@ -9646,6 +9646,20 @@ ARG_BUDGET_CHECK=false
 ARG_HEALTH=false
 ARG_EVOLVE=false
 ARG_CYCLES=0
+ARG_PLANT=""
+ARG_GARDEN=false
+ARG_GARDEN_DETAIL=""
+ARG_WATER_ID=""
+ARG_WATER_EVIDENCE=""
+ARG_PRUNE_ID=""
+ARG_PRUNE_REASON=""
+ARG_PROMOTE=""
+ARG_INSPECT=""
+ARG_CONSTITUTION=false
+ARG_AMEND=false
+ARG_OVERRIDE=false
+ARG_PAUSE_EVOLUTION=false
+ARG_SIGNALS=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -9710,26 +9724,122 @@ while [ $# -gt 0 ]; do
             ARG_CYCLES="$2"
             shift 2
             ;;
+        --plant)
+            ARG_PLANT="${2:-}"
+            if [ -z "$ARG_PLANT" ]; then
+                echo "Error: --plant requires an idea description argument." >&2
+                exit 1
+            fi
+            shift 2
+            ;;
+        --garden)
+            ARG_GARDEN=true
+            shift
+            ;;
+        --garden-detail)
+            ARG_GARDEN_DETAIL="${2:-}"
+            if [ -z "$ARG_GARDEN_DETAIL" ]; then
+                echo "Error: --garden-detail requires an idea ID argument." >&2
+                exit 1
+            fi
+            shift 2
+            ;;
+        --water)
+            ARG_WATER_ID="${2:-}"
+            ARG_WATER_EVIDENCE="${3:-}"
+            if [ -z "$ARG_WATER_ID" ] || [ -z "$ARG_WATER_EVIDENCE" ]; then
+                echo "Error: --water requires two arguments: ID and evidence." >&2
+                exit 1
+            fi
+            shift 3
+            ;;
+        --prune)
+            ARG_PRUNE_ID="${2:-}"
+            ARG_PRUNE_REASON="${3:-}"
+            if [ -z "$ARG_PRUNE_ID" ] || [ -z "$ARG_PRUNE_REASON" ]; then
+                echo "Error: --prune requires two arguments: ID and reason." >&2
+                exit 1
+            fi
+            shift 3
+            ;;
+        --promote)
+            ARG_PROMOTE="${2:-}"
+            if [ -z "$ARG_PROMOTE" ]; then
+                echo "Error: --promote requires an idea ID argument." >&2
+                exit 1
+            fi
+            shift 2
+            ;;
+        --inspect)
+            ARG_INSPECT="${2:-}"
+            if [ -z "$ARG_INSPECT" ]; then
+                echo "Error: --inspect requires an ID argument." >&2
+                exit 1
+            fi
+            shift 2
+            ;;
+        --constitution)
+            ARG_CONSTITUTION=true
+            shift
+            ;;
+        --amend)
+            ARG_AMEND=true
+            shift
+            ;;
+        --override)
+            ARG_OVERRIDE=true
+            shift
+            ;;
+        --pause-evolution)
+            ARG_PAUSE_EVOLUTION=true
+            shift
+            ;;
+        --signals)
+            ARG_SIGNALS=true
+            shift
+            ;;
         --help|-h)
             cat <<'USAGE'
 Usage: automaton.sh [OPTIONS]
 
 Multi-phase orchestrator for autonomous Claude agent workflows.
 
-Options:
-  --resume          Resume from saved state (.automaton/state.json)
-  --skip-research   Skip Phase 1 (research), start at Phase 2 (plan)
-  --skip-review     Skip Phase 4 (review), mark COMPLETE after build
-  --config FILE     Use an alternate config file (default: automaton.config.json)
-  --dry-run         Load config, run Gate 1, show settings, then exit
-  --self            Self-build mode: improve automaton itself (spec-25)
-  --self --continue Auto-pick highest-priority backlog item and run (spec-26)
-  --stats           Display run history and performance trends (spec-26)
-  --budget-check    Show weekly allowance status without starting a run (spec-35)
-  --health          Show system health dashboard and exit (spec-43)
-  --evolve          Run autonomous evolution loop (implies --self) (spec-41)
-  --cycles N        Limit evolution to N cycles (use with --evolve) (spec-41)
-  --help, -h        Show this help message
+Standard Mode:
+  --resume              Resume from saved state (.automaton/state.json)
+  --skip-research       Skip Phase 1 (research), start at Phase 2 (plan)
+  --skip-review         Skip Phase 4 (review), mark COMPLETE after build
+  --config FILE         Use an alternate config file (default: automaton.config.json)
+  --dry-run             Load config, run Gate 1, show settings, then exit
+  --self                Self-build mode: improve automaton itself (spec-25)
+  --self --continue     Auto-pick highest-priority backlog item and run (spec-26)
+  --stats               Display run history and performance trends (spec-26)
+  --budget-check        Show weekly allowance status without starting a run (spec-35)
+  --help, -h            Show this help message
+
+Evolution Mode:
+  --evolve              Start autonomous evolution loop (implies --self)
+  --evolve --cycles N   Run exactly N evolution cycles
+  --evolve --dry-run    Show REFLECT analysis without acting
+  --evolve --resume     Resume interrupted evolution
+
+Garden:
+  --plant "idea"        Plant a new seed in the garden
+  --garden              Display garden summary
+  --garden-detail ID    Show full idea details
+  --water ID "evidence" Add evidence to an idea
+  --prune ID "reason"   Wilt an idea with a reason
+  --promote ID          Force-promote idea to bloom
+
+Observation:
+  --health              Display health metrics dashboard
+  --signals             Display active stigmergic signals
+  --inspect ID          Show vote record details
+
+Governance:
+  --constitution        Display the current constitution
+  --amend               Propose a constitutional amendment
+  --override            Override a quorum decision
+  --pause-evolution     Pause running evolution loop
 
 Exit codes:
   0   All phases complete, review passed
@@ -13323,6 +13433,78 @@ fi
 # --- Health dashboard mode (spec-43) ---
 if [ "$ARG_HEALTH" = "true" ]; then
     _metrics_display_health
+    exit 0
+fi
+
+# --- --garden display mode (spec-44) ---
+if [ "$ARG_GARDEN" = "true" ]; then
+    _display_garden
+    exit 0
+fi
+
+# --- Garden detail mode (spec-44) ---
+if [ -n "$ARG_GARDEN_DETAIL" ]; then
+    _display_garden_detail "$ARG_GARDEN_DETAIL"
+    exit 0
+fi
+
+# --- Signals display mode (spec-44) ---
+if [ "$ARG_SIGNALS" = "true" ]; then
+    _display_signals
+    exit 0
+fi
+
+# --- Vote inspection mode (spec-44) ---
+if [ -n "$ARG_INSPECT" ]; then
+    _display_vote "$ARG_INSPECT"
+    exit 0
+fi
+
+# --- Constitution display mode (spec-44) ---
+if [ "$ARG_CONSTITUTION" = "true" ]; then
+    _display_constitution
+    exit 0
+fi
+
+# --- Plant seed mode (spec-44) ---
+if [ -n "$ARG_PLANT" ]; then
+    _cli_plant "$ARG_PLANT"
+    exit 0
+fi
+
+# --- Water idea mode (spec-44) ---
+if [ -n "$ARG_WATER_ID" ]; then
+    _cli_water "$ARG_WATER_ID" "$ARG_WATER_EVIDENCE"
+    exit 0
+fi
+
+# --- Prune idea mode (spec-44) ---
+if [ -n "$ARG_PRUNE_ID" ]; then
+    _cli_prune "$ARG_PRUNE_ID" "$ARG_PRUNE_REASON"
+    exit 0
+fi
+
+# --- Promote idea mode (spec-44) ---
+if [ -n "$ARG_PROMOTE" ]; then
+    _cli_promote "$ARG_PROMOTE"
+    exit 0
+fi
+
+# --- Amend constitution mode (spec-44) ---
+if [ "$ARG_AMEND" = "true" ]; then
+    _cli_amend
+    exit 0
+fi
+
+# --- Override quorum mode (spec-44) ---
+if [ "$ARG_OVERRIDE" = "true" ]; then
+    _cli_override
+    exit 0
+fi
+
+# --- Pause evolution mode (spec-44) ---
+if [ "$ARG_PAUSE_EVOLUTION" = "true" ]; then
+    _cli_pause
     exit 0
 fi
 
