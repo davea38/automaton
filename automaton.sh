@@ -242,11 +242,12 @@ EOF
 
 # Restore shell variables from a saved state.json for --resume.
 # Resets consecutive_failures to 0 (human presumably fixed the issue).
+# Falls back to recover_state_from_persistent() if state.json is missing.
 read_state() {
     local state_file="$AUTOMATON_DIR/state.json"
     if [ ! -f "$state_file" ]; then
-        echo "Error: No state to resume from. Run without --resume."
-        exit 1
+        recover_state_from_persistent
+        return $?
     fi
     local state
     state=$(cat "$state_file")
@@ -268,6 +269,149 @@ read_state() {
         wave_history=$(echo "$state" | jq -c '.wave_history // []')
         consecutive_wave_failures=$(echo "$state" | jq '.consecutive_wave_failures // 0')
     fi
+}
+
+# Best-effort reconstruction of state.json from persistent state (spec-34).
+# Called when --resume is used but ephemeral state.json is missing.
+# Reads: latest run summary, IMPLEMENTATION_PLAN.md checkboxes, budget-history.json, git log.
+# WHY: users who lose .automaton/state.json can resume from git-tracked persistent
+# state instead of starting over.
+recover_state_from_persistent() {
+    local summaries_dir="$AUTOMATON_DIR/run-summaries"
+    local plan_file="${PLAN_FILE:-IMPLEMENTATION_PLAN.md}"
+
+    # Find latest run summary by filename (timestamps sort lexicographically)
+    local latest_summary=""
+    if [ -d "$summaries_dir" ]; then
+        latest_summary=$(ls -1 "$summaries_dir"/run-*.json 2>/dev/null | sort | tail -1)
+    fi
+
+    if [ -z "$latest_summary" ] && [ ! -f "$plan_file" ]; then
+        echo "Error: No persistent state to recover from (no run summaries or plan file). Run without --resume."
+        exit 1
+    fi
+
+    log "ORCHESTRATOR" "Ephemeral state missing. Reconstructing from persistent state and git history."
+
+    # --- Extract data from latest run summary ---
+    local summary_phases="[]" summary_iterations=0 summary_exit=0
+    local summary_started="" summary_completed=""
+    if [ -n "$latest_summary" ]; then
+        summary_phases=$(jq -c '.phases_completed // []' "$latest_summary")
+        summary_iterations=$(jq '.iterations_total // 0' "$latest_summary")
+        summary_exit=$(jq '.exit_code // 0' "$latest_summary")
+        summary_started=$(jq -r '.started_at // ""' "$latest_summary")
+        summary_completed=$(jq -r '.completed_at // ""' "$latest_summary")
+    fi
+
+    # --- Determine resume phase from completed phases ---
+    # Phase order: research → plan → build → review → COMPLETE
+    local last_completed=""
+    if [ "$summary_phases" != "[]" ]; then
+        last_completed=$(echo "$summary_phases" | jq -r '.[-1]')
+    fi
+
+    case "$last_completed" in
+        "")       current_phase="research" ;;
+        research) current_phase="plan" ;;
+        plan)     current_phase="build" ;;
+        build)    current_phase="review" ;;
+        review)
+            # All phases completed in previous run — start a fresh build cycle
+            # since the user is explicitly asking to resume (likely new tasks added)
+            current_phase="build"
+            ;;
+        *)        current_phase="build" ;;
+    esac
+
+    # If the previous run completed successfully (exit 0) and all phases finished,
+    # check if there's remaining work in the plan
+    if [ "$summary_exit" = "0" ] && [ "$last_completed" = "review" ]; then
+        local remaining=0
+        if [ -f "$plan_file" ]; then
+            remaining=$(grep -c '^\- \[ \]' "$plan_file" 2>/dev/null || echo 0)
+        fi
+        if [ "$remaining" = "0" ]; then
+            echo "Previous run completed successfully with no remaining tasks. Run without --resume to start fresh."
+            exit 0
+        fi
+    fi
+
+    # --- Reconstruct phase_history from run summary ---
+    phase_history="[]"
+    if [ "$summary_phases" != "[]" ]; then
+        # Build phase_history array with phase names (timestamps unavailable)
+        phase_history=$(echo "$summary_phases" | jq -c '[.[] | {phase: ., completed_at: "recovered"}]')
+    fi
+
+    # --- Set state variables with safe defaults ---
+    iteration=$summary_iterations
+    phase_iteration=0
+    stall_count=0
+    consecutive_failures=0
+    corruption_count=0
+    replan_count=0
+    test_failure_count=0
+    resumed_from="${summary_completed:-null}"
+
+    # Use the original run's start time if available, otherwise now
+    if [ -n "$summary_started" ] && [ "$summary_started" != "null" ]; then
+        started_at="$summary_started"
+    else
+        started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    fi
+
+    # Parallel mode: reset wave state (cannot be recovered)
+    if [ "${PARALLEL_ENABLED:-false}" = "true" ]; then
+        wave_number=0
+        wave_history="[]"
+        consecutive_wave_failures=0
+    fi
+
+    # --- Ensure directory structure exists ---
+    mkdir -p "$AUTOMATON_DIR/agents" "$AUTOMATON_DIR/worktrees" "$AUTOMATON_DIR/inbox" \
+             "$AUTOMATON_DIR/run-summaries"
+
+    # --- Write reconstructed state ---
+    write_state
+
+    # --- Reconstruct budget.json if also missing ---
+    if [ ! -f "$AUTOMATON_DIR/budget.json" ]; then
+        initialize_budget
+        # Seed budget usage from budget-history.json if available
+        local history_file="$AUTOMATON_DIR/budget-history.json"
+        if [ -f "$history_file" ] && [ -n "$latest_summary" ]; then
+            local run_id
+            run_id=$(jq -r '.run_id // ""' "$latest_summary")
+            if [ -n "$run_id" ]; then
+                local prev_tokens
+                prev_tokens=$(jq --arg rid "$run_id" '
+                    .runs[] | select(.run_id == $rid) | .tokens_used // 0
+                ' "$history_file" 2>/dev/null || echo 0)
+                if [ "$prev_tokens" -gt 0 ] 2>/dev/null; then
+                    log "ORCHESTRATOR" "Previous run used $prev_tokens tokens (from budget history)"
+                fi
+            fi
+        fi
+    fi
+
+    # --- Create session.log if missing ---
+    if [ ! -f "$AUTOMATON_DIR/session.log" ]; then
+        : > "$AUTOMATON_DIR/session.log"
+    fi
+
+    # --- Log recovery summary with git context ---
+    local recent_commit=""
+    recent_commit=$(git log --oneline -1 --format="%h %s" 2>/dev/null || true)
+    local task_info=""
+    if [ -f "$plan_file" ]; then
+        local done remaining
+        done=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null || echo 0)
+        remaining=$(grep -c '^\- \[ \]' "$plan_file" 2>/dev/null || echo 0)
+        task_info="tasks=${done} done/${remaining} remaining"
+    fi
+
+    log "ORCHESTRATOR" "State recovered: phase=$current_phase iteration=$iteration ${task_info:+$task_info }${recent_commit:+latest_commit=$recent_commit}"
 }
 
 # First-run initialization: create .automaton/ structure, write initial state,
