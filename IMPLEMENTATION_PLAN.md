@@ -168,7 +168,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 #### 38.3 Garden Integration
 
-- [ ] Add garden directory initialization to `initialize_state()` in `automaton.sh` that creates `.automaton/garden/` and an empty `_index.json` when `garden.enabled` is true (WHY: the garden directory must exist before any garden operations can write idea files) <!-- test: tests/test_garden_init.sh -->
+- [x] Add garden directory initialization to `initialize_state()` in `automaton.sh` that creates `.automaton/garden/` and an empty `_index.json` when `garden.enabled` is true (WHY: the garden directory must exist before any garden operations can write idea files) <!-- test: tests/test_garden_init.sh -->
 
 - [ ] Add `garden_summary` field to the bootstrap manifest in `.automaton/init.sh` sourced from `_index.json` (total, seeds, sprouts, blooms, top_bloom) (WHY: evolution agents need garden state in their prompt context without reading individual idea files) <!-- test: tests/test_garden_bootstrap.sh -->
 

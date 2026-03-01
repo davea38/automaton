@@ -812,6 +812,20 @@ RATE
     # Initialize garden directory when enabled (spec-38)
     if [ "$GARDEN_ENABLED" = "true" ]; then
         mkdir -p "$AUTOMATON_DIR/garden"
+        # Create empty _index.json if it doesn't already exist
+        local index_file="$AUTOMATON_DIR/garden/_index.json"
+        if [ ! -f "$index_file" ]; then
+            local now_ts
+            now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+            jq -n --arg updated_at "$now_ts" '{
+                total: 0,
+                by_stage: { seed: 0, sprout: 0, bloom: 0, harvest: 0, wilt: 0 },
+                bloom_candidates: [],
+                recent_activity: [],
+                next_id: 1,
+                updated_at: $updated_at
+            }' > "$index_file"
+        fi
     fi
 
     # Generate bootstrap script if it doesn't exist (spec-37, gap #1)
