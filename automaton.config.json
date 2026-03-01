@@ -50,7 +50,10 @@
     },
     "test_first_enabled": true,
     "test_scaffold_iterations": 2,
-    "test_framework": "assertions"
+    "test_framework": "assertions",
+    "bootstrap_enabled": true,
+    "bootstrap_script": ".automaton/init.sh",
+    "bootstrap_timeout_ms": 2000
   },
   "git": {
     "auto_push": true,
@@ -75,7 +78,10 @@
     "enabled": false,
     "max_files_per_iteration": 3,
     "max_lines_changed_per_iteration": 200,
-    "protected_functions": ["run_orchestration", "_handle_shutdown"],
+    "protected_functions": [
+      "run_orchestration",
+      "_handle_shutdown"
+    ],
     "require_smoke_test": true
   },
   "journal": {

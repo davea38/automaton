@@ -2,7 +2,7 @@
 # tests/test_bootstrap_config.sh — Verify bootstrap config fields in automaton.config.json
 # Spec-37: execution.bootstrap_enabled, execution.bootstrap_script, execution.bootstrap_timeout_ms
 
-set -euo pipefail
+set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 

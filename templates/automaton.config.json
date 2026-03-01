@@ -50,7 +50,10 @@
     },
     "test_first_enabled": true,
     "test_scaffold_iterations": 2,
-    "test_framework": "assertions"
+    "test_framework": "assertions",
+    "bootstrap_enabled": true,
+    "bootstrap_script": ".automaton/init.sh",
+    "bootstrap_timeout_ms": 2000
   },
   "git": {
     "auto_push": true,
