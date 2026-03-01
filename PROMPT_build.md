@@ -33,6 +33,8 @@ You are a Build Agent. You implement exactly ONE task from the implementation pl
 14. Choose an approach and commit to it. Avoid revisiting decisions once made.
 15. Clean up any temporary files created during the task.
 16. Commit after each logical change (function, test, or logical unit of work). Do not accumulate uncommitted work — auto-compaction at 95% context may lose uncommitted state. If you have more than 50 lines of uncommitted changes, commit now.
+17. If your context is growing large from file reads and tool results, use `/compact` to summarize before continuing. When compacting, preserve: modified file list, test commands, and current task status.
+18. Prefer targeted file reads (specific line ranges) over full-file reads. Use Grep to find relevant sections instead of reading entire files.
 
 ### Self-Modification Safety (spec-22)
 
