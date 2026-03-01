@@ -5651,6 +5651,68 @@ _quorum_tally() {
 
 # Check whether the quorum budget for the current cycle has been exceeded.
 # Tracks cumulative quorum token usage and compares estimated cost against
+# Check whether a bloom candidate idea is on rejection cooldown.
+# Scans vote history in .automaton/votes/ for rejected votes matching the idea_id.
+# If a rejection is found and fewer than rejection_cooldown_cycles votes have been
+# recorded since then, the idea is considered on cooldown and should be skipped.
+#
+# Args:
+#   $1 — idea_id: the garden idea ID to check
+# Returns: 0 if idea is not on cooldown (can be evaluated), 1 if on cooldown (skip)
+_quorum_check_cooldown() {
+    local idea_id="${1:?_quorum_check_cooldown requires idea_id}"
+    local cooldown_cycles="${QUORUM_REJECTION_COOLDOWN:-5}"
+    local votes_dir="$AUTOMATON_DIR/votes"
+
+    if [ ! -d "$votes_dir" ]; then
+        return 0
+    fi
+
+    # Find the most recent rejection vote for this idea
+    local rejection_vote_id=""
+    local vote_files
+    vote_files=$(find "$votes_dir" -name 'vote-*.json' -type f 2>/dev/null | sort -r)
+
+    for vote_file in $vote_files; do
+        local matched_idea matched_result
+        matched_idea=$(jq -r '.idea_id // empty' "$vote_file" 2>/dev/null) || continue
+        matched_result=$(jq -r '.tally.result // empty' "$vote_file" 2>/dev/null) || continue
+
+        if [ "$matched_idea" = "$idea_id" ] && [ "$matched_result" = "rejected" ]; then
+            rejection_vote_id=$(jq -r '.vote_id // empty' "$vote_file" 2>/dev/null) || true
+            break
+        fi
+    done
+
+    if [ -z "$rejection_vote_id" ]; then
+        return 0
+    fi
+
+    # Count how many votes have been recorded after the rejection vote
+    # Each vote roughly corresponds to one evaluation cycle
+    local votes_since=0
+    local past_rejection=false
+    local all_vote_files
+    all_vote_files=$(find "$votes_dir" -name 'vote-*.json' -type f 2>/dev/null | sort)
+
+    for vote_file in $all_vote_files; do
+        local vid
+        vid=$(jq -r '.vote_id // empty' "$vote_file" 2>/dev/null) || continue
+        if [ "$past_rejection" = "true" ]; then
+            votes_since=$(( votes_since + 1 ))
+        elif [ "$vid" = "$rejection_vote_id" ]; then
+            past_rejection=true
+        fi
+    done
+
+    if [ "$votes_since" -lt "$cooldown_cycles" ]; then
+        log "QUORUM" "Idea $idea_id on cooldown: $votes_since cycles since rejection ($rejection_vote_id), need $cooldown_cycles"
+        return 1
+    fi
+
+    return 0
+}
+
 # QUORUM_MAX_COST_PER_CYCLE. Uses a simple token-to-cost estimate based on
 # Sonnet pricing (~$3/M input + $15/M output tokens, approximated as $0.01/1K tokens).
 #
@@ -5710,6 +5772,11 @@ _quorum_evaluate_bloom() {
     if [ ! -f "$idea_file" ]; then
         log "QUORUM" "ERROR: idea file not found: $idea_file"
         return 1
+    fi
+
+    # Check rejection cooldown — skip ideas recently rejected by quorum
+    if ! _quorum_check_cooldown "$idea_id"; then
+        return 0
     fi
 
     # Check if quorum budget for this cycle has been exceeded
