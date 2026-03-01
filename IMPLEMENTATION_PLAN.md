@@ -146,7 +146,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 - [x] Update `.gitignore` to add `.automaton/garden/` as persistent git-tracked state and `.automaton/garden/_index.json` comment (WHY: garden ideas are persistent state that must survive directory loss; the index is regenerated but tracked for bootstrap) <!-- test: none -->
 
-- [ ] Implement `_garden_plant_seed()` in `automaton.sh` that creates a new idea JSON file in `.automaton/garden/` with the full schema (id, title, description, stage=seed, origin, evidence=[], tags, priority=0, estimated_complexity, related_specs, related_signals, related_ideas, stage_history, vote_id=null, implementation=null, updated_at) and auto-increments the ID from `_index.json` (WHY: this is the primary write operation — every idea enters the garden as a seed, and the schema must be complete from the start to avoid migration later) <!-- test: tests/test_garden_plant.sh -->
+- [x] Implement `_garden_plant_seed()` in `automaton.sh` that creates a new idea JSON file in `.automaton/garden/` with the full schema (id, title, description, stage=seed, origin, evidence=[], tags, priority=0, estimated_complexity, related_specs, related_signals, related_ideas, stage_history, vote_id=null, implementation=null, updated_at) and auto-increments the ID from `_index.json` (WHY: this is the primary write operation — every idea enters the garden as a seed, and the schema must be complete from the start to avoid migration later) <!-- test: tests/test_garden_plant.sh -->
 
 - [ ] Implement `_garden_water()` in `automaton.sh` that adds an evidence item to an existing idea, updates `updated_at`, and calls `_garden_advance_stage()` if thresholds are met (WHY: evidence accumulation is the mechanism that moves ideas from seed to sprout to bloom — without watering, ideas stay inert) <!-- test: tests/test_garden_water.sh -->
 
@@ -158,7 +158,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 - [ ] Implement `_garden_recompute_priorities()` in `automaton.sh` using the 5-component formula: `(evidence_weight*30) + (signal_strength*25) + (metric_severity*25) + (age_bonus*10) + (human_boost*10)` for all active (non-wilted, non-harvested) ideas (WHY: priority scores drive which ideas bloom first — the formula balances evidence, signals, metrics, age, and human input to surface the most actionable ideas) <!-- test: tests/test_garden_priority.sh -->
 
-- [ ] Implement `_garden_rebuild_index()` in `automaton.sh` that regenerates `_index.json` from all idea files with total counts, by_stage breakdown, bloom_candidates list sorted by priority, recent_activity, next_id, and updated_at (WHY: the index provides a lightweight summary for bootstrap and CLI display without reading every idea file) <!-- test: tests/test_garden_index.sh -->
+- [x] Implement `_garden_rebuild_index()` in `automaton.sh` that regenerates `_index.json` from all idea files with total counts, by_stage breakdown, bloom_candidates list sorted by priority, recent_activity, next_id, and updated_at (WHY: the index provides a lightweight summary for bootstrap and CLI display without reading every idea file) <!-- test: tests/test_garden_index.sh -->
 
 - [ ] Implement `_garden_prune_expired()` in `automaton.sh` that auto-wilts seeds older than `seed_ttl_days` and sprouts older than `sprout_ttl_days` that have received no new evidence (WHY: TTL-based pruning prevents the garden from filling up with stale ideas that will never mature) <!-- test: tests/test_garden_prune.sh -->
 
