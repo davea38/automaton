@@ -54,7 +54,7 @@ Prompt cache reads cost 90% less than uncached input tokens. Spec-29's static-fi
 - [x] Emit warning when rolling average cache hit ratio drops below 50% after 3+ iterations in any phase (WHY: low cache ratio indicates the static prefix is changing between iterations — likely a bug in prompt assembly)
 - [x] Ensure all parallel builders share an identical static prompt prefix by moving builder number, wave number, task assignment, and file ownership list to `<dynamic_context>` (WHY: cache entry created by builder-1 is reused by builders 2..N, saving 90% on input tokens for all subsequent builders in a wave)
 - [x] Move context summaries (`context_summary.md`) and iteration memory (`iteration_memory.md`) to after the static prefix in prompt assembly (WHY: these change every iteration and would invalidate the cache if placed before the static content)
-- [ ] Add cache hit ratio to the dashboard (spec-21) and status line output, including allowance-mode token accounting note (WHY: visibility into cache performance helps users diagnose cost issues; allowance users need to know cache reduces cost but not token consumption)
+- [x] Add cache hit ratio to the dashboard (spec-21) and status line output, including allowance-mode token accounting note (WHY: visibility into cache performance helps users diagnose cost issues; allowance users need to know cache reduces cost but not token consumption)
 - [ ] Log informational message when static prefix is below minimum cacheable token threshold per model (4096 for Opus/Haiku, 2048 for Sonnet) (WHY: users need to know when caching is inactive so they can decide whether to expand the static prefix)
 
 ### Spec 33 — Context Window Lifecycle (depends on spec-29)

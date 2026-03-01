@@ -4957,7 +4957,7 @@ write_dashboard() {
 
     # Budget info from budget.json
     local budget_file="$AUTOMATON_DIR/budget.json"
-    local remaining_usd="?" cost_used="?" cost_limit="?" tokens_used="?"
+    local remaining_usd="?" cost_used="?" cost_limit="?" tokens_used="?" cache_ratio_display="?"
     if [ -f "$budget_file" ]; then
         remaining_usd=$(jq -r '(.limits.max_cost_usd - .used.estimated_cost_usd) * 100 | floor / 100' \
             "$budget_file" 2>/dev/null || echo "?")
@@ -4973,6 +4973,18 @@ write_dashboard() {
             tokens_used="$(awk -v t="$total_tokens" 'BEGIN{printf "%.1fK", t/1000}')"
         else
             tokens_used="$total_tokens"
+        fi
+
+        # Cache hit ratio: rolling average across all history entries (spec-30)
+        local cache_avg
+        cache_avg=$(jq '
+            [.history[] | .cache_hit_ratio // 0] |
+            if length > 0 then ((add / length) * 100 | round) else -1 end
+        ' "$budget_file" 2>/dev/null || echo "-1")
+        if [ "$cache_avg" != "-1" ] && [ "$cache_avg" -ge 0 ] 2>/dev/null; then
+            cache_ratio_display="${cache_avg}%"
+        else
+            cache_ratio_display="n/a"
         fi
     fi
 
@@ -5023,7 +5035,7 @@ ${builder_status}
 
 ╠${sep}╣
   Tasks: ${completed_tasks}/${total_tasks} complete  │  Waves: ${wave} done, ~${remaining_waves} remaining
-  Tokens: ${tokens_used} used  │  Cost: \$${cost_used} / \$${cost_limit}
+  Tokens: ${tokens_used} used  │  Cost: \$${cost_used} / \$${cost_limit}  │  Cache: ${cache_ratio_display}
 ╠${sep}╣
   Recent Events
   $(printf '─%.0s' $(seq 1 13))
@@ -5476,6 +5488,7 @@ agent_signaled_complete() {
 }
 
 # Emits a one-line inter-iteration status per spec-01 format.
+# Includes cache hit ratio for the current iteration (spec-30).
 emit_status_line() {
     local model="$1" iter_cost="$2"
     local phase_upper max_iter iter_display remaining_budget
@@ -5489,8 +5502,17 @@ emit_status_line() {
         iter_display="${phase_iteration}/${max_iter}"
     fi
 
+    # Calculate per-iteration cache hit ratio from last token extraction (spec-30)
+    local cache_pct="n/a"
+    local cr=${LAST_CACHE_READ:-0} inp=${LAST_INPUT_TOKENS:-0} cc=${LAST_CACHE_CREATE:-0}
+    local cache_denom=$((cr + inp + cc))
+    if [ "$cache_denom" -gt 0 ] 2>/dev/null; then
+        cache_pct="$(awk -v cr="$cr" -v d="$cache_denom" 'BEGIN{printf "%d%%", (cr/d)*100}')"
+    fi
+
     if [ "$BUDGET_MODE" = "allowance" ]; then
-        # Allowance mode: show remaining tokens instead of USD
+        # Allowance mode: show input/output tokens and remaining allowance (spec-30 §7)
+        # Note: cache reduces USD cost but NOT allowance consumption (token-based)
         local tokens_remaining tokens_display
         tokens_remaining=$(jq '.tokens_remaining' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
         if [ "$tokens_remaining" != "?" ] && [ "$tokens_remaining" -ge 1000000 ] 2>/dev/null; then
@@ -5500,11 +5522,24 @@ emit_status_line() {
         else
             tokens_display="$tokens_remaining"
         fi
-        echo "[${phase_upper} ${iter_display}] ${current_phase} iteration ${phase_iteration} | ${LAST_INPUT_TOKENS:-0} input / ${LAST_OUTPUT_TOKENS:-0} output (~\$${iter_cost}) | allowance: ${tokens_display} tokens remaining"
+
+        local inp_display out_display
+        if [ "${LAST_INPUT_TOKENS:-0}" -ge 1000 ] 2>/dev/null; then
+            inp_display="$(awk -v t="${LAST_INPUT_TOKENS:-0}" 'BEGIN{printf "%dK", t/1000}')"
+        else
+            inp_display="${LAST_INPUT_TOKENS:-0}"
+        fi
+        if [ "${LAST_OUTPUT_TOKENS:-0}" -ge 1000 ] 2>/dev/null; then
+            out_display="$(awk -v t="${LAST_OUTPUT_TOKENS:-0}" 'BEGIN{printf "%dK", t/1000}')"
+        else
+            out_display="${LAST_OUTPUT_TOKENS:-0}"
+        fi
+
+        echo "[${phase_upper} ${iter_display}] ${current_phase} iteration ${phase_iteration} | ${inp_display}/${out_display} tokens | cache: ${cache_pct} | allowance: ${tokens_display} remaining (cache saves cost, not tokens)"
     else
         remaining_budget=$(jq -r '(.limits.max_cost_usd - .used.estimated_cost_usd) * 100 | floor / 100' \
             "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
-        echo "[${phase_upper} ${iter_display}] ${current_phase} iteration ${phase_iteration} | ${LAST_INPUT_TOKENS:-0} input / ${LAST_OUTPUT_TOKENS:-0} output (~\$${iter_cost}) | budget: \$${remaining_budget} remaining"
+        echo "[${phase_upper} ${iter_display}] ${current_phase} iteration ${phase_iteration} | ~\$${iter_cost} | cache: ${cache_pct} | budget: \$${remaining_budget} remaining"
     fi
 }
 
