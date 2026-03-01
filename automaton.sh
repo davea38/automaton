@@ -4600,6 +4600,42 @@ _garden_advance_stage() {
     log "GARDEN" "Advanced $idea_id: $current_stage -> $target_stage"
 }
 
+# Moves an idea to the wilt stage with a reason.
+# Records a stage_history entry and rebuilds the index.
+# Wilting preserves the idea record for audit while removing it from active consideration.
+#
+# Args: idea_id reason
+# Returns: 0 on success, 1 on failure
+_garden_wilt() {
+    local idea_id="${1:?_garden_wilt requires idea_id}"
+    local reason="${2:?_garden_wilt requires reason}"
+
+    local garden_dir="$AUTOMATON_DIR/garden"
+    local idea_file="$garden_dir/${idea_id}.json"
+
+    if [ ! -f "$idea_file" ]; then
+        log "GARDEN" "Idea $idea_id not found"
+        return 1
+    fi
+
+    local current_stage
+    current_stage=$(jq -r '.stage' "$idea_file")
+
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Update stage to wilt, record reason in stage_history, update timestamp
+    local tmp_file="${idea_file}.tmp"
+    jq --arg now "$now" \
+       --arg reason "$reason" \
+       '.stage = "wilt" | .updated_at = $now | .stage_history += [{stage: "wilt", entered_at: $now, reason: $reason}]' \
+       "$idea_file" > "$tmp_file" && mv "$tmp_file" "$idea_file"
+
+    log "GARDEN" "Wilted $idea_id ($current_stage -> wilt): $reason"
+
+    _garden_rebuild_index
+}
+
 # Regenerates .automaton/garden/_index.json from all idea files.
 # Provides total counts, by_stage breakdown, bloom_candidates sorted by priority,
 # recent_activity, next_id, and updated_at.
