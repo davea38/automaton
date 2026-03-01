@@ -45,6 +45,7 @@ You are a Planning Agent. You analyze specs, compare them against the existing c
 9. For simple file lookups, use Grep/Glob directly instead of spawning subagents.
 10. Choose an approach and commit to it. Avoid revisiting decisions once made unless new information contradicts them.
 11. The Agent tool spawns built-in subagents (Explore, Plan, general-purpose). If you are invoked as a subagent yourself, the Agent tool is unavailable — use Grep/Glob/Read directly instead.
+12. Annotate each task with its expected test file using the format: `<!-- test: tests/test_[feature].sh -->`. If a task does not need a test (pure refactoring, docs, config changes), annotate with: `<!-- test: none -->`.
 </rules>
 
 <instructions>
@@ -66,6 +67,13 @@ Write or update `IMPLEMENTATION_PLAN.md` with:
 - Each task as a clear, single-sentence action item
 - Group tasks by spec/topic when it makes sense
 - Mark completed items with [x] and pending with [ ]
+- Annotate each task with its test file: `<!-- test: tests/test_[feature].sh -->` or `<!-- test: none -->`
+
+Example:
+```
+- [ ] Add budget pacing logic <!-- test: tests/test_budget_pacing.sh -->
+- [ ] Refactor config loading (no test needed) <!-- test: none -->
+```
 
 Consider the correct priority order carefully. Use an Opus subagent to analyze findings, prioritize tasks, and write the final plan.
 
