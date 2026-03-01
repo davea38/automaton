@@ -7335,6 +7335,63 @@ _cli_plant() {
     echo "Water with evidence using: --water ${idea_id} \"your evidence here\""
 }
 
+# Adds evidence to an existing garden idea and displays the result.
+# Shows updated evidence count, priority change, and any stage advancement.
+# Called by --water ID "evidence" CLI command.
+#
+# Args: idea_id evidence_text
+# Returns: 0 on success, 1 on failure
+_cli_water() {
+    local idea_id="${1:?_cli_water requires an idea ID}"
+    local evidence="${2:?_cli_water requires evidence text}"
+
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then
+        echo "Error: Garden is not enabled. Set garden.enabled=true in automaton.config.json." >&2
+        return 1
+    fi
+
+    local garden_dir="$AUTOMATON_DIR/garden"
+    local idea_file="$garden_dir/${idea_id}.json"
+
+    if [ ! -f "$idea_file" ]; then
+        echo "Error: Idea $idea_id not found." >&2
+        return 1
+    fi
+
+    # Capture pre-water state
+    local old_title old_stage old_priority old_evidence_count
+    old_title=$(jq -r '.title' "$idea_file")
+    old_stage=$(jq -r '.stage' "$idea_file")
+    old_priority=$(jq -r '.priority // 0' "$idea_file")
+    old_evidence_count=$(jq '.evidence | length' "$idea_file")
+
+    # Water the idea with human evidence
+    _garden_water "$idea_id" "observation" "$evidence" "human"
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to water idea $idea_id." >&2
+        return 1
+    fi
+
+    # Recompute priorities so changes are reflected
+    _garden_recompute_priorities 2>/dev/null || true
+
+    # Read back updated state
+    local new_stage new_priority new_evidence_count
+    new_stage=$(jq -r '.stage' "$idea_file")
+    new_priority=$(jq -r '.priority // 0' "$idea_file")
+    new_evidence_count=$(jq '.evidence | length' "$idea_file")
+
+    # Display result
+    echo "Watered ${idea_id}: \"${old_title}\""
+    echo "Evidence added (${new_evidence_count} total). Priority: ${old_priority} → ${new_priority}."
+
+    # Report stage advancement if it occurred
+    if [ "$old_stage" != "$new_stage" ]; then
+        echo "Stage: ${old_stage} → ${new_stage} (threshold met: ${new_evidence_count} evidence items, priority ${new_priority} >= ${GARDEN_BLOOM_PRIORITY_THRESHOLD:-40})"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Constitutional Principles (spec-40)
 # ---------------------------------------------------------------------------
