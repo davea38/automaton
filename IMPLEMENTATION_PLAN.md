@@ -156,7 +156,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 #### 38.2 Garden Computation and Maintenance
 
-- [ ] Implement `_garden_recompute_priorities()` in `automaton.sh` using the 5-component formula: `(evidence_weight*30) + (signal_strength*25) + (metric_severity*25) + (age_bonus*10) + (human_boost*10)` for all active (non-wilted, non-harvested) ideas (WHY: priority scores drive which ideas bloom first — the formula balances evidence, signals, metrics, age, and human input to surface the most actionable ideas) <!-- test: tests/test_garden_priority.sh -->
+- [x] Implement `_garden_recompute_priorities()` in `automaton.sh` using the 5-component formula: `(evidence_weight*30) + (signal_strength*25) + (metric_severity*25) + (age_bonus*10) + (human_boost*10)` for all active (non-wilted, non-harvested) ideas (WHY: priority scores drive which ideas bloom first — the formula balances evidence, signals, metrics, age, and human input to surface the most actionable ideas) <!-- test: tests/test_garden_priority.sh -->
 
 - [x] Implement `_garden_rebuild_index()` in `automaton.sh` that regenerates `_index.json` from all idea files with total counts, by_stage breakdown, bloom_candidates list sorted by priority, recent_activity, next_id, and updated_at (WHY: the index provides a lightweight summary for bootstrap and CLI display without reading every idea file) <!-- test: tests/test_garden_index.sh -->
 

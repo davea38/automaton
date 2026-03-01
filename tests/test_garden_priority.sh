@@ -188,14 +188,14 @@ else
 fi
 
 # --- Test 12: Functional - human_boost gives exactly 10 points ---
-# Create two identical ideas, one human-origin and one metric-origin, fresh (age=0)
+# Create two identical ideas, one human-origin and one agent-origin (no metric_severity), fresh (age=0)
 cat > "$TMPDIR_TEST/garden/idea-004.json" << EOF
 {
   "id": "idea-004",
-  "title": "Metric idea fresh",
-  "description": "Fresh metric idea",
+  "title": "Agent idea fresh",
+  "description": "Fresh agent idea",
   "stage": "seed",
-  "origin": {"type": "metric", "source": "test", "created_by": "test", "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"},
+  "origin": {"type": "agent", "source": "test", "created_by": "test", "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"},
   "evidence": [],
   "tags": [],
   "priority": 0,
@@ -243,6 +243,6 @@ _garden_recompute_priorities
 p4=$(jq '.priority' "$TMPDIR_TEST/garden/idea-004.json")
 p5=$(jq '.priority' "$TMPDIR_TEST/garden/idea-005.json")
 human_diff=$((p5 - p4))
-assert_equals "10" "$human_diff" "human_boost contributes exactly 10 points (metric=$p4, human=$p5)"
+assert_equals "10" "$human_diff" "human_boost contributes exactly 10 points (agent=$p4, human=$p5)"
 
 test_summary

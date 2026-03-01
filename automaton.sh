@@ -4636,6 +4636,114 @@ _garden_wilt() {
     _garden_rebuild_index
 }
 
+# Recomputes priority scores for all active (non-wilted, non-harvested) ideas
+# using the 5-component formula from spec-38 §4:
+#   priority = (evidence_weight*30) + (signal_strength*25) + (metric_severity*25) + (age_bonus*10) + (human_boost*10)
+#
+# Components:
+#   evidence_weight: min(evidence_count / bloom_threshold, 1.0)
+#   signal_strength: max strength of related signals (0 if none or no signals file)
+#   metric_severity: normalized severity of originating metric breach (0-1.0)
+#   age_bonus:       min(days_since_creation / 30, 1.0)
+#   human_boost:     1.0 if origin.type == "human", else 0
+#
+# Updates each idea's priority field in-place. Skips wilted and harvested ideas.
+_garden_recompute_priorities() {
+    local garden_dir="$AUTOMATON_DIR/garden"
+    local signals_file="$AUTOMATON_DIR/signals.json"
+
+    local idea_files
+    idea_files=$(find "$garden_dir" -name 'idea-*.json' -type f 2>/dev/null | sort)
+
+    local now_epoch
+    now_epoch=$(date -u +%s)
+
+    for f in $idea_files; do
+        [ -f "$f" ] || continue
+
+        local stage
+        stage=$(jq -r '.stage' "$f")
+
+        # Skip wilted and harvested ideas
+        if [ "$stage" = "wilt" ] || [ "$stage" = "harvest" ]; then
+            continue
+        fi
+
+        # 1. evidence_weight: min(evidence_count / bloom_threshold, 1.0)
+        local evidence_count
+        evidence_count=$(jq '.evidence | length' "$f")
+        local evidence_weight
+        evidence_weight=$(awk "BEGIN { v = $evidence_count / $GARDEN_BLOOM_THRESHOLD; print (v > 1.0 ? 1.0 : v) }")
+
+        # 2. signal_strength: max strength of related signals
+        local signal_strength=0
+        if [ -f "$signals_file" ]; then
+            local related_signals
+            related_signals=$(jq -r '.related_signals // [] | .[]' "$f" 2>/dev/null)
+            if [ -n "$related_signals" ]; then
+                local max_str
+                max_str=$(echo "$related_signals" | while IFS= read -r sig_id; do
+                    jq -r --arg id "$sig_id" '.signals[]? | select(.id == $id) | .strength // 0' "$signals_file" 2>/dev/null
+                done | sort -rn | head -1)
+                if [ -n "$max_str" ]; then
+                    signal_strength="$max_str"
+                fi
+            fi
+        fi
+
+        # 3. metric_severity: based on origin type and source
+        local metric_severity=0
+        local origin_type
+        origin_type=$(jq -r '.origin.type' "$f")
+        if [ "$origin_type" = "metric" ]; then
+            # Extract numeric value from origin.source if it contains a threshold breach
+            local origin_source
+            origin_source=$(jq -r '.origin.source // ""' "$f")
+            local extracted_val
+            extracted_val=$(echo "$origin_source" | grep -oE '[0-9]+\.?[0-9]*' | tail -1 || true)
+            if [ -n "$extracted_val" ]; then
+                # Normalize: cap at 1.0 (values like 0.25 become 0.25, values > 1 become 1.0)
+                metric_severity=$(awk "BEGIN { v = $extracted_val; print (v > 1.0 ? 1.0 : v) }")
+            else
+                # Metric origin but no extractable value — assign a moderate default
+                metric_severity="0.5"
+            fi
+        fi
+
+        # 4. age_bonus: min(days_since_creation / 30, 1.0)
+        local created_at
+        created_at=$(jq -r '.origin.created_at' "$f")
+        local created_epoch
+        created_epoch=$(date -u -d "$created_at" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null || echo "$now_epoch")
+        local days_old
+        days_old=$(( (now_epoch - created_epoch) / 86400 ))
+        local age_bonus
+        age_bonus=$(awk "BEGIN { v = $days_old / 30.0; print (v > 1.0 ? 1.0 : v) }")
+
+        # 5. human_boost: 1.0 if origin.type == "human", else 0
+        local human_boost=0
+        if [ "$origin_type" = "human" ]; then
+            human_boost=1
+        fi
+
+        # Compute final priority: integer 0-100
+        local priority
+        priority=$(awk "BEGIN {
+            p = ($evidence_weight * 30) + ($signal_strength * 25) + ($metric_severity * 25) + ($age_bonus * 10) + ($human_boost * 10);
+            p = int(p + 0.5);
+            if (p > 100) p = 100;
+            if (p < 0) p = 0;
+            print p
+        }")
+
+        # Update the idea file
+        local tmp_file="${f}.tmp"
+        jq --argjson priority "$priority" '.priority = $priority' "$f" > "$tmp_file" && mv "$tmp_file" "$f"
+    done
+
+    log "GARDEN" "Recomputed priorities for all active ideas"
+}
+
 # Regenerates .automaton/garden/_index.json from all idea files.
 # Provides total counts, by_stage breakdown, bloom_candidates sorted by priority,
 # recent_activity, next_id, and updated_at.
