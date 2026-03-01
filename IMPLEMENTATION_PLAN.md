@@ -234,7 +234,7 @@ These specs build on the garden and signals to add collective decision-making an
 
 - [x] Implement rejection cooldown: check vote history before evaluating a bloom candidate and skip ideas wilted by quorum within the last `rejection_cooldown_cycles` cycles (WHY: cooldown prevents the same idea from being re-evaluated every cycle when nothing has changed — it must accumulate new evidence before another attempt) <!-- test: tests/test_quorum_cooldown.sh -->
 
-- [ ] Implement quorum-disabled fallback: when `quorum.enabled` is false, auto-approve bloom candidates with a warning log (WHY: users who want faster iteration can bypass voting, but the warning ensures they know decisions are unreviewed) <!-- test: tests/test_quorum_config.sh -->
+- [x] Implement quorum-disabled fallback: when `quorum.enabled` is false, auto-approve bloom candidates with a warning log (WHY: users who want faster iteration can bypass voting, but the warning ensures they know decisions are unreviewed) <!-- test: tests/test_quorum_config.sh -->
 
 ### Spec 43 — Growth Metrics
 
