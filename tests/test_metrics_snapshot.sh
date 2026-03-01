@@ -168,13 +168,12 @@ result=$(
     export SCRIPT_PATH="$TEST_DIR/automaton.sh"
     export BUDGET_MODE="api"
 
-    # Source only the _metrics_snapshot function from the real script
-    # We extract and eval it to avoid sourcing the entire orchestrator
-    func_body=$(sed -n '/^_metrics_snapshot()/,/^[a-z_]*() {/{ /^[a-z_]*() {/!p; }' "$script_file")
-    # Also need the log function
+    # Extract _metrics_snapshot function using awk (stops at closing brace)
+    func_body=$(awk '/^_metrics_snapshot\(\)/{found=1} found{print} found && /^}$/{exit}' "$script_file")
+    # Provide a stub log function
     log() { true; }
     eval "$func_body"
-    _metrics_snapshot 1
+    _metrics_snapshot 1 >/dev/null
     cat "$AUTOMATON_DIR/evolution-metrics.json"
 )
 
@@ -189,11 +188,11 @@ else
 fi
 
 # --- Test 12: Snapshot has all 5 categories ---
-has_all=$(echo "$result" | jq '.snapshots[0] | has("capability", "efficiency", "quality", "innovation", "health")' 2>/dev/null || echo "false")
+has_all=$(echo "$result" | jq '[.snapshots[0] | has("capability", "efficiency", "quality", "innovation", "health")] | all' 2>/dev/null || echo "false")
 assert_equals "true" "$has_all" "Snapshot contains all 5 metric categories"
 
 # --- Test 13: Snapshot has cycle_id and timestamp ---
-has_meta=$(echo "$result" | jq '.snapshots[0] | has("cycle_id", "timestamp")' 2>/dev/null || echo "false")
+has_meta=$(echo "$result" | jq '[.snapshots[0] | has("cycle_id", "timestamp")] | all' 2>/dev/null || echo "false")
 assert_equals "true" "$has_meta" "Snapshot contains cycle_id and timestamp"
 
 # --- Test 14: Capability metrics are populated ---

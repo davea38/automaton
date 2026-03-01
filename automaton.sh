@@ -5905,6 +5905,313 @@ _quorum_evaluate_bloom() {
 }
 
 # ---------------------------------------------------------------------------
+# Growth Metrics (spec-43)
+# ---------------------------------------------------------------------------
+
+# Collects all 5 metric categories (capability, efficiency, quality,
+# innovation, health) and appends a snapshot to evolution-metrics.json.
+# Called at pre-cycle and post-cycle points in the evolution loop.
+#
+# Usage: _metrics_snapshot <cycle_id>
+# Args:  cycle_id — the current evolution cycle number
+_metrics_snapshot() {
+    if [ "${METRICS_ENABLED:-true}" != "true" ]; then return 0; fi
+
+    local cycle_id="${1:?_metrics_snapshot requires cycle_id}"
+    local metrics_file="$AUTOMATON_DIR/evolution-metrics.json"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Initialize metrics file if it doesn't exist
+    if [ ! -f "$metrics_file" ]; then
+        echo '{"version":1,"snapshots":[],"baselines":{}}' > "$metrics_file"
+    fi
+
+    # --- Capability metrics ---
+    local total_lines=0 total_functions=0 total_specs=0 total_tests=0
+    local test_assertions=0 cli_flags=0 agent_definitions=0 skills=0 hooks=0
+
+    if [ -f "${SCRIPT_PATH:-automaton.sh}" ]; then
+        total_lines=$(wc -l < "${SCRIPT_PATH:-automaton.sh}" 2>/dev/null || true)
+        total_functions=$(grep -c '^[a-z_]*()' "${SCRIPT_PATH:-automaton.sh}" 2>/dev/null || true)
+        cli_flags=$(grep -c -- '--[a-z]' "${SCRIPT_PATH:-automaton.sh}" 2>/dev/null || true)
+    fi
+    if [ -d "${PROJECT_ROOT:-.}/specs" ]; then
+        total_specs=$(find "${PROJECT_ROOT:-.}/specs" -name 'spec-*.md' 2>/dev/null | wc -l)
+    fi
+    if [ -d "${PROJECT_ROOT:-.}/tests" ]; then
+        total_tests=$(find "${PROJECT_ROOT:-.}/tests" -name 'test_*.sh' -type f 2>/dev/null | wc -l)
+        test_assertions=$(grep -r -c 'assert_' "${PROJECT_ROOT:-.}/tests/" 2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')
+    fi
+    if [ -d "${PROJECT_ROOT:-.}/.claude/agents" ]; then
+        agent_definitions=$(find "${PROJECT_ROOT:-.}/.claude/agents" -name '*.md' 2>/dev/null | wc -l)
+    fi
+    if [ -d "${PROJECT_ROOT:-.}/.claude/skills" ]; then
+        skills=$(find "${PROJECT_ROOT:-.}/.claude/skills" -name '*.md' 2>/dev/null | wc -l)
+    fi
+    if [ -d "${PROJECT_ROOT:-.}/.claude/hooks" ]; then
+        hooks=$(find "${PROJECT_ROOT:-.}/.claude/hooks" -name '*.sh' 2>/dev/null | wc -l)
+    fi
+
+    # --- Efficiency metrics ---
+    local tokens_per_task=0 tokens_per_iteration=0 cache_hit_ratio="0.00"
+    local stall_rate="0.00" prompt_overhead_ratio="0.00"
+    local bootstrap_time_ms=0 avg_iteration_duration_s=0
+
+    local budget_file="$AUTOMATON_DIR/budget.json"
+    local state_file="$AUTOMATON_DIR/state.json"
+    if [ -f "$budget_file" ]; then
+        local total_input total_output total_tokens cache_read history_count
+        total_input=$(jq '.used.total_input // 0' "$budget_file" 2>/dev/null || echo 0)
+        total_output=$(jq '.used.total_output // 0' "$budget_file" 2>/dev/null || echo 0)
+        total_tokens=$((total_input + total_output))
+        cache_read=$(jq '.used.total_cache_read // 0' "$budget_file" 2>/dev/null || echo 0)
+        history_count=$(jq '.history | length' "$budget_file" 2>/dev/null || echo 0)
+
+        local tasks_completed
+        tasks_completed=$(jq '[.history[] | select(.phase == "build" and .status == "success")] | length' "$budget_file" 2>/dev/null || echo 0)
+
+        if [ "$tasks_completed" -gt 0 ]; then
+            tokens_per_task=$((total_tokens / tasks_completed))
+        fi
+        if [ "$history_count" -gt 0 ]; then
+            tokens_per_iteration=$((total_tokens / history_count))
+            avg_iteration_duration_s=$(jq '[.history[].duration_seconds // 0] | add / length | floor' "$budget_file" 2>/dev/null || echo 0)
+        fi
+        if [ "$total_input" -gt 0 ]; then
+            cache_hit_ratio=$(awk -v cr="$cache_read" -v ti="$total_input" 'BEGIN { printf "%.2f", cr/ti }')
+        fi
+    fi
+
+    if [ -f "$state_file" ]; then
+        local stall_count total_build_iters
+        stall_count=$(jq '.stall_count // 0' "$state_file" 2>/dev/null || echo 0)
+        total_build_iters=$(jq '[.history[] | select(.phase == "build")] | length' "$budget_file" 2>/dev/null || echo 0)
+        if [ "$total_build_iters" -gt 0 ]; then
+            stall_rate=$(awk -v s="$stall_count" -v t="$total_build_iters" 'BEGIN { printf "%.2f", s/t }')
+        fi
+    fi
+
+    # --- Quality metrics ---
+    local test_pass_rate="0.00" first_pass_success_rate="0.00"
+    local rollback_count=0 syntax_errors_caught=0
+    local review_rework_rate="0.00" constitution_violations=0
+
+    local results_file="$AUTOMATON_DIR/test_results.json"
+    if [ -f "$results_file" ]; then
+        local passed failed
+        passed=$(jq '.passed // 0' "$results_file" 2>/dev/null || echo 0)
+        failed=$(jq '.failed // 0' "$results_file" 2>/dev/null || echo 0)
+        local total_tests_run=$((passed + failed))
+        if [ "$total_tests_run" -gt 0 ]; then
+            test_pass_rate=$(awk -v p="$passed" -v t="$total_tests_run" 'BEGIN { printf "%.2f", p/t }')
+        fi
+    fi
+
+    if [ -f "$state_file" ]; then
+        local replan_count tasks_done
+        replan_count=$(jq '.replan_count // 0' "$state_file" 2>/dev/null || echo 0)
+        tasks_done=$(jq '[.history[] | select(.phase == "build" and .status == "success")] | length' "$budget_file" 2>/dev/null || echo 0)
+        if [ "$tasks_done" -gt 0 ]; then
+            local successful=$((tasks_done - replan_count))
+            [ "$successful" -lt 0 ] && successful=0
+            first_pass_success_rate=$(awk -v s="$successful" -v t="$tasks_done" 'BEGIN { printf "%.2f", s/t }')
+            review_rework_rate=$(awk -v r="$replan_count" -v t="$tasks_done" 'BEGIN { printf "%.2f", r/t }')
+        fi
+    fi
+
+    local mods_file="$AUTOMATON_DIR/self_modifications.json"
+    if [ -f "$mods_file" ]; then
+        rollback_count=$(jq '[.[] | select(.type == "rollback")] | length' "$mods_file" 2>/dev/null || echo 0)
+        syntax_errors_caught=$(jq '[.[] | select(.type == "syntax_error")] | length' "$mods_file" 2>/dev/null || echo 0)
+    fi
+
+    # --- Innovation metrics ---
+    local garden_seeds=0 garden_sprouts=0 garden_blooms=0
+    local garden_harvested=0 garden_wilted=0
+    local active_signals=0 quorum_votes_cast=0
+    local ideas_implemented_total=0 cycles_since_last_harvest=0
+
+    local garden_index="$AUTOMATON_DIR/garden/_index.json"
+    if [ -f "$garden_index" ]; then
+        garden_seeds=$(jq '.by_stage.seed // 0' "$garden_index" 2>/dev/null || echo 0)
+        garden_sprouts=$(jq '.by_stage.sprout // 0' "$garden_index" 2>/dev/null || echo 0)
+        garden_blooms=$(jq '.by_stage.bloom // 0' "$garden_index" 2>/dev/null || echo 0)
+        garden_harvested=$(jq '.by_stage.harvest // 0' "$garden_index" 2>/dev/null || echo 0)
+        garden_wilted=$(jq '.by_stage.wilt // 0' "$garden_index" 2>/dev/null || echo 0)
+    fi
+
+    local signals_file="$AUTOMATON_DIR/signals.json"
+    if [ -f "$signals_file" ]; then
+        active_signals=$(jq '[.signals[] | select(.strength > 0.05)] | length' "$signals_file" 2>/dev/null || echo 0)
+    fi
+
+    local votes_dir="$AUTOMATON_DIR/votes"
+    if [ -d "$votes_dir" ]; then
+        quorum_votes_cast=$(find "$votes_dir" -name 'vote-*.json' -type f 2>/dev/null | wc -l)
+    fi
+
+    ideas_implemented_total=$garden_harvested
+
+    # cycles_since_last_harvest: scan existing snapshots for last harvest
+    if [ -f "$metrics_file" ]; then
+        local last_harvest_cycle
+        last_harvest_cycle=$(jq '[.snapshots[] | select(.innovation.garden_harvested > 0)] | last | .cycle_id // 0' "$metrics_file" 2>/dev/null || echo 0)
+        if [ "$last_harvest_cycle" -gt 0 ]; then
+            cycles_since_last_harvest=$((cycle_id - last_harvest_cycle))
+        else
+            cycles_since_last_harvest=$cycle_id
+        fi
+    fi
+
+    # --- Health indicators ---
+    local budget_utilization="0.00" weekly_allowance_remaining="0.00"
+    local convergence_risk="low" circuit_breaker_trips=0
+    local consecutive_no_improvement=0 error_rate="0.00"
+    local self_modification_count=0
+
+    if [ -f "$budget_file" ]; then
+        local cost_used cost_limit
+        cost_used=$(jq '.used.estimated_cost_usd // 0' "$budget_file" 2>/dev/null || echo 0)
+        cost_limit=$(jq '.limits.max_cost_usd // 50' "$budget_file" 2>/dev/null || echo 50)
+        if [ "$(echo "$cost_limit" | awk '{print ($1 > 0)}')" = "1" ]; then
+            budget_utilization=$(awk -v u="$cost_used" -v l="$cost_limit" 'BEGIN { printf "%.2f", u/l }')
+        fi
+
+        if [ "$(jq -r '.mode // "api"' "$budget_file" 2>/dev/null)" = "allowance" ]; then
+            local tokens_remaining effective_allowance
+            tokens_remaining=$(jq '.tokens_remaining // 0' "$budget_file" 2>/dev/null || echo 0)
+            effective_allowance=$(jq '.limits.effective_allowance // 1' "$budget_file" 2>/dev/null || echo 1)
+            weekly_allowance_remaining=$(awk -v r="$tokens_remaining" -v e="$effective_allowance" 'BEGIN { printf "%.2f", r/e }')
+        fi
+    fi
+
+    if [ -f "$mods_file" ]; then
+        self_modification_count=$(jq 'length' "$mods_file" 2>/dev/null || echo 0)
+    fi
+
+    local breakers_file="$AUTOMATON_DIR/evolution/circuit-breakers.json"
+    if [ -f "$breakers_file" ]; then
+        circuit_breaker_trips=$(jq '[.[] | select(.tripped == true)] | length' "$breakers_file" 2>/dev/null || echo 0)
+    fi
+
+    # consecutive_no_improvement from previous snapshots
+    if [ -f "$metrics_file" ]; then
+        consecutive_no_improvement=$(jq '.snapshots | last | .health.consecutive_no_improvement // 0' "$metrics_file" 2>/dev/null || echo 0)
+    fi
+
+    # convergence_risk based on consecutive_no_improvement
+    if [ "$consecutive_no_improvement" -ge 5 ]; then
+        convergence_risk="high"
+    elif [ "$consecutive_no_improvement" -ge 3 ]; then
+        convergence_risk="medium"
+    fi
+
+    # --- Build and append the snapshot ---
+    local snapshot
+    snapshot=$(jq -n \
+        --argjson cycle_id "$cycle_id" \
+        --arg timestamp "$now" \
+        --argjson total_lines "$total_lines" \
+        --argjson total_functions "$total_functions" \
+        --argjson total_specs "$total_specs" \
+        --argjson total_tests "$total_tests" \
+        --argjson test_assertions "$test_assertions" \
+        --argjson cli_flags "$cli_flags" \
+        --argjson agent_definitions "$agent_definitions" \
+        --argjson skills "$skills" \
+        --argjson hooks "$hooks" \
+        --argjson tokens_per_task "$tokens_per_task" \
+        --argjson tokens_per_iteration "$tokens_per_iteration" \
+        --arg cache_hit_ratio "$cache_hit_ratio" \
+        --arg stall_rate "$stall_rate" \
+        --arg prompt_overhead_ratio "$prompt_overhead_ratio" \
+        --argjson bootstrap_time_ms "$bootstrap_time_ms" \
+        --argjson avg_iteration_duration_s "$avg_iteration_duration_s" \
+        --arg test_pass_rate "$test_pass_rate" \
+        --arg first_pass_success_rate "$first_pass_success_rate" \
+        --argjson rollback_count "$rollback_count" \
+        --argjson syntax_errors_caught "$syntax_errors_caught" \
+        --arg review_rework_rate "$review_rework_rate" \
+        --argjson constitution_violations "$constitution_violations" \
+        --argjson garden_seeds "$garden_seeds" \
+        --argjson garden_sprouts "$garden_sprouts" \
+        --argjson garden_blooms "$garden_blooms" \
+        --argjson garden_harvested "$garden_harvested" \
+        --argjson garden_wilted "$garden_wilted" \
+        --argjson active_signals "$active_signals" \
+        --argjson quorum_votes_cast "$quorum_votes_cast" \
+        --argjson ideas_implemented_total "$ideas_implemented_total" \
+        --argjson cycles_since_last_harvest "$cycles_since_last_harvest" \
+        --arg budget_utilization "$budget_utilization" \
+        --arg weekly_allowance_remaining "$weekly_allowance_remaining" \
+        --arg convergence_risk "$convergence_risk" \
+        --argjson circuit_breaker_trips "$circuit_breaker_trips" \
+        --argjson consecutive_no_improvement "$consecutive_no_improvement" \
+        --arg error_rate "$error_rate" \
+        --argjson self_modification_count "$self_modification_count" \
+        '{
+            cycle_id: $cycle_id,
+            timestamp: $timestamp,
+            capability: {
+                total_lines: $total_lines,
+                total_functions: $total_functions,
+                total_specs: $total_specs,
+                total_tests: $total_tests,
+                test_assertions: $test_assertions,
+                cli_flags: $cli_flags,
+                agent_definitions: $agent_definitions,
+                skills: $skills,
+                hooks: $hooks
+            },
+            efficiency: {
+                tokens_per_task: $tokens_per_task,
+                tokens_per_iteration: $tokens_per_iteration,
+                cache_hit_ratio: ($cache_hit_ratio | tonumber),
+                stall_rate: ($stall_rate | tonumber),
+                prompt_overhead_ratio: ($prompt_overhead_ratio | tonumber),
+                bootstrap_time_ms: $bootstrap_time_ms,
+                avg_iteration_duration_s: $avg_iteration_duration_s
+            },
+            quality: {
+                test_pass_rate: ($test_pass_rate | tonumber),
+                first_pass_success_rate: ($first_pass_success_rate | tonumber),
+                rollback_count: $rollback_count,
+                syntax_errors_caught: $syntax_errors_caught,
+                review_rework_rate: ($review_rework_rate | tonumber),
+                constitution_violations: $constitution_violations
+            },
+            innovation: {
+                garden_seeds: $garden_seeds,
+                garden_sprouts: $garden_sprouts,
+                garden_blooms: $garden_blooms,
+                garden_harvested: $garden_harvested,
+                garden_wilted: $garden_wilted,
+                active_signals: $active_signals,
+                quorum_votes_cast: $quorum_votes_cast,
+                ideas_implemented_total: $ideas_implemented_total,
+                cycles_since_last_harvest: $cycles_since_last_harvest
+            },
+            health: {
+                budget_utilization: ($budget_utilization | tonumber),
+                weekly_allowance_remaining: ($weekly_allowance_remaining | tonumber),
+                convergence_risk: $convergence_risk,
+                circuit_breaker_trips: $circuit_breaker_trips,
+                consecutive_no_improvement: $consecutive_no_improvement,
+                error_rate: ($error_rate | tonumber),
+                self_modification_count: $self_modification_count
+            }
+        }')
+
+    # Append snapshot to metrics file atomically
+    local tmp="${metrics_file}.tmp"
+    jq --argjson snap "$snapshot" '.snapshots += [$snap]' "$metrics_file" > "$tmp" && mv "$tmp" "$metrics_file"
+
+    log "METRICS" "Snapshot recorded for cycle $cycle_id"
+    echo "$metrics_file"
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
