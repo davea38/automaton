@@ -7681,6 +7681,138 @@ _cli_amend() {
     echo "For immediate evaluation, use: --promote ${idea_id}"
 }
 
+# Lists recently rejected (quorum-wilted) ideas and allows the human to
+# override a rejection by re-promoting the idea to bloom stage.
+# Records the override in the vote record and constitution history.
+# Implements Article II: Human Sovereignty.
+#
+# Interactive: reads idea selection and confirmation from stdin.
+# Returns: 0 on success, 1 on error or user abort
+_cli_override() {
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then
+        echo "Error: Garden is not enabled. Set garden.enabled=true in automaton.config.json." >&2
+        return 1
+    fi
+
+    local garden_dir="$AUTOMATON_DIR/garden"
+    local votes_dir="$AUTOMATON_DIR/votes"
+    local hist_file="$AUTOMATON_DIR/constitution-history.json"
+
+    # Find wilted ideas that were rejected by quorum (have vote_id and wilt reason mentions "rejected")
+    local rejected_ideas=()
+    local rejected_display=()
+    local idea_file
+    for idea_file in "$garden_dir"/idea-*.json; do
+        [ -f "$idea_file" ] || continue
+        local stage vote_id title wilt_reason
+        stage=$(jq -r '.stage' "$idea_file")
+        [ "$stage" = "wilt" ] || continue
+        vote_id=$(jq -r '.vote_id // ""' "$idea_file")
+        [ -n "$vote_id" ] && [ "$vote_id" != "null" ] || continue
+        # Check that the wilt reason references quorum rejection
+        wilt_reason=$(jq -r '.stage_history[-1].reason // ""' "$idea_file")
+        echo "$wilt_reason" | grep -qi "rejected" || continue
+        title=$(jq -r '.title' "$idea_file")
+        local idea_id
+        idea_id=$(jq -r '.id' "$idea_file")
+        rejected_ideas+=("$idea_id")
+        # Get vote tally for display
+        local approve_count=0 total_count=0
+        if [ -f "$votes_dir/${vote_id}.json" ]; then
+            approve_count=$(jq '.tally.approve // 0' "$votes_dir/${vote_id}.json")
+            total_count=$(jq '(.tally.approve // 0) + (.tally.reject // 0) + (.tally.abstain // 0)' "$votes_dir/${vote_id}.json")
+        fi
+        rejected_display+=("  ${idea_id}  \"${title}\"   rejected ${vote_id} (${approve_count}/${total_count})")
+    done
+
+    if [ ${#rejected_ideas[@]} -eq 0 ]; then
+        echo "No rejected ideas found to override."
+        return 0
+    fi
+
+    echo ""
+    echo "Recent rejected ideas:"
+    for line in "${rejected_display[@]}"; do
+        echo "$line"
+    done
+    echo ""
+
+    printf "Override which idea? Enter ID: "
+    local selected_id
+    read -r selected_id
+
+    # Validate the selected idea exists and is in the rejected list
+    local found=false
+    for rid in "${rejected_ideas[@]}"; do
+        if [ "$rid" = "$selected_id" ]; then
+            found=true
+            break
+        fi
+    done
+
+    if [ "$found" != "true" ]; then
+        echo "Error: Idea $selected_id not found in rejected ideas list." >&2
+        return 1
+    fi
+
+    local selected_file="$garden_dir/${selected_id}.json"
+    local selected_title selected_vote_id
+    selected_title=$(jq -r '.title' "$selected_file")
+    selected_vote_id=$(jq -r '.vote_id // ""' "$selected_file")
+
+    echo ""
+    echo "WARNING: Overriding quorum rejection of ${selected_id}."
+    echo "This bypasses collective decision-making (Article II)."
+    echo "The override will be recorded in the audit trail."
+    echo ""
+    printf "Confirm override? (y/n): "
+    local confirm
+    read -r confirm
+
+    if [ "$confirm" != "y" ]; then
+        echo "Override cancelled."
+        return 0
+    fi
+
+    # Re-promote idea to bloom stage with force
+    _garden_advance_stage "$selected_id" "bloom" "Human override — Article II sovereignty" "true"
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to re-promote idea ${selected_id}." >&2
+        return 1
+    fi
+
+    _garden_recompute_priorities 2>/dev/null || true
+
+    # Update vote record with override information
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    if [ -n "$selected_vote_id" ] && [ "$selected_vote_id" != "null" ] && [ -f "$votes_dir/${selected_vote_id}.json" ]; then
+        local vote_file="$votes_dir/${selected_vote_id}.json"
+        local tmp_file="${vote_file}.tmp"
+        jq --arg now "$now" \
+           --arg reason "Human override — Article II sovereignty" \
+           '. + {override: {overridden_at: $now, reason: $reason, by: "human"}}' \
+           "$vote_file" > "$tmp_file" && mv "$tmp_file" "$vote_file"
+    fi
+
+    # Log override in constitution history
+    if [ -f "$hist_file" ]; then
+        local tmp_hist="${hist_file}.tmp"
+        jq --arg idea_id "$selected_id" \
+           --arg vote_id "$selected_vote_id" \
+           --arg now "$now" \
+           --arg reason "Human override — Article II sovereignty" \
+           '.overrides = (.overrides // []) + [{idea_id: $idea_id, vote_id: $vote_id, overridden_at: $now, reason: $reason}]' \
+           "$hist_file" > "$tmp_hist" && mv "$tmp_hist" "$hist_file"
+    fi
+
+    echo ""
+    echo "Override recorded. ${selected_id} → bloom (re-promoted for implementation)"
+    echo "Override logged in ${selected_vote_id} with reason: \"Human override — Article II sovereignty\""
+}
+
 # ---------------------------------------------------------------------------
 # Constitutional Principles (spec-40)
 # ---------------------------------------------------------------------------
