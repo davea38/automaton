@@ -7666,6 +7666,94 @@ _safety_rollback() {
 }
 
 # ---------------------------------------------------------------------------
+# Pre-Evolution Safety Preflight (spec-45 §6)
+# ---------------------------------------------------------------------------
+
+# Validates all preconditions before the first evolution cycle begins.
+# Checks: clean working tree, test pass rate above minimum, constitution
+# exists or can be created, sufficient budget for at least one cycle, and
+# no tripped circuit breakers.
+#
+# Returns: 0 if all checks pass, 1 if any check fails
+_safety_preflight() {
+    # Skip if preflight is disabled
+    if [ "${SAFETY_PREFLIGHT_ENABLED:-true}" != "true" ]; then
+        log "SAFETY" "Preflight check disabled — skipping"
+        return 0
+    fi
+
+    log "SAFETY" "Starting pre-evolution safety preflight"
+
+    # 1. Verify clean working tree (no uncommitted changes)
+    if ! git diff --quiet HEAD 2>/dev/null; then
+        log "SAFETY" "PREFLIGHT FAIL: Working tree has uncommitted changes. Commit or stash before --evolve."
+        return 1
+    fi
+    log "SAFETY" "Preflight 1/5: Clean working tree — passed"
+
+    # 2. Verify test suite passes on current working branch
+    local total_tests=0
+    local passed_tests=0
+
+    for test_file in tests/test_*.sh; do
+        [ -f "$test_file" ] || continue
+        total_tests=$((total_tests + 1))
+        if bash "$test_file" >/dev/null 2>&1; then
+            passed_tests=$((passed_tests + 1))
+        fi
+    done
+
+    local pass_rate="0.00"
+    if [ "$total_tests" -gt 0 ]; then
+        pass_rate=$(awk -v p="$passed_tests" -v t="$total_tests" 'BEGIN { printf "%.2f", p/t }')
+    fi
+
+    local min_rate="${SAFETY_MIN_TEST_PASS_RATE:-0.80}"
+    local below_min
+    below_min=$(awk -v rate="$pass_rate" -v min="$min_rate" 'BEGIN { print (rate < min) ? "1" : "0" }')
+    if [ "$below_min" = "1" ]; then
+        log "SAFETY" "PREFLIGHT FAIL: Test pass rate $pass_rate below minimum $min_rate. Fix tests before evolving."
+        return 1
+    fi
+    log "SAFETY" "Preflight 2/5: Test pass rate $pass_rate >= $min_rate — passed"
+
+    # 3. Verify constitution exists or can be created
+    local constitution_file="$AUTOMATON_DIR/constitution.md"
+    if [ ! -f "$constitution_file" ]; then
+        log "SAFETY" "Preflight 3/5: Constitution not found — will be created during first cycle"
+    else
+        log "SAFETY" "Preflight 3/5: Constitution exists — passed"
+    fi
+
+    # 4. Verify budget is sufficient for at least one cycle
+    local budget_file="$AUTOMATON_DIR/budget.json"
+    local budget_remaining="999.00"
+    if [ -f "$budget_file" ]; then
+        budget_remaining=$(jq -r '(.limits.max_cost_usd - .used.estimated_cost_usd) * 100 | floor / 100' \
+            "$budget_file" 2>/dev/null || echo "999.00")
+    fi
+    local min_cycle_cost="1.00"
+    local budget_insufficient
+    budget_insufficient=$(awk -v rem="$budget_remaining" -v min="$min_cycle_cost" \
+        'BEGIN { print (rem < min) ? "1" : "0" }')
+    if [ "$budget_insufficient" = "1" ]; then
+        log "SAFETY" "PREFLIGHT FAIL: Insufficient budget (\$${budget_remaining} USD) for evolution cycle (minimum \$${min_cycle_cost})."
+        return 1
+    fi
+    log "SAFETY" "Preflight 4/5: Budget \$${budget_remaining} sufficient — passed"
+
+    # 5. Check no circuit breakers are tripped
+    if _safety_any_breaker_tripped; then
+        log "SAFETY" "PREFLIGHT FAIL: Circuit breaker tripped. Reset with --evolve --reset-breakers or investigate."
+        return 1
+    fi
+    log "SAFETY" "Preflight 5/5: No circuit breakers tripped — passed"
+
+    log "SAFETY" "Pre-evolution safety preflight complete — all checks passed"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
