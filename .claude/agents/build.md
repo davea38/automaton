@@ -2,6 +2,7 @@
 name: automaton-builder
 description: Implements one task from the implementation plan per iteration
 model: sonnet
+isolation: worktree
 tools:
   - Read
   - Glob
