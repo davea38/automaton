@@ -352,7 +352,7 @@ This spec connects all the foundation (garden, signals), core (quorum, metrics),
 
 #### 41.3 Evolution Loop Control
 
-- [ ] Implement `_evolve_run_cycle()` in `automaton.sh` that orchestrates the 5-phase sequence (REFLECT, IDEATE, EVALUATE, IMPLEMENT, OBSERVE), manages per-cycle budget allocation, takes pre-cycle and post-cycle metrics snapshots, creates the cycle directory, and handles phase failures (WHY: the cycle runner is the main event loop — it sequences the phases, manages resources, and ensures each cycle is atomic) <!-- test: tests/test_evolve_cycle.sh -->
+- [x] Implement `_evolve_run_cycle()` in `automaton.sh` that orchestrates the 5-phase sequence (REFLECT, IDEATE, EVALUATE, IMPLEMENT, OBSERVE), manages per-cycle budget allocation, takes pre-cycle and post-cycle metrics snapshots, creates the cycle directory, and handles phase failures (WHY: the cycle runner is the main event loop — it sequences the phases, manages resources, and ensures each cycle is atomic) <!-- test: tests/test_evolve_cycle.sh -->
 
 - [ ] Implement `_evolve_check_convergence()` in `automaton.sh` that detects convergence when `consecutive_no_improvement >= convergence_threshold` or no bloom candidates for `idle_garden_threshold` consecutive cycles (WHY: convergence detection prevents the loop from spinning indefinitely when there is nothing left to improve — it signals completion rather than wasting budget) <!-- test: tests/test_evolve_convergence.sh -->
 
