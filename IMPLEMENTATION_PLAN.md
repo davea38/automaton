@@ -178,7 +178,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 #### 42.1 Signal Data Layer
 
-- [ ] Add `stigmergy` configuration section to `automaton.config.json` with all fields (enabled, initial_strength, reinforce_increment, decay_floor, match_threshold, max_signals) (WHY: signal behavior is tunable — initial strength, decay rates, and matching sensitivity need configuration before any signals can be emitted) <!-- test: tests/test_signal_config.sh -->
+- [x] Add `stigmergy` configuration section to `automaton.config.json` with all fields (enabled, initial_strength, reinforce_increment, decay_floor, match_threshold, max_signals) (WHY: signal behavior is tunable — initial strength, decay rates, and matching sensitivity need configuration before any signals can be emitted) <!-- test: tests/test_signal_config.sh -->
 
 - [ ] Update `.gitignore` to add `.automaton/signals.json` as persistent git-tracked state (WHY: signals accumulate evidence across runs and must survive directory loss to maintain coordination history) <!-- test: none -->
 
