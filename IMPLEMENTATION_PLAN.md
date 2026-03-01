@@ -310,7 +310,7 @@ These specs add the safety constraints and governance framework that the evoluti
 
 #### 45.3 Rollback and Safety Guard
 
-- [ ] Implement `_safety_rollback()` in `automaton.sh` that switches back to the working branch, preserves the failed evolution branch for debugging, wilts the responsible idea, emits a `quality_concern` signal, logs to `self_modifications.json`, and increments circuit breaker counters (WHY: the rollback protocol is the recovery mechanism — it ensures every failure is recorded, signaled, and learned from while leaving the codebase untouched) <!-- test: tests/test_safety_rollback.sh -->
+- [x] Implement `_safety_rollback()` in `automaton.sh` that switches back to the working branch, preserves the failed evolution branch for debugging, wilts the responsible idea, emits a `quality_concern` signal, logs to `self_modifications.json`, and increments circuit breaker counters (WHY: the rollback protocol is the recovery mechanism — it ensures every failure is recorded, signaled, and learned from while leaving the codebase untouched) <!-- test: tests/test_safety_rollback.sh -->
 
 - [ ] Implement `_safety_preflight()` in `automaton.sh` that validates clean working tree, test pass rate above minimum, constitution exists or can be created, sufficient budget for at least one cycle, and no tripped circuit breakers (WHY: preflight catches problems before the first cycle starts — running evolution with a dirty tree or failing tests would produce unreliable results) <!-- test: tests/test_safety_preflight.sh -->
 
