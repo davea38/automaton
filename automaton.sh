@@ -7194,6 +7194,115 @@ _constitution_amend() {
 }
 
 # ---------------------------------------------------------------------------
+# Safety: Branch Isolation (spec-45 §1)
+# ---------------------------------------------------------------------------
+
+# Global variable tracking the working branch before evolution branch creation.
+# Set by _safety_branch_create(), used by merge/abandon to return.
+WORKING_BRANCH=""
+
+# Build the evolution branch name from cycle_id and idea_id.
+# Usage: _safety_branch_get_name "001" "42"
+# Output: automaton/evolve-001-42
+_safety_branch_get_name() {
+    local cycle_id="$1"
+    local idea_id="$2"
+    echo "automaton/evolve-${cycle_id}-${idea_id}"
+}
+
+# Create an evolution branch for the IMPLEMENT phase.
+# Saves the current branch as WORKING_BRANCH, then creates and switches to
+# a new branch named automaton/evolve-{cycle_id}-{idea_id}.
+# Returns 0 on success, 1 on failure.
+_safety_branch_create() {
+    local cycle_id="$1"
+    local idea_id="$2"
+    local branch
+    branch=$(_safety_branch_get_name "$cycle_id" "$idea_id")
+
+    # Save the current branch so merge/abandon can return to it
+    WORKING_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "master")
+
+    # Refuse to nest evolution branches
+    if _safety_branch_is_evolution; then
+        log "SAFETY" "ERROR: Already on an evolution branch ($WORKING_BRANCH). Cannot nest."
+        return 1
+    fi
+
+    if ! git checkout -b "$branch" 2>/dev/null; then
+        log "SAFETY" "ERROR: Failed to create evolution branch $branch"
+        return 1
+    fi
+
+    log "SAFETY" "Created evolution branch $branch (working branch: $WORKING_BRANCH)"
+    return 0
+}
+
+# Merge the evolution branch back into the working branch.
+# Switches to WORKING_BRANCH, merges the evolution branch, then returns.
+# Returns 0 on success, 1 on merge failure.
+_safety_branch_merge() {
+    local cycle_id="$1"
+    local idea_id="$2"
+    local branch
+    branch=$(_safety_branch_get_name "$cycle_id" "$idea_id")
+
+    if [ -z "$WORKING_BRANCH" ]; then
+        log "SAFETY" "ERROR: No WORKING_BRANCH recorded — cannot merge"
+        return 1
+    fi
+
+    # Switch back to the working branch
+    if ! git checkout "$WORKING_BRANCH" 2>/dev/null; then
+        log "SAFETY" "ERROR: Failed to switch to working branch $WORKING_BRANCH"
+        return 1
+    fi
+
+    # Merge the evolution branch (fast-forward preferred, three-way if needed)
+    if ! git merge "$branch" --no-edit 2>/dev/null; then
+        log "SAFETY" "ERROR: Merge of $branch into $WORKING_BRANCH failed — resolve manually"
+        return 1
+    fi
+
+    log "SAFETY" "Merged evolution branch $branch into $WORKING_BRANCH"
+    return 0
+}
+
+# Abandon the evolution branch without merging.
+# Switches back to WORKING_BRANCH and leaves the evolution branch intact
+# for debugging — the branch is never deleted.
+# Returns 0 on success, 1 on checkout failure.
+_safety_branch_abandon() {
+    local cycle_id="$1"
+    local idea_id="$2"
+    local branch
+    branch=$(_safety_branch_get_name "$cycle_id" "$idea_id")
+
+    if [ -z "$WORKING_BRANCH" ]; then
+        log "SAFETY" "ERROR: No WORKING_BRANCH recorded — cannot abandon"
+        return 1
+    fi
+
+    # Switch back to working branch
+    if ! git checkout "$WORKING_BRANCH" 2>/dev/null; then
+        log "SAFETY" "ERROR: Failed to switch back to $WORKING_BRANCH during abandon"
+        return 1
+    fi
+
+    # Do NOT delete the branch — preserved for debugging
+    log "SAFETY" "Abandoned evolution branch $branch (preserved for debugging)"
+    return 0
+}
+
+# Check whether the current branch is an evolution branch.
+# Returns 0 if on an evolution branch, 1 otherwise.
+_safety_branch_is_evolution() {
+    local current
+    current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    [[ "$current" =~ ^automaton/evolve- ]]
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 

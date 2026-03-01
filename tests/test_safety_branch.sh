@@ -24,7 +24,7 @@ else
 fi
 
 # --- Test 3: _safety_branch_create() does git checkout -b ---
-grep_result=$(grep -c 'git checkout -b.*automaton/evolve' "$script_file" || true)
+grep_result=$(grep -A 20 '^_safety_branch_create()' "$script_file" | grep -c 'git checkout -b' || true)
 if [ "$grep_result" -ge 1 ]; then
     echo "PASS: _safety_branch_create uses git checkout -b to create evolution branch"
     ((_TEST_PASS_COUNT++))
