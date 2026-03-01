@@ -22,8 +22,8 @@ TMPDIR_TEST=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_TEST"' EXIT
 
 setup_constitution() {
-    rm -rf "$TMPDIR_TEST"/*
-    mkdir -p "$TMPDIR_TEST"
+    # Preserve harness file during cleanup
+    rm -f "$TMPDIR_TEST/constitution.md" "$TMPDIR_TEST/constitution-history.json"
     cat > "$TMPDIR_TEST/constitution.md" << 'CONSTEOF'
 # Automaton Constitution
 ## Ratified: 2026-03-01

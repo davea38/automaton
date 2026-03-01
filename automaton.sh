@@ -7042,6 +7042,137 @@ _constitution_validate_amendment() {
     return 0
 }
 
+# Applies an approved amendment to constitution.md and records the change
+# in constitution-history.json with a full audit trail.
+#
+# Usage: _constitution_amend "VI" "modify" "description" "new_text" "vote-001" "human"
+#   article:         Article number (I, II, III, IV, V, VI, VII, VIII)
+#   amendment_type:  "modify", "remove", or "protection_change"
+#   description:     Human-readable description of the amendment
+#   new_text:        New article body text (for modify) or new protection level (for protection_change)
+#   vote_id:         ID of the quorum vote that approved this amendment
+#   proposed_by:     Who proposed: "human" or "agent"
+# Returns: 0 on success, 1 if blocked by immutable constraints
+_constitution_amend() {
+    local article="$1"
+    local amendment_type="$2"
+    local description="$3"
+    local new_text="${4:-}"
+    local vote_id="${5:-}"
+    local proposed_by="${6:-agent}"
+
+    local const_file="$AUTOMATON_DIR/constitution.md"
+    local hist_file="$AUTOMATON_DIR/constitution-history.json"
+
+    if [ ! -f "$const_file" ]; then
+        log "CONSTITUTION" "ERROR: Constitution file not found at $const_file"
+        return 1
+    fi
+
+    # Validate against immutable constraints before proceeding
+    local validate_protection=""
+    local validate_text=""
+    if [ "$amendment_type" = "protection_change" ]; then
+        validate_protection="$new_text"
+    elif [ "$amendment_type" = "modify" ]; then
+        validate_text="$new_text"
+    fi
+
+    if ! _constitution_validate_amendment "$article" "$amendment_type" "$validate_protection" "$validate_text"; then
+        return 1
+    fi
+
+    # Extract before-text for the article (everything between this article header and the next)
+    local before_text
+    before_text=$(awk -v art="### Article ${article}:" '
+        $0 ~ art { found=1; next }
+        found && /^### Article / { exit }
+        found { print }
+    ' "$const_file")
+
+    # Apply the amendment to constitution.md
+    case "$amendment_type" in
+        modify)
+            # Replace article body text (between this article header+protection line and the next article)
+            local tmpfile
+            tmpfile=$(mktemp)
+            awk -v art="### Article ${article}:" -v newtext="$new_text" '
+                $0 ~ art { print; in_article=1; next }
+                in_article && /^\*\*Protection:/ { print; in_article=2; next }
+                in_article == 2 && /^### Article / { print newtext; print ""; in_article=0; print; next }
+                in_article == 2 && /^$/ && !printed_new { next }
+                in_article == 2 { next }
+                { print }
+                END { if (in_article == 2) print newtext }
+            ' "$const_file" > "$tmpfile"
+            mv "$tmpfile" "$const_file"
+            ;;
+        protection_change)
+            # Update the **Protection: level** line for the article
+            local tmpfile
+            tmpfile=$(mktemp)
+            awk -v art="### Article ${article}:" -v newprot="$new_text" '
+                $0 ~ art { print; in_article=1; next }
+                in_article && /^\*\*Protection:/ { print "**Protection: " newprot "**"; in_article=0; next }
+                { print }
+            ' "$const_file" > "$tmpfile"
+            mv "$tmpfile" "$const_file"
+            ;;
+        remove)
+            # Remove the entire article section
+            local tmpfile
+            tmpfile=$(mktemp)
+            awk -v art="### Article ${article}:" '
+                $0 ~ art { skip=1; next }
+                skip && /^### Article / { skip=0; print; next }
+                skip { next }
+                { print }
+            ' "$const_file" > "$tmpfile"
+            mv "$tmpfile" "$const_file"
+            ;;
+    esac
+
+    # Initialize history file if missing
+    if [ ! -f "$hist_file" ]; then
+        jq -n '{version: 1, amendments: [], current_version: 1}' > "$hist_file"
+    fi
+
+    # Compute amendment_id from current amendment count
+    local amendment_count
+    amendment_count=$(jq '.amendments | length' "$hist_file")
+    local amendment_id
+    amendment_id=$(printf "amend-%03d" $((amendment_count + 1)))
+
+    local approved_at
+    approved_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Record in history
+    local after_text="$new_text"
+    jq --arg aid "$amendment_id" \
+       --arg art "$article" \
+       --arg atype "$amendment_type" \
+       --arg desc "$description" \
+       --arg before "$before_text" \
+       --arg after "$after_text" \
+       --arg vid "$vote_id" \
+       --arg pby "$proposed_by" \
+       --arg aat "$approved_at" \
+       '.amendments += [{
+           amendment_id: $aid,
+           article: $art,
+           type: $atype,
+           description: $desc,
+           before_text: $before,
+           after_text: $after,
+           vote_id: $vid,
+           proposed_by: $pby,
+           approved_at: $aat
+       }] | .current_version += 1' "$hist_file" > "${hist_file}.tmp"
+    mv "${hist_file}.tmp" "$hist_file"
+
+    log "CONSTITUTION" "Amendment $amendment_id applied to Article $article ($amendment_type)"
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
