@@ -871,6 +871,131 @@ _check_daily_budget_pacing() {
     fi
 }
 
+# Displays weekly allowance budget status without starting a run (spec-35).
+# Shows: week dates, allowance, used, remaining, reserve, available,
+# days left, daily pace, and recommended run budget.
+# In API mode, shows API budget info instead.
+# Called by --budget-check CLI command.
+display_budget_check() {
+    local budget_file="$AUTOMATON_DIR/budget.json"
+
+    if [ "$BUDGET_MODE" = "allowance" ]; then
+        # Calculate week boundaries
+        local week_start week_end
+        if [ -f "$budget_file" ] && [ "$(jq -r '.mode // ""' "$budget_file")" = "allowance" ]; then
+            week_start=$(jq -r '.week_start // ""' "$budget_file")
+            week_end=$(jq -r '.week_end // ""' "$budget_file")
+        fi
+        if [ -z "${week_start:-}" ]; then
+            week_start=$(_allowance_week_start)
+        fi
+        if [ -z "${week_end:-}" ]; then
+            week_end=$(_allowance_week_end "$week_start")
+        fi
+
+        # Format dates for display (e.g., "Feb 24" / "Mar 02")
+        local ws_display we_display
+        ws_display=$(date -d "$week_start" "+%b %d" 2>/dev/null || \
+            date -jf "%Y-%m-%d" "$week_start" "+%b %d" 2>/dev/null || echo "$week_start")
+        we_display=$(date -d "$week_end" "+%b %d, %Y" 2>/dev/null || \
+            date -jf "%Y-%m-%d" "$week_end" "+%b %d, %Y" 2>/dev/null || echo "$week_end")
+
+        # Get usage data
+        local weekly_allowance used_tokens remaining effective_allowance reserve_pct
+        weekly_allowance="$BUDGET_WEEKLY_ALLOWANCE"
+        reserve_pct="$BUDGET_RESERVE_PERCENTAGE"
+
+        if [ -f "$budget_file" ] && [ "$(jq -r '.mode // ""' "$budget_file")" = "allowance" ]; then
+            used_tokens=$(jq '.tokens_used_this_week // 0' "$budget_file")
+            remaining=$(jq '.tokens_remaining // 0' "$budget_file")
+            effective_allowance=$(jq '.limits.effective_allowance // 0' "$budget_file")
+        else
+            used_tokens=0
+            effective_allowance=$(awk -v total="$weekly_allowance" -v reserve="$reserve_pct" \
+                'BEGIN { printf "%d", total * (1 - reserve/100) }')
+            remaining="$effective_allowance"
+        fi
+
+        # Calculate reserve tokens and available (remaining after reserve)
+        local reserve_tokens
+        reserve_tokens=$(awk -v total="$weekly_allowance" -v reserve="$reserve_pct" \
+            'BEGIN { printf "%d", total * reserve / 100 }')
+
+        # Calculate days left
+        local today today_epoch end_epoch days_left
+        today=$(date +%Y-%m-%d)
+        today_epoch=$(date -d "$today" +%s 2>/dev/null || date -jf "%Y-%m-%d" "$today" +%s 2>/dev/null || echo 0)
+        end_epoch=$(date -d "$week_end" +%s 2>/dev/null || date -jf "%Y-%m-%d" "$week_end" +%s 2>/dev/null || echo 0)
+        if [ "$today_epoch" -gt 0 ] && [ "$end_epoch" -gt 0 ]; then
+            days_left=$(( (end_epoch - today_epoch) / 86400 + 1 ))
+        else
+            days_left=1
+        fi
+        [ "$days_left" -lt 1 ] && days_left=1
+
+        # Calculate daily pace and recommended run budget
+        local daily_pace recommended_run
+        daily_pace=$(awk -v rem="$remaining" -v days="$days_left" \
+            'BEGIN { printf "%d", rem / days }')
+        # Recommended = min(daily_pace, remaining * 0.5)
+        local half_remaining
+        half_remaining=$(awk -v rem="$remaining" 'BEGIN { printf "%d", rem * 0.5 }')
+        if [ "$daily_pace" -lt "$half_remaining" ]; then
+            recommended_run="$daily_pace"
+        else
+            recommended_run="$half_remaining"
+        fi
+
+        # Calculate usage percentage
+        local used_pct
+        used_pct=$(awk -v used="$used_tokens" -v total="$weekly_allowance" \
+            'BEGIN { if (total > 0) printf "%.1f", used * 100 / total; else printf "0.0" }')
+
+        # Format numbers with commas using printf
+        _fmt_num() { printf "%'d" "$1" 2>/dev/null || echo "$1"; }
+
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo " Automaton Weekly Budget Status"
+        echo " Week:       $ws_display — $we_display"
+        printf " Allowance:  %s tokens\n" "$(_fmt_num "$weekly_allowance")"
+        printf " Used:       %s tokens (%s%%)\n" "$(_fmt_num "$used_tokens")" "$used_pct"
+        printf " Remaining:  %s tokens\n" "$(_fmt_num "$remaining")"
+        printf " Reserve:    %s tokens (%s%%)\n" "$(_fmt_num "$reserve_tokens")" "$reserve_pct"
+        printf " Available:  %s tokens\n" "$(_fmt_num "$remaining")"
+        echo " Days left:  $days_left"
+        printf " Daily pace: %s tokens/day\n" "$(_fmt_num "$daily_pace")"
+        printf " Recommended run budget: %s tokens\n" "$(_fmt_num "$recommended_run")"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+    else
+        # API mode: show API budget summary
+        local total_used total_cost
+        if [ -f "$budget_file" ]; then
+            total_used=$(jq '(.used.total_input // 0) + (.used.total_output // 0)' "$budget_file")
+            total_cost=$(jq '.used.estimated_cost_usd // 0' "$budget_file")
+        else
+            total_used=0
+            total_cost=0
+        fi
+
+        _fmt_num() { printf "%'d" "$1" 2>/dev/null || echo "$1"; }
+
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo " Automaton API Budget Status"
+        echo " Mode:       api (pay-per-token)"
+        printf " Max tokens: %s\n" "$(_fmt_num "$BUDGET_MAX_TOKENS")"
+        printf " Max cost:   \$%s\n" "$BUDGET_MAX_USD"
+        printf " Used:       %s tokens\n" "$(_fmt_num "$total_used")"
+        printf " Cost:       \$%s\n" "$total_cost"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+    fi
+
+    exit 0
+}
+
 # Extracts token usage from Claude CLI stream-json output.
 # Parses the final "type":"result" line for input, output, cache_create, cache_read.
 # Sets global variables: LAST_INPUT_TOKENS, LAST_OUTPUT_TOKENS,
@@ -3422,6 +3547,7 @@ ARG_DRY_RUN=false
 ARG_SELF=false
 ARG_CONTINUE=false
 ARG_STATS=false
+ARG_BUDGET_CHECK=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -3465,6 +3591,10 @@ while [ $# -gt 0 ]; do
             ARG_STATS=true
             shift
             ;;
+        --budget-check)
+            ARG_BUDGET_CHECK=true
+            shift
+            ;;
         --help|-h)
             cat <<'USAGE'
 Usage: automaton.sh [OPTIONS]
@@ -3480,6 +3610,7 @@ Options:
   --self            Self-build mode: improve automaton itself (spec-25)
   --self --continue Auto-pick highest-priority backlog item and run (spec-26)
   --stats           Display run history and performance trends (spec-26)
+  --budget-check    Show weekly allowance status without starting a run (spec-35)
   --help, -h        Show this help message
 
 Exit codes:
@@ -6392,6 +6523,11 @@ run_orchestration() {
     log "ORCHESTRATOR" "Run complete."
     exit 0
 }
+
+# --- Budget check mode (spec-35) ---
+if [ "$ARG_BUDGET_CHECK" = "true" ]; then
+    display_budget_check
+fi
 
 # --- Stats mode (spec-26) ---
 if [ "$ARG_STATS" = "true" ]; then
