@@ -126,7 +126,7 @@ Skills extract reusable workflow patterns from prompts, reducing prompt size by 
 - [x] Create `.claude/skills/validation-suite.md` with project-type detection (package.json, Makefile, automaton.sh) and structured pass/fail output (WHY: inline validation instructions differ between build and review prompts; a unified skill ensures the same checks run everywhere)
 - [x] Create `.claude/skills/context-loader.md` to load and assemble context from AGENTS.md, IMPLEMENTATION_PLAN.md, and recent git history (WHY: "Phase 0: Load Context" is duplicated across all four phase prompts at ~25 lines each; one skill replaces ~100 lines of prose)
 - [x] Create `.claude/skills/plan-updater.md` for updating IMPLEMENTATION_PLAN.md task checkboxes and adding new tasks (WHY: plan update instructions are embedded in the build prompt; extracting to a skill makes the pattern reusable by the review agent for adding fix tasks)
-- [ ] Create `.claude/skills/self-analysis.md` for analyzing automaton.sh in self-build mode (function index, modification targets, dependencies) (WHY: self-build codebase analysis from spec-24 is a recurring pattern that benefits from skill encapsulation and versioning)
+- [x] Create `.claude/skills/self-analysis.md` for analyzing automaton.sh in self-build mode (function index, modification targets, dependencies) (WHY: self-build codebase analysis from spec-24 is a recurring pattern that benefits from skill encapsulation and versioning)
 - [ ] Add `skills` field references to agent definitions (spec-27) and replace Phase 0 instructions in all `PROMPT_*.md` with skill references (WHY: prompt size reduction of ~160 lines frees context window capacity for actual work)
 
 ### Spec 37 — Session Bootstrap (depends on specs 33, 29, 34)
