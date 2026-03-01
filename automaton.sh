@@ -8224,6 +8224,8 @@ ARG_CONTINUE=false
 ARG_STATS=false
 ARG_BUDGET_CHECK=false
 ARG_HEALTH=false
+ARG_EVOLVE=false
+ARG_CYCLES=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -8275,6 +8277,19 @@ while [ $# -gt 0 ]; do
             ARG_HEALTH=true
             shift
             ;;
+        --evolve)
+            ARG_EVOLVE=true
+            ARG_SELF=true
+            shift
+            ;;
+        --cycles)
+            if [ -z "${2:-}" ] || ! [[ "${2:-}" =~ ^[0-9]+$ ]]; then
+                echo "Error: --cycles requires a positive integer argument." >&2
+                exit 1
+            fi
+            ARG_CYCLES="$2"
+            shift 2
+            ;;
         --help|-h)
             cat <<'USAGE'
 Usage: automaton.sh [OPTIONS]
@@ -8292,6 +8307,8 @@ Options:
   --stats           Display run history and performance trends (spec-26)
   --budget-check    Show weekly allowance status without starting a run (spec-35)
   --health          Show system health dashboard and exit (spec-43)
+  --evolve          Run autonomous evolution loop (implies --self) (spec-41)
+  --cycles N        Limit evolution to N cycles (use with --evolve) (spec-41)
   --help, -h        Show this help message
 
 Exit codes:
@@ -11887,6 +11904,14 @@ fi
 if [ "$ARG_HEALTH" = "true" ]; then
     _metrics_display_health
     exit 0
+fi
+
+# --- Evolution mode (spec-41) ---
+if [ "$ARG_EVOLVE" = "true" ]; then
+    log "ORCHESTRATOR" "Evolution mode activated (--evolve implies --self)"
+    if [ "$ARG_CYCLES" -gt 0 ]; then
+        log "ORCHESTRATOR" "Evolution limited to $ARG_CYCLES cycles"
+    fi
 fi
 
 # --- Stats mode (spec-26) ---

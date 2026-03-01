@@ -332,7 +332,7 @@ This spec connects all the foundation (garden, signals), core (quorum, metrics),
 
 #### 41.1 CLI and Configuration
 
-- [ ] Add `--evolve` and `--cycles N` CLI flag parsing to `automaton.sh` argument parser, setting `ARG_EVOLVE=true` and `ARG_CYCLES=N`, with `--evolve` implying `--self` mode (WHY: `--evolve` is the entry point to autonomous evolution — it activates all evolution subsystems and sets self-build mode which is required for code modification) <!-- test: tests/test_evolve_cli.sh -->
+- [x] Add `--evolve` and `--cycles N` CLI flag parsing to `automaton.sh` argument parser, setting `ARG_EVOLVE=true` and `ARG_CYCLES=N`, with `--evolve` implying `--self` mode (WHY: `--evolve` is the entry point to autonomous evolution — it activates all evolution subsystems and sets self-build mode which is required for code modification) <!-- test: tests/test_evolve_cli.sh -->
 
 - [ ] Add `evolution` configuration section to `automaton.config.json` with all fields (enabled, max_cycles, max_cost_per_cycle_usd, convergence_threshold, idle_garden_threshold, branch_prefix, auto_merge, reflect_model, ideate_model, observe_model) (WHY: cycle budget, convergence detection, and model selection need configuration before the loop starts) <!-- test: tests/test_evolve_config.sh -->
 
