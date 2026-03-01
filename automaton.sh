@@ -212,6 +212,40 @@ _apply_rate_limit_preset() {
     # api_default: values already loaded from config/defaults — nothing to override
 }
 
+# Applies higher parallel defaults when in allowance mode (spec-35).
+# Max Plan subscribers have no per-token cost, so more parallelism is free.
+# Only overrides values that the user has NOT explicitly set in their config.
+# Defaults applied: max_builders=5, stagger_seconds=5, research iterations=5.
+_apply_allowance_parallel_defaults() {
+    if [ "$BUDGET_MODE" != "allowance" ]; then
+        return 0
+    fi
+
+    # Upgrade API-default values to Max Plan defaults.
+    # Only override when the current value matches the API default,
+    # meaning the user hasn't explicitly customized it.
+    local changed=""
+
+    if [ "$MAX_BUILDERS" -eq 3 ]; then
+        MAX_BUILDERS=5
+        changed="${changed}max_builders=5 "
+    fi
+
+    if [ "$PARALLEL_STAGGER_SECONDS" -eq 15 ]; then
+        PARALLEL_STAGGER_SECONDS=5
+        changed="${changed}stagger=5s "
+    fi
+
+    if [ "$EXEC_MAX_ITER_RESEARCH" -eq 3 ]; then
+        EXEC_MAX_ITER_RESEARCH=5
+        changed="${changed}research_iters=5 "
+    fi
+
+    if [ -n "$changed" ]; then
+        log "ORCHESTRATOR" "Allowance mode: parallel defaults applied (${changed% })"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -3679,6 +3713,10 @@ fi
 # --- Apply rate limit preset (spec-35) ---
 # Must run after load_config and CLI overrides since both can change BUDGET_MODE.
 _apply_rate_limit_preset
+
+# --- Apply higher parallel defaults for allowance mode (spec-35) ---
+# Must run after load_config and CLI overrides since both can change BUDGET_MODE.
+_apply_allowance_parallel_defaults
 
 # --- Check parallel-mode dependencies (tmux, git worktree support) ---
 # When parallel.enabled is true, tmux and git 2.5+ are required.
