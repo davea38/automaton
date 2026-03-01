@@ -57,6 +57,14 @@
         "timeout": 60,
         "statusMessage": "Running quality gate..."
       }
+    ],
+    "TeammateIdle": [
+      {
+        "type": "command",
+        "command": ".claude/hooks/teammate-idle.sh",
+        "timeout": 5,
+        "statusMessage": "Checking for unclaimed tasks..."
+      }
     ]
   }
 }
