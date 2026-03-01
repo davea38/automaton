@@ -82,11 +82,13 @@ load_config() {
 
         # -- parallel --
         PARALLEL_ENABLED=$(jq -r '.parallel.enabled // false' "$config_file")
+        PARALLEL_MODE=$(jq -r '.parallel.mode // "automaton"' "$config_file")
         MAX_BUILDERS=$(jq -r '.parallel.max_builders // 3' "$config_file")
         TMUX_SESSION_NAME=$(jq -r '.parallel.tmux_session_name // "automaton"' "$config_file")
         PARALLEL_STAGGER_SECONDS=$(jq -r '.parallel.stagger_seconds // 15' "$config_file")
         WAVE_TIMEOUT_SECONDS=$(jq -r '.parallel.wave_timeout_seconds // 600' "$config_file")
         PARALLEL_DASHBOARD=$(jq -r '.parallel.dashboard // true' "$config_file")
+        PARALLEL_TEAMMATE_DISPLAY=$(jq -r '.parallel.teammate_display // "in-process"' "$config_file")
 
         # -- budget mode (spec-23) --
         BUDGET_MODE=$(jq -r '.budget.mode // "api"' "$config_file")
@@ -4689,40 +4691,53 @@ _apply_rate_limit_preset
 _apply_allowance_parallel_defaults
 
 # --- Check parallel-mode dependencies (tmux, git worktree support) ---
-# When parallel.enabled is true, tmux and git 2.5+ are required.
-# Check after load_config so PARALLEL_ENABLED is resolved.
+# When parallel.enabled is true and mode is "automaton", tmux and git 2.5+ are required.
+# When mode is "agent-teams", only CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS is required.
+# Check after load_config so PARALLEL_ENABLED and PARALLEL_MODE are resolved.
 if [ "$PARALLEL_ENABLED" = "true" ]; then
-    _par_dep_missing=false
+    if [ "${PARALLEL_MODE:-automaton}" = "automaton" ]; then
+        _par_dep_missing=false
 
-    # tmux is required for multi-window builder management
-    if ! command -v tmux >/dev/null 2>&1; then
-        echo "Error: 'tmux' is required for parallel mode but not installed." >&2
-        echo "  Install: sudo apt install tmux  (Debian/Ubuntu)" >&2
-        echo "           brew install tmux      (macOS)" >&2
-        echo "" >&2
-        _par_dep_missing=true
-    fi
-
-    # git worktree requires git 2.5+; each builder needs an isolated worktree
-    _git_version=$(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
-    if [ -n "$_git_version" ]; then
-        _git_major="${_git_version%%.*}"
-        _git_minor="${_git_version#*.}"
-        if [ "$_git_major" -lt 2 ] || { [ "$_git_major" -eq 2 ] && [ "$_git_minor" -lt 5 ]; }; then
-            echo "Error: parallel mode requires git 2.5+ for worktree support (found git ${_git_version})." >&2
-            echo "  Upgrade: sudo apt install git  (Debian/Ubuntu)" >&2
-            echo "           brew install git      (macOS)" >&2
+        # tmux is required for multi-window builder management
+        if ! command -v tmux >/dev/null 2>&1; then
+            echo "Error: 'tmux' is required for parallel mode but not installed." >&2
+            echo "  Install: sudo apt install tmux  (Debian/Ubuntu)" >&2
+            echo "           brew install tmux      (macOS)" >&2
             echo "" >&2
             _par_dep_missing=true
         fi
-    else
-        echo "Error: could not determine git version." >&2
-        _par_dep_missing=true
-    fi
 
-    if [ "$_par_dep_missing" = "true" ]; then
-        echo "Parallel mode (parallel.enabled=true) requires tmux and git 2.5+. Install missing dependencies and retry." >&2
-        echo "Alternatively, set parallel.enabled to false in your config to use single-builder mode." >&2
+        # git worktree requires git 2.5+; each builder needs an isolated worktree
+        _git_version=$(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        if [ -n "$_git_version" ]; then
+            _git_major="${_git_version%%.*}"
+            _git_minor="${_git_version#*.}"
+            if [ "$_git_major" -lt 2 ] || { [ "$_git_major" -eq 2 ] && [ "$_git_minor" -lt 5 ]; }; then
+                echo "Error: parallel mode requires git 2.5+ for worktree support (found git ${_git_version})." >&2
+                echo "  Upgrade: sudo apt install git  (Debian/Ubuntu)" >&2
+                echo "           brew install git      (macOS)" >&2
+                echo "" >&2
+                _par_dep_missing=true
+            fi
+        else
+            echo "Error: could not determine git version." >&2
+            _par_dep_missing=true
+        fi
+
+        if [ "$_par_dep_missing" = "true" ]; then
+            echo "Parallel mode (parallel.enabled=true) requires tmux and git 2.5+. Install missing dependencies and retry." >&2
+            echo "Alternatively, set parallel.enabled to false in your config to use single-builder mode." >&2
+            exit 1
+        fi
+    elif [ "${PARALLEL_MODE:-automaton}" = "agent-teams" ]; then
+        # Agent Teams mode requires the experimental feature flag (spec-28)
+        export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+        log "ORCHESTRATOR" "Agent Teams mode enabled (parallel.mode=agent-teams, display=${PARALLEL_TEAMMATE_DISPLAY:-in-process})"
+    elif [ "${PARALLEL_MODE:-automaton}" = "hybrid" ]; then
+        echo "Error: parallel.mode 'hybrid' is reserved for future use and not yet implemented." >&2
+        exit 1
+    else
+        echo "Error: unknown parallel.mode '${PARALLEL_MODE}'. Valid values: automaton, agent-teams, hybrid" >&2
         exit 1
     fi
 fi
@@ -6855,6 +6870,41 @@ handle_wave_errors() {
     fi
 }
 
+# Agent Teams build phase (spec-28). Uses the Claude Code Agent Teams API
+# instead of tmux + worktree wave orchestration. Teammates self-claim tasks
+# from a shared task list populated from IMPLEMENTATION_PLAN.md.
+#
+# WHY: Agent Teams provides native parallel execution with self-claiming,
+# inter-agent messaging, and lifecycle hooks — replacing bash-orchestrated
+# tmux windows and manual worktree management.
+#
+# Returns: 0 on completion, non-zero on failure
+run_agent_teams_build() {
+    log "ORCHESTRATOR" "Starting Agent Teams build (mode=agent-teams, builders=${MAX_BUILDERS}, display=${PARALLEL_TEAMMATE_DISPLAY:-in-process})"
+
+    # Ensure the experimental flag is set
+    export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+
+    # Task list population, teammate spawning, and budget tracking
+    # are implemented in subsequent spec-28 tasks.
+    log "ORCHESTRATOR" "Agent Teams mode: task list population, teammate spawning pending implementation"
+
+    # Fall back to single-builder until full Agent Teams integration is complete
+    log "ORCHESTRATOR" "Agent Teams fallback: running single-builder iterations"
+    while true; do
+        if ! run_single_builder_iteration; then
+            break
+        fi
+        # Check if build phase should end (all tasks done)
+        local unchecked
+        unchecked=$(grep -c '^\- \[ \]' "${PLAN_FILE:-IMPLEMENTATION_PLAN.md}" 2>/dev/null || echo 0)
+        if [ "$unchecked" -eq 0 ]; then
+            log "ORCHESTRATOR" "All tasks complete"
+            break
+        fi
+    done
+}
+
 # Implements the 10-step wave dispatch loop for parallel builds.
 # Replaces the v1 single-builder iteration loop during the build phase when
 # PARALLEL_ENABLED=true. Orchestrates: task selection → assignment → budget
@@ -7439,12 +7489,17 @@ run_orchestration() {
 
         log "ORCHESTRATOR" "Phase: $current_phase (max: $([ "$max_iter" -eq 0 ] && echo 'unlimited' || echo "$max_iter"))"
 
-        # === Build phase: parallel vs single-builder (spec-14, spec-15) ===
-        # When parallel.enabled is true and the current phase is build, use the
-        # wave-based conductor loop instead of the v1 single-builder iteration loop.
-        # When parallel.enabled is false, behavior is identical to v1.
+        # === Build phase: parallel vs single-builder (spec-14, spec-15, spec-28) ===
+        # When parallel.enabled is true:
+        #   - mode "automaton": wave-based conductor loop (tmux + worktrees)
+        #   - mode "agent-teams": Agent Teams API (shared task list, self-claiming)
+        # When parallel.enabled is false, behavior is identical to v1 single-builder.
         if [ "$current_phase" = "build" ] && [ "$PARALLEL_ENABLED" = "true" ]; then
-            run_parallel_build
+            if [ "${PARALLEL_MODE:-automaton}" = "agent-teams" ]; then
+                run_agent_teams_build
+            else
+                run_parallel_build
+            fi
         else
 
         # === Inner iteration loop (v1 single-builder) ===

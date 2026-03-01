@@ -3,7 +3,7 @@
 # Verifies that the parallel.mode config field is loaded from automaton.config.json
 # and that the parallel dependency check respects the mode value.
 
-set -euo pipefail
+set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
