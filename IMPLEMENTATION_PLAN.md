@@ -358,7 +358,7 @@ This spec connects all the foundation (garden, signals), core (quorum, metrics),
 
 - [x] Implement `_evolve_check_budget()` in `automaton.sh` that calculates per-cycle budget as `min(max_cost_per_cycle_usd, remaining_allowance / estimated_remaining_cycles)` and enforces the budget ceiling breaker when exceeded (WHY: per-cycle budget prevents a single expensive cycle from consuming the entire evolution budget — it ensures the system can run multiple improvement cycles rather than exhausting resources on one) <!-- test: tests/test_evolve_budget.sh -->
 
-- [ ] Implement resume support: `--evolve --resume` reads the last cycle directory, determines which phase was interrupted, and resumes from that phase (WHY: evolution runs can take hours and may be interrupted by network issues, budget exhaustion, or human intervention — resume prevents losing progress) <!-- test: tests/test_evolve_resume.sh -->
+- [x] Implement resume support: `--evolve --resume` reads the last cycle directory, determines which phase was interrupted, and resumes from that phase (WHY: evolution runs can take hours and may be interrupted by network issues, budget exhaustion, or human intervention — resume prevents losing progress) <!-- test: tests/test_evolve_resume.sh -->
 
 #### 41.4 Evolution Agents and Prompts
 
