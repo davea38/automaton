@@ -6381,6 +6381,91 @@ _metrics_analyze_trends() {
     ' "$metrics_file"
 }
 
+# Compares two snapshots (pre-cycle and post-cycle) and computes per-metric
+# deltas with direction indicators. Used by the OBSERVE phase to determine
+# whether a cycle's implementation improved, degraded, or had no effect.
+#
+# Usage: result=$(_metrics_compare "$pre_snapshot" "$post_snapshot")
+# Both arguments are JSON snapshot objects (not cycle IDs).
+# Returns: JSON object with "deltas" array and "summary" counts.
+_metrics_compare() {
+    if [ "${METRICS_ENABLED:-true}" != "true" ]; then
+        echo '{"deltas":[],"summary":{"improved":0,"degraded":0,"unchanged":0}}'
+        return 0
+    fi
+
+    local pre_snapshot="${1:?_metrics_compare requires pre_snapshot}"
+    local post_snapshot="${2:?_metrics_compare requires post_snapshot}"
+
+    jq -n --argjson pre "$pre_snapshot" --argjson post "$post_snapshot" '
+        # Metrics config: [category, metric_name, higher_is_better]
+        def tracked_metrics: [
+            ["capability", "total_lines", true],
+            ["capability", "total_functions", true],
+            ["capability", "total_specs", true],
+            ["capability", "total_tests", true],
+            ["capability", "test_assertions", true],
+            ["capability", "cli_flags", true],
+            ["efficiency", "tokens_per_task", false],
+            ["efficiency", "tokens_per_iteration", false],
+            ["efficiency", "cache_hit_ratio", true],
+            ["efficiency", "stall_rate", false],
+            ["quality", "test_pass_rate", true],
+            ["quality", "first_pass_success_rate", true],
+            ["quality", "rollback_count", false],
+            ["quality", "review_rework_rate", false],
+            ["innovation", "garden_seeds", true],
+            ["innovation", "garden_sprouts", true],
+            ["innovation", "garden_blooms", true],
+            ["innovation", "garden_harvested", true],
+            ["innovation", "active_signals", true],
+            ["health", "budget_utilization", false],
+            ["health", "error_rate", false]
+        ];
+
+        [tracked_metrics[] | . as [$cat, $metric, $higher_better] |
+            ($pre[$cat][$metric] // 0) as $before |
+            ($post[$cat][$metric] // 0) as $after |
+            ($after - $before) as $delta |
+
+            # Percentage change (avoid division by zero)
+            (if $before == 0 then
+                (if $after == 0 then 0 else 100 end)
+            else
+                (($delta / $before) * 100 | round)
+            end) as $pct |
+
+            # Direction: did this metric improve, degrade, or stay unchanged?
+            (if $delta == 0 then
+                "unchanged"
+            elif ($higher_better and $delta > 0) or ($higher_better | not and $delta < 0) then
+                "improved"
+            else
+                "degraded"
+            end) as $direction |
+
+            {
+                category: $cat,
+                metric: $metric,
+                before: $before,
+                after: $after,
+                delta: $delta,
+                percent_change: $pct,
+                direction: $direction
+            }
+        ] as $deltas |
+
+        {
+            deltas: $deltas,
+            summary: {
+                improved: ([$deltas[] | select(.direction == "improved")] | length),
+                degraded: ([$deltas[] | select(.direction == "degraded")] | length),
+                unchanged: ([$deltas[] | select(.direction == "unchanged")] | length)
+            }
+        }
+    '
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------

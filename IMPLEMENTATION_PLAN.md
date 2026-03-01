@@ -252,7 +252,7 @@ These specs build on the garden and signals to add collective decision-making an
 
 - [x] Implement `_metrics_analyze_trends()` in `automaton.sh` that examines the last N snapshots (configurable trend_window) and for each metric computes direction (improving/degrading/stable), rate of change, and alert status when degrading for `degradation_alert_threshold` consecutive cycles (WHY: trend analysis drives the REFLECT phase — degrading trends trigger signal emission and idea auto-seeding, which is how the system identifies what to fix next) <!-- test: tests/test_metrics_trends.sh -->
 
-- [ ] Implement `_metrics_compare()` in `automaton.sh` that takes two snapshots (pre-cycle and post-cycle) and computes per-metric deltas with direction indicators (WHY: before/after comparison is how the OBSERVE phase determines whether an implementation helped, hurt, or had no effect — this is the feedback loop that validates evolution decisions) <!-- test: tests/test_metrics_compare.sh -->
+- [x] Implement `_metrics_compare()` in `automaton.sh` that takes two snapshots (pre-cycle and post-cycle) and computes per-metric deltas with direction indicators (WHY: before/after comparison is how the OBSERVE phase determines whether an implementation helped, hurt, or had no effect — this is the feedback loop that validates evolution decisions) <!-- test: tests/test_metrics_compare.sh -->
 
 #### 43.3 Metrics Display and Integration
 

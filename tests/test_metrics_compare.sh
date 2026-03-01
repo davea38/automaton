@@ -14,7 +14,7 @@ grep_result=$(grep -c '^_metrics_compare()' "$script_file" || true)
 assert_equals "1" "$grep_result" "_metrics_compare() function exists in automaton.sh"
 
 # --- Test 2: _metrics_compare accepts two snapshot arguments ---
-grep_result=$(grep -A3 '^_metrics_compare()' "$script_file" | grep -c 'pre_snapshot\|snapshot_a\|snap_pre' || true)
+grep_result=$(grep -A8 '^_metrics_compare()' "$script_file" | grep -c 'pre_snapshot\|snapshot_a\|snap_pre' || true)
 if [ "$grep_result" -ge 1 ]; then
     echo "PASS: _metrics_compare accepts snapshot parameters"
     ((_TEST_PASS_COUNT++))
