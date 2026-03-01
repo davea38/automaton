@@ -3858,13 +3858,14 @@ collect_results() {
 
 # Generates .automaton/wave/builder-wrapper.sh before each wave.
 # The wrapper is the executable that runs in each tmux builder window.
-# It reads its assignment from assignments.json, generates a task-specific
-# prompt header prepended to PROMPT_build.md, runs claude -p, extracts tokens
-# from stream-json output, determines status (success/error/rate_limited/partial),
-# captures git commit and files_changed, calculates duration, and writes a result
-# JSON to .automaton/wave/results/builder-N.json.
-# WHY: The builder wrapper must be generated fresh each wave because assignments
-# change and config values are baked in at generation time.
+# It reads its assignment from assignments.json, injects builder-specific
+# data (builder number, wave, task, file ownership) into the <dynamic_context>
+# section of PROMPT_build.md, runs claude -p, extracts tokens from stream-json
+# output, determines status (success/error/rate_limited/partial), captures git
+# commit and files_changed, calculates duration, and writes a result JSON to
+# .automaton/wave/results/builder-N.json.
+# WHY: Builder-specific data goes into <dynamic_context> so all builders share
+# an identical static prompt prefix, enabling prompt cache reuse across builders.
 generate_builder_wrapper() {
     local wrapper="$AUTOMATON_DIR/wave/builder-wrapper.sh"
 
@@ -3906,37 +3907,35 @@ task=$(echo "$assignment" | jq -r '.task')
 task_line=$(echo "$assignment" | jq -r '.task_line')
 files_owned=$(echo "$assignment" | jq -r '.files_owned | join(", ")')
 
-# ---- Generate task-specific prompt header (spec-17) ----
-HEADER=$(cat <<PROMPT_HEADER
-# Builder $BUILDER_NUM — Wave $WAVE_NUM
+# ---- Inject builder-specific data into <dynamic_context> (spec-30) ----
+# All builders share an identical static prompt prefix (everything before
+# <dynamic_context>) so the cache entry created by builder-1 is reused by
+# builders 2..N, saving 90% on input tokens for subsequent builders.
+PROMPT_FILE=$(mktemp)
+BUILD_PROMPT="$PROJECT_ROOT/PROMPT_build.md"
 
-## Your Assignment
-You are builder $BUILDER_NUM in a parallel build wave. You have ONE task:
+# Static prefix: everything up to and including <dynamic_context>
+sed -n '1,/<dynamic_context>/p' "$BUILD_PROMPT" > "$PROMPT_FILE"
 
-**Task:** $task
+# Builder-specific dynamic content
+cat >> "$PROMPT_FILE" <<DYNAMIC_INJECT
+## Builder Assignment
+
+- Builder: $BUILDER_NUM of wave $WAVE_NUM
+- Task: $task
+- Task line in plan: $task_line
 
 ## File Ownership
+
 You may ONLY create or modify these files (and their test files):
 $files_owned
 
 Do NOT modify any other files. If your task requires changes to files outside your ownership, note this in your commit message with the prefix "NEEDS:" and complete what you can.
 
-## Rules
-- Complete this ONE task fully. No placeholders, no TODOs, no stubs.
-- Only modify files in your ownership list.
-- Run tests for the files you changed.
-- Mark the task as [x] in IMPLEMENTATION_PLAN.md.
-- Commit all changes with a descriptive message.
-- Output <promise>COMPLETE</promise> when done.
+DYNAMIC_INJECT
 
----
-PROMPT_HEADER
-)
-
-# ---- Prepend header to the standard build prompt ----
-PROMPT_FILE=$(mktemp)
-echo "$HEADER" > "$PROMPT_FILE"
-cat "$PROJECT_ROOT/PROMPT_build.md" >> "$PROMPT_FILE"
+# Suffix: </dynamic_context> and everything after
+sed -n '/<\/dynamic_context>/,$p' "$BUILD_PROMPT" >> "$PROMPT_FILE"
 
 # ---- Record start time ----
 started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -3973,7 +3972,7 @@ if [ "$exit_code" -ne 0 ]; then
     else
         status="error"
     fi
-elif ! echo "$AGENT_RESULT" | grep -q '<promise>COMPLETE</promise>'; then
+elif ! echo "$AGENT_RESULT" | grep -q '<result status="complete">'; then
     status="partial"
 fi
 
@@ -4010,7 +4009,7 @@ cat > "$RESULT_FILE" << RESULT_EOF
   "estimated_cost": $estimated_cost,
   "git_commit": "$git_commit",
   "files_changed": $files_changed,
-  "promise_complete": $(echo "$AGENT_RESULT" | grep -q '<promise>COMPLETE</promise>' && echo "true" || echo "false")
+  "promise_complete": $(echo "$AGENT_RESULT" | grep -q '<result status="complete">' && echo "true" || echo "false")
 }
 RESULT_EOF
 
