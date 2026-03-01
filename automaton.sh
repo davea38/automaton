@@ -5292,6 +5292,75 @@ _signal_prune() {
     log "SIGNAL" "Pruned $pruned weakest signals (max=$max_signals, kept strongest $max_signals)"
 }
 
+# Returns signals with strength >= threshold as a JSON array.
+# Args: threshold (float, e.g. 0.6)
+# Outputs: JSON array of matching signal objects
+_signal_get_strong() {
+    if ! _signal_enabled; then return 1; fi
+    local threshold="${1:?_signal_get_strong requires threshold}"
+
+    local signals_file="$AUTOMATON_DIR/signals.json"
+    if [ ! -f "$signals_file" ]; then
+        echo "[]"
+        return 0
+    fi
+
+    jq --argjson thr "$threshold" \
+        '[.signals[] | select(.strength >= $thr)]' \
+        "$signals_file"
+}
+
+# Returns signals matching the given type as a JSON array.
+# Args: type (string, e.g. "attention_needed")
+# Outputs: JSON array of matching signal objects
+_signal_get_by_type() {
+    if ! _signal_enabled; then return 1; fi
+    local type="${1:?_signal_get_by_type requires type}"
+
+    local signals_file="$AUTOMATON_DIR/signals.json"
+    if [ ! -f "$signals_file" ]; then
+        echo "[]"
+        return 0
+    fi
+
+    jq --arg t "$type" \
+        '[.signals[] | select(.type == $t)]' \
+        "$signals_file"
+}
+
+# Returns all signals with strength > decay_floor as a JSON array.
+# Outputs: JSON array of active signal objects
+_signal_get_active() {
+    if ! _signal_enabled; then return 1; fi
+
+    local signals_file="$AUTOMATON_DIR/signals.json"
+    if [ ! -f "$signals_file" ]; then
+        echo "[]"
+        return 0
+    fi
+
+    local decay_floor="${STIGMERGY_DECAY_FLOOR:-0.05}"
+
+    jq --argjson floor "$decay_floor" \
+        '[.signals[] | select(.strength >= $floor)]' \
+        "$signals_file"
+}
+
+# Returns signals with no related garden ideas as a JSON array.
+# Outputs: JSON array of unlinked signal objects
+_signal_get_unlinked() {
+    if ! _signal_enabled; then return 1; fi
+
+    local signals_file="$AUTOMATON_DIR/signals.json"
+    if [ ! -f "$signals_file" ]; then
+        echo "[]"
+        return 0
+    fi
+
+    jq '[.signals[] | select(.related_ideas | length == 0)]' \
+        "$signals_file"
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
