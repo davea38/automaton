@@ -864,6 +864,37 @@ update_budget() {
     mv "$tmp" "$budget_file"
 }
 
+# Checks rolling average cache hit ratio for the current phase.
+# Emits a warning when the rolling average drops below 50% after 3+ iterations.
+# WHY: Low cache ratio indicates the static prompt prefix is changing between
+# iterations — likely a bug in prompt assembly that wastes tokens (spec-30).
+check_cache_hit_ratio() {
+    local budget_file="$AUTOMATON_DIR/budget.json"
+    [ -f "$budget_file" ] || return 0
+
+    local phase_count avg
+    phase_count=$(jq --arg phase "$current_phase" \
+        '[.history[] | select(.phase == $phase)] | length' \
+        "$budget_file" 2>/dev/null || echo 0)
+
+    # Only check after 3+ iterations in the current phase
+    [ "$phase_count" -ge 3 ] || return 0
+
+    avg=$(jq --arg phase "$current_phase" '
+        [.history[] | select(.phase == $phase) | .cache_hit_ratio] |
+        if length > 0 then (add / length) else 0 end
+    ' "$budget_file" 2>/dev/null || echo 0)
+
+    # Compare: avg < 0.50 means below 50%
+    local below
+    below=$(awk -v a="$avg" 'BEGIN { print (a < 0.50) ? 1 : 0 }')
+    if [ "$below" -eq 1 ]; then
+        local pct
+        pct=$(awk -v a="$avg" 'BEGIN { printf "%.0f", a * 100 }')
+        log "ORCHESTRATOR" "WARNING: Cache hit ratio for phase '${current_phase}' is ${pct}% (rolling avg over ${phase_count} iterations). Expected >=50%. Check that dynamic data is injected after the static prefix marker."
+    fi
+}
+
 # Enforces budget rules after each iteration. Returns 0 to continue,
 # 1 to force phase transition, or exits with code 2 for hard stops.
 # In API mode: enforces per-iteration, per-phase, total token, and cost limits.
@@ -5575,6 +5606,9 @@ post_iteration() {
     update_budget "$model" "$LAST_INPUT_TOKENS" "$LAST_OUTPUT_TOKENS" \
         "$LAST_CACHE_CREATE" "$LAST_CACHE_READ" \
         "$iter_cost" "$duration" "$task_desc" "$status"
+
+    # 4a. Check cache hit ratio (spec-30: warn when rolling avg < 50% after 3+ iters)
+    check_cache_hit_ratio
 
     # 5. Check budget limits (may exit 2 for hard stops, return 1 for phase force)
     local budget_rc=0
