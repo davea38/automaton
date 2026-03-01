@@ -300,7 +300,7 @@ These specs add the safety constraints and governance framework that the evoluti
 
 - [x] Implement branch-based isolation for IMPLEMENT phase in `automaton.sh`: create `automaton/evolve-{cycle_id}-{idea_id}` branch at IMPLEMENT start, run all build iterations on the branch, and never directly modify the working branch (WHY: branch isolation guarantees that a failed evolution cycle has zero impact on the codebase — the worst case is an unmerged branch, never a corrupted working tree) <!-- test: tests/test_safety_branch.sh -->
 
-- [ ] Implement `_safety_sandbox_test()` in `automaton.sh` that runs the 4-step validation sequence on the evolution branch: syntax check (`bash -n`), smoke test (`--dry-run`), full test suite, and test pass rate comparison against pre-cycle baseline (WHY: sandbox testing catches regressions before they reach the working branch — each step is progressively more expensive, so early failures save time) <!-- test: tests/test_safety_sandbox.sh -->
+- [x] Implement `_safety_sandbox_test()` in `automaton.sh` that runs the 4-step validation sequence on the evolution branch: syntax check (`bash -n`), smoke test (`--dry-run`), full test suite, and test pass rate comparison against pre-cycle baseline (WHY: sandbox testing catches regressions before they reach the working branch — each step is progressively more expensive, so early failures save time) <!-- test: tests/test_safety_sandbox.sh -->
 
 #### 45.2 Circuit Breakers
 
