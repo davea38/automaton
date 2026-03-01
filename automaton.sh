@@ -1603,7 +1603,9 @@ update_budget() {
             task: $task,
             status: $status,
             timestamp: $timestamp,
-            estimated_utilization: $utilization
+            estimated_utilization: $utilization,
+            bootstrap_tokens_saved: $bootstrap_saved,
+            bootstrap_time_ms: $bootstrap_ms
         }]'
 
     # In allowance mode, also update weekly token counters
@@ -1627,6 +1629,8 @@ update_budget() {
         --arg status "$status" \
         --arg timestamp "$timestamp" \
         --argjson utilization "$estimated_utilization" \
+        --argjson bootstrap_saved "${BOOTSTRAP_TOKENS_SAVED:-0}" \
+        --argjson bootstrap_ms "${BOOTSTRAP_TIME_MS:-0}" \
         "$jq_filter" "$budget_file" > "$tmp"
     mv "$tmp" "$budget_file"
 
@@ -3128,6 +3132,7 @@ update_budget_history() {
     # Build per-phase breakdown and utilization stats from budget.json history
     local phases_json="{}"
     local peak_utilization="0" avg_utilization="0"
+    local total_bootstrap_saved="0" avg_bootstrap_ms="0"
     local budget_file="$AUTOMATON_DIR/budget.json"
     if [ -f "$budget_file" ]; then
         phases_json=$(jq -c '
@@ -3149,6 +3154,15 @@ update_budget_history() {
         avg_utilization=$(jq '
             [.history // [] | .[].estimated_utilization // 0] |
             if length > 0 then (add / length * 10 | round / 10) else 0 end
+        ' "$budget_file" 2>/dev/null || echo "0")
+
+        # Aggregate bootstrap metrics from per-iteration history (spec-37)
+        total_bootstrap_saved=$(jq '
+            [.history // [] | .[].bootstrap_tokens_saved // 0] | add // 0
+        ' "$budget_file" 2>/dev/null || echo "0")
+        avg_bootstrap_ms=$(jq '
+            [.history // [] | .[].bootstrap_time_ms // 0] |
+            if length > 0 then (add / length | round) else 0 end
         ' "$budget_file" 2>/dev/null || echo "0")
     fi
 
@@ -3175,6 +3189,8 @@ update_budget_history() {
         --argjson avg_util "$avg_utilization" \
         --arg week_start "$week_start" \
         --arg week_end "$week_end" \
+        --argjson bootstrap_saved "$total_bootstrap_saved" \
+        --argjson bootstrap_avg_ms "$avg_bootstrap_ms" \
         '
         # Append run entry
         .runs += [{
@@ -3185,7 +3201,9 @@ update_budget_history() {
             cache_hit_ratio: ($cache_hit_ratio | tonumber),
             peak_utilization: $peak_util,
             avg_utilization: $avg_util,
-            phases: $phases
+            phases: $phases,
+            bootstrap_tokens_saved: $bootstrap_saved,
+            bootstrap_avg_time_ms: $bootstrap_avg_ms
         }] |
 
         # Update or create weekly total
@@ -3731,12 +3749,20 @@ generate_progress_txt() {
 # Falls back gracefully — bootstrap is an optimization, not a requirement.
 # Callers should set BOOTSTRAP_FAILED based on exit code.
 #
+# Sets globals:
+#   BOOTSTRAP_TIME_MS — elapsed time in milliseconds
+#   BOOTSTRAP_TOKENS_SAVED — estimated input tokens saved vs agent-driven file reads
+#
 # Args:
 #   $1 — phase (optional, defaults to $current_phase)
 #   $2 — iteration (optional, defaults to $phase_iteration)
 _run_bootstrap() {
     local phase="${1:-$current_phase}"
     local iteration="${2:-$phase_iteration}"
+
+    # Initialize metrics globals
+    BOOTSTRAP_TIME_MS=0
+    BOOTSTRAP_TOKENS_SAVED=0
 
     if [ "$EXEC_BOOTSTRAP_ENABLED" != "true" ]; then
         return 0
@@ -3751,8 +3777,13 @@ _run_bootstrap() {
     local timeout_seconds=$(( EXEC_BOOTSTRAP_TIMEOUT_MS / 1000 ))
     [ "$timeout_seconds" -lt 1 ] && timeout_seconds=1
 
-    local start_epoch
-    start_epoch=$(date +%s)
+    # Millisecond-precision timing (fall back to seconds * 1000)
+    local start_ms
+    if date +%s%N &>/dev/null && [ "$(date +%s%N)" != "%N" ]; then
+        start_ms=$(( $(date +%s%N) / 1000000 ))
+    else
+        start_ms=$(( $(date +%s) * 1000 ))
+    fi
 
     local manifest="" stderr_file
     stderr_file=$(mktemp)
@@ -3761,6 +3792,7 @@ _run_bootstrap() {
             local stderr_output
             stderr_output=$(cat "$stderr_file")
             rm -f "$stderr_file"
+            _bootstrap_record_time "$start_ms"
             log "ORCHESTRATOR" "Bootstrap failed. Falling back to agent-driven context loading."
             [ -n "$stderr_output" ] && log "ORCHESTRATOR" "Bootstrap stderr: $stderr_output"
             return 1
@@ -3770,6 +3802,7 @@ _run_bootstrap() {
             local stderr_output
             stderr_output=$(cat "$stderr_file")
             rm -f "$stderr_file"
+            _bootstrap_record_time "$start_ms"
             log "ORCHESTRATOR" "Bootstrap failed. Falling back to agent-driven context loading."
             [ -n "$stderr_output" ] && log "ORCHESTRATOR" "Bootstrap stderr: $stderr_output"
             return 1
@@ -3779,26 +3812,72 @@ _run_bootstrap() {
 
     # Validate JSON
     if ! echo "$manifest" | jq empty 2>/dev/null; then
+        _bootstrap_record_time "$start_ms"
         log "ORCHESTRATOR" "Bootstrap produced invalid JSON. Falling back to agent-driven context loading."
         return 1
     fi
 
     # Check for error field in manifest
     if echo "$manifest" | jq -e '.error' &>/dev/null; then
+        _bootstrap_record_time "$start_ms"
         log "ORCHESTRATOR" "Bootstrap error: $(echo "$manifest" | jq -r '.error')"
         return 1
     fi
 
-    # Performance check
-    local end_epoch
-    end_epoch=$(date +%s)
-    local elapsed_seconds=$(( end_epoch - start_epoch ))
-    local target_seconds=$(( EXEC_BOOTSTRAP_TIMEOUT_MS / 1000 ))
-    if [ "$elapsed_seconds" -gt "$target_seconds" ]; then
-        log "ORCHESTRATOR" "WARNING: Bootstrap took ${elapsed_seconds}s (target: <${target_seconds}s). Consider optimizing init.sh."
+    # Record timing and estimate token savings
+    _bootstrap_record_time "$start_ms"
+    _bootstrap_estimate_tokens_saved "$manifest"
+
+    # Performance check: warn if bootstrap exceeds 2-second target
+    local target_ms="$EXEC_BOOTSTRAP_TIMEOUT_MS"
+    if [ "$BOOTSTRAP_TIME_MS" -gt "$target_ms" ]; then
+        local elapsed_s
+        elapsed_s=$(awk -v ms="$BOOTSTRAP_TIME_MS" 'BEGIN { printf "%.1f", ms / 1000 }')
+        local target_s
+        target_s=$(awk -v ms="$target_ms" 'BEGIN { printf "%.1f", ms / 1000 }')
+        log "ORCHESTRATOR" "WARNING: Bootstrap took ${elapsed_s}s (target: <${target_s}s). Consider optimizing init.sh."
     fi
 
+    # Persist metrics to file so they survive the $() subshell boundary.
+    # The caller (run_agent) reads these back into globals after the call.
+    echo "{\"time_ms\":${BOOTSTRAP_TIME_MS},\"tokens_saved\":${BOOTSTRAP_TOKENS_SAVED}}" \
+        > "${AUTOMATON_DIR}/bootstrap_metrics.json"
+
     echo "$manifest"
+}
+
+# Record elapsed bootstrap time in BOOTSTRAP_TIME_MS and persist metrics to file.
+# Called on both success and failure paths so metrics survive the $() subshell.
+# Args: $1 — start time in milliseconds
+_bootstrap_record_time() {
+    local start_ms="$1"
+    local end_ms
+    if date +%s%N &>/dev/null && [ "$(date +%s%N)" != "%N" ]; then
+        end_ms=$(( $(date +%s%N) / 1000000 ))
+    else
+        end_ms=$(( $(date +%s) * 1000 ))
+    fi
+    BOOTSTRAP_TIME_MS=$(( end_ms - start_ms ))
+    [ "$BOOTSTRAP_TIME_MS" -lt 0 ] && BOOTSTRAP_TIME_MS=0
+    # Persist to file (tokens_saved may be updated later on success path)
+    echo "{\"time_ms\":${BOOTSTRAP_TIME_MS},\"tokens_saved\":${BOOTSTRAP_TOKENS_SAVED}}" \
+        > "${AUTOMATON_DIR}/bootstrap_metrics.json" 2>/dev/null || true
+}
+
+# Estimate input tokens saved by bootstrap vs agent-driven file reads.
+# Without bootstrap, agents spend 3-5 tool calls reading AGENTS.md,
+# IMPLEMENTATION_PLAN.md, state.json, budget.json, and specs (~20-50K tokens).
+# Bootstrap provides the same data in a compact manifest (~2K tokens).
+# Baseline: 30000 tokens (midpoint of 20-50K range from spec-37).
+# Args: $1 — manifest JSON string
+_bootstrap_estimate_tokens_saved() {
+    local manifest="$1"
+    local baseline_tokens=30000
+    local manifest_bytes manifest_tokens
+    manifest_bytes=$(printf '%s' "$manifest" | wc -c | tr -d ' ')
+    manifest_tokens=$(( manifest_bytes / 4 ))
+    BOOTSTRAP_TOKENS_SAVED=$(( baseline_tokens - manifest_tokens ))
+    [ "$BOOTSTRAP_TOKENS_SAVED" -lt 0 ] && BOOTSTRAP_TOKENS_SAVED=0
 }
 
 # Format bootstrap manifest for inclusion in dynamic context.
@@ -4350,11 +4429,21 @@ run_agent() {
 
     # Bootstrap (spec-37): pre-assemble context before agent invocation.
     # _run_bootstrap returns exit 1 on failure; || catches it for set -e safety.
+    # Metrics are written to bootstrap_metrics.json inside the $() subshell
+    # and read back here since globals don't survive subshell boundaries.
     BOOTSTRAP_MANIFEST=""
     BOOTSTRAP_FAILED="false"
+    BOOTSTRAP_TIME_MS=0
+    BOOTSTRAP_TOKENS_SAVED=0
     BOOTSTRAP_MANIFEST=$(_run_bootstrap) || BOOTSTRAP_FAILED="true"
+    # Read metrics persisted by _run_bootstrap (survives subshell)
+    if [ -f "$AUTOMATON_DIR/bootstrap_metrics.json" ]; then
+        BOOTSTRAP_TIME_MS=$(jq -r '.time_ms // 0' "$AUTOMATON_DIR/bootstrap_metrics.json" 2>/dev/null || echo 0)
+        BOOTSTRAP_TOKENS_SAVED=$(jq -r '.tokens_saved // 0' "$AUTOMATON_DIR/bootstrap_metrics.json" 2>/dev/null || echo 0)
+        rm -f "$AUTOMATON_DIR/bootstrap_metrics.json"
+    fi
     if [ -n "$BOOTSTRAP_MANIFEST" ]; then
-        log "ORCHESTRATOR" "Bootstrap manifest assembled ($(echo "$BOOTSTRAP_MANIFEST" | wc -c | tr -d ' ') bytes)"
+        log "ORCHESTRATOR" "Bootstrap manifest assembled ($(echo "$BOOTSTRAP_MANIFEST" | wc -c | tr -d ' ') bytes, ${BOOTSTRAP_TIME_MS}ms, ~${BOOTSTRAP_TOKENS_SAVED} tokens saved)"
     fi
 
     # Native agent definitions (spec-27): invoke claude --agent with dynamic

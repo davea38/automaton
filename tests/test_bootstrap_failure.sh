@@ -56,6 +56,8 @@ extract_function() {
         if(found && depth==0) exit
     }" "$file"
 }
+eval "$(extract_function _bootstrap_record_time "$PROJECT_ROOT/automaton.sh")"
+eval "$(extract_function _bootstrap_estimate_tokens_saved "$PROJECT_ROOT/automaton.sh")"
 eval "$(extract_function _run_bootstrap "$PROJECT_ROOT/automaton.sh")"
 eval "$(extract_function _format_bootstrap_for_context "$PROJECT_ROOT/automaton.sh")"
 

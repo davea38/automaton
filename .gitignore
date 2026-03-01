@@ -16,6 +16,7 @@
 .automaton/context_summary.md
 .automaton/iteration_memory.md
 .automaton/prompt_augmented.md
+.automaton/bootstrap_metrics.json
 .automaton/plan_checkpoint.md
 .automaton/agents/
 .automaton/inbox/
