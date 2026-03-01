@@ -7303,6 +7303,107 @@ _safety_branch_is_evolution() {
 }
 
 # ---------------------------------------------------------------------------
+# Safety: Sandbox Testing (spec-45 §2)
+# ---------------------------------------------------------------------------
+
+# Run the 4-step sandbox validation sequence on an evolution branch before
+# merging: (1) syntax check, (2) smoke test, (3) full test suite, (4) test
+# pass rate comparison against pre-cycle baseline. Also checks for protected
+# function modifications.
+#
+# Usage: _safety_sandbox_test "automaton/evolve-001-42"
+# Returns: 0 if all checks pass, 1 if any check fails
+_safety_sandbox_test() {
+    local branch="${1:-}"
+
+    # Skip if sandbox testing is disabled
+    if [ "${SAFETY_SANDBOX_TESTING_ENABLED:-true}" != "true" ]; then
+        log "SAFETY" "Sandbox testing disabled — skipping validation"
+        return 0
+    fi
+
+    log "SAFETY" "Starting sandbox validation on branch ${branch:-current}"
+
+    # Step 1: Syntax check
+    log "SAFETY" "Step 1/4: Syntax check (bash -n automaton.sh)"
+    if ! bash -n automaton.sh 2>/dev/null; then
+        log "SAFETY" "FAIL: Syntax check failed — automaton.sh has syntax errors"
+        return 1
+    fi
+    log "SAFETY" "Step 1/4: Syntax check passed"
+
+    # Step 2: Smoke test (--dry-run)
+    log "SAFETY" "Step 2/4: Smoke test (--dry-run)"
+    if ! ./automaton.sh --dry-run >/dev/null 2>&1; then
+        log "SAFETY" "FAIL: Smoke test failed — automaton.sh --dry-run returned non-zero"
+        return 1
+    fi
+    log "SAFETY" "Step 2/4: Smoke test passed"
+
+    # Step 3: Full test suite
+    log "SAFETY" "Step 3/4: Running full test suite"
+    local total_tests=0
+    local passed_tests=0
+    local failed_tests=0
+
+    for test_file in tests/test_*.sh; do
+        [ -f "$test_file" ] || continue
+        total_tests=$((total_tests + 1))
+        if bash "$test_file" >/dev/null 2>&1; then
+            passed_tests=$((passed_tests + 1))
+        else
+            failed_tests=$((failed_tests + 1))
+            log "SAFETY" "Test failed: $test_file"
+        fi
+    done
+
+    local pass_rate="0.00"
+    if [ "$total_tests" -gt 0 ]; then
+        pass_rate=$(awk -v p="$passed_tests" -v t="$total_tests" 'BEGIN { printf "%.2f", p/t }')
+    fi
+    log "SAFETY" "Step 3/4: Test suite complete — $passed_tests/$total_tests passed (rate: $pass_rate)"
+
+    # Step 4: Compare test pass rate against pre-cycle baseline
+    log "SAFETY" "Step 4/4: Comparing pass rate against baseline"
+    local baseline_snapshot
+    baseline_snapshot=$(_metrics_get_latest 2>/dev/null || echo "")
+
+    if [ -n "$baseline_snapshot" ] && [ "$baseline_snapshot" != "null" ]; then
+        local baseline_rate
+        baseline_rate=$(echo "$baseline_snapshot" | jq -r '.quality.test_pass_rate // 0' 2>/dev/null || echo "0")
+
+        if [ -n "$baseline_rate" ] && [ "$baseline_rate" != "0" ] && [ "$baseline_rate" != "null" ]; then
+            local is_regression
+            is_regression=$(awk -v current="$pass_rate" -v baseline="$baseline_rate" \
+                'BEGIN { print (current < baseline) ? "1" : "0" }')
+            if [ "$is_regression" = "1" ]; then
+                log "SAFETY" "FAIL: Test regression detected — pass rate $pass_rate < baseline $baseline_rate"
+                return 1
+            fi
+        fi
+    fi
+    log "SAFETY" "Step 4/4: Pass rate check passed"
+
+    # Step 5: Check for protected function modifications
+    if [ -n "$branch" ]; then
+        local working="${WORKING_BRANCH:-master}"
+        IFS=',' read -ra protected <<< "${SELF_BUILD_PROTECTED_FUNCTIONS:-run_orchestration,_handle_shutdown}"
+        for func in "${protected[@]}"; do
+            local changes
+            changes=$(git diff "${working}...${branch}" -- automaton.sh 2>/dev/null | grep -c "^[-+].*${func}()" || true)
+            if [ "${changes:-0}" -gt 0 ]; then
+                log "SAFETY" "FAIL: Protected function '${func}' modified without explicit approval"
+                return 1
+            fi
+        done
+        log "SAFETY" "Protected function check passed"
+    fi
+
+    log "SAFETY" "Sandbox validation passed — all checks successful"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
