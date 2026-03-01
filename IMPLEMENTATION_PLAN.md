@@ -100,7 +100,7 @@ For a self-building orchestrator, tests are the only reliable way to verify beha
 - [x] Add test-first discipline rules to `PROMPT_build.md` `<rules>` section: check for existing test, write test if missing, implement, verify test passes, commit (WHY: test-first discipline catches regressions and ensures build agents verify their own work)
 - [x] Create `tests/test_helpers.sh` with minimal bash assertion functions: `assert_equals`, `assert_exit_code`, `assert_file_exists`, `assert_contains` (WHY: automaton.sh is bash; a lightweight assertion library enables testing without external dependencies like bats)
 - [x] Add test-driven verification priority to `PROMPT_review.md`: run all tests first, check test coverage, review test quality, then review code; fail review gate if tests fail (WHY: test results are objective quality signals; code review without passing tests is theater)
-- [ ] Track test coverage metric (tasks with tests, tasks without, coverage ratio, passing/failing) in `automaton.sh` and append to run summaries (WHY: coverage tracking ensures test discipline is maintained across runs and reveals testing gaps)
+- [x] Track test coverage metric (tasks with tests, tasks without, coverage ratio, passing/failing) in `automaton.sh` and append to run summaries (WHY: coverage tracking ensures test discipline is maintained across runs and reveals testing gaps)
 - [ ] Add `execution.test_first_enabled` (default true) and `execution.test_framework` ("bats" or "assertions") to `automaton.config.json` (WHY: users who do not want test-first can disable it; framework choice supports both bats users and minimal-dependency setups)
 
 ## Tier 3: Integration Features (Depends on Tier 2)

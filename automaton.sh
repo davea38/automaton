@@ -2895,8 +2895,81 @@ _self_continue_recommendation() {
 # Run Summaries (spec-34)
 # ---------------------------------------------------------------------------
 
+# Calculates test coverage metrics from IMPLEMENTATION_PLAN.md annotations.
+# Parses <!-- test: path --> and <!-- test: none --> markers to count:
+# - tasks_with_tests: tasks annotated with a test file that exists on disk
+# - tasks_without_tests: tasks annotated with a test file that does NOT exist
+# - tasks_exempt: tasks annotated with <!-- test: none -->
+# - tasks_unannotated: tasks with no test annotation at all
+# Also checks test_results.json for passing/failing counts.
+# WHY: coverage tracking ensures test discipline is maintained across runs
+# and reveals testing gaps (spec-36 §6).
+# Outputs: JSON object to stdout
+calculate_test_coverage() {
+    local plan_file="${PLAN_FILE:-IMPLEMENTATION_PLAN.md}"
+    local tasks_with_tests=0
+    local tasks_without_tests=0
+    local tasks_exempt=0
+    local tasks_unannotated=0
+    local tests_passing=0
+    local tests_failing=0
+
+    if [ -f "$plan_file" ]; then
+        # Process each incomplete and completed task line
+        while IFS= read -r line; do
+            if echo "$line" | grep -q '<!-- test: none -->'; then
+                tasks_exempt=$((tasks_exempt + 1))
+            elif echo "$line" | grep -q '<!-- test:'; then
+                # Extract test file path
+                local test_path
+                test_path=$(echo "$line" | sed -n 's/.*<!-- test: \([^ ]*\) -->.*/\1/p')
+                if [ -n "$test_path" ] && [ -f "$test_path" ]; then
+                    tasks_with_tests=$((tasks_with_tests + 1))
+                else
+                    tasks_without_tests=$((tasks_without_tests + 1))
+                fi
+            else
+                tasks_unannotated=$((tasks_unannotated + 1))
+            fi
+        done < <(grep -E '^\- \[(x| )\]' "$plan_file" 2>/dev/null || true)
+    fi
+
+    # Check test results from test_results.json if it exists
+    local results_file="$AUTOMATON_DIR/test_results.json"
+    if [ -f "$results_file" ]; then
+        tests_passing=$(jq '[.[] | select(.result == "pass")] | length' "$results_file" 2>/dev/null || echo 0)
+        tests_failing=$(jq '[.[] | select(.result == "fail")] | length' "$results_file" 2>/dev/null || echo 0)
+    fi
+
+    # Calculate coverage ratio: tasks_with_tests / (tasks_with_tests + tasks_without_tests)
+    local testable_tasks=$((tasks_with_tests + tasks_without_tests))
+    local coverage_ratio="0.00"
+    if [ "$testable_tasks" -gt 0 ]; then
+        coverage_ratio=$(awk "BEGIN { printf \"%.2f\", $tasks_with_tests / $testable_tasks }")
+    fi
+
+    jq -n \
+        --argjson tasks_with_tests "$tasks_with_tests" \
+        --argjson tasks_without_tests "$tasks_without_tests" \
+        --argjson tasks_exempt "$tasks_exempt" \
+        --argjson tasks_unannotated "$tasks_unannotated" \
+        --argjson coverage_ratio "$coverage_ratio" \
+        --argjson tests_passing "$tests_passing" \
+        --argjson tests_failing "$tests_failing" \
+        '{
+            tasks_with_tests: $tasks_with_tests,
+            tasks_without_tests: $tasks_without_tests,
+            tasks_exempt: $tasks_exempt,
+            tasks_unannotated: $tasks_unannotated,
+            coverage_ratio: $coverage_ratio,
+            tests_passing: $tests_passing,
+            tests_failing: $tests_failing
+        }'
+}
+
 # Writes a per-run summary JSON to .automaton/run-summaries/.
-# Captures: phases completed, iterations, tokens, cost, learnings, git commits.
+# Captures: phases completed, iterations, tokens, cost, learnings, git commits,
+# and test coverage metrics (spec-36 §6).
 # Called at the end of run_orchestration() and from _handle_shutdown().
 # Args: [exit_code] (default: 0)
 write_run_summary() {
@@ -2958,6 +3031,10 @@ write_run_summary() {
         fi
     fi
 
+    # Calculate test coverage metrics (spec-36 §6)
+    local test_coverage_json
+    test_coverage_json=$(calculate_test_coverage 2>/dev/null || echo '{}')
+
     # Write the summary JSON
     jq -n \
         --arg run_id "$run_id" \
@@ -2976,6 +3053,7 @@ write_run_summary() {
         --argjson learnings_added "$learnings_added" \
         --argjson new_learnings "$new_learnings_json" \
         --argjson git_commits "$commits_json" \
+        --argjson test_coverage "$test_coverage_json" \
         '{
             run_id: $run_id,
             started_at: $started_at,
@@ -2994,7 +3072,8 @@ write_run_summary() {
             estimated_cost_usd: $cost_usd,
             learnings_added: $learnings_added,
             new_learnings: $new_learnings,
-            git_commits: $git_commits
+            git_commits: $git_commits,
+            test_coverage: $test_coverage
         }' > "$summary_file"
 
     log "ORCHESTRATOR" "Run summary written to $summary_file"
