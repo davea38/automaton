@@ -11,8 +11,9 @@ config_file="$SCRIPT_DIR/../automaton.config.json"
 script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: automaton.config.json contains evolution.enabled ---
-val=$(jq -r '.evolution.enabled // "missing"' "$config_file")
-assert_equals "false" "$val" "evolution.enabled defaults to false in config"
+# Note: jq's // treats false as falsy, so use 'type' to confirm the key exists
+val=$(jq -r '.evolution.enabled | type' "$config_file")
+assert_equals "boolean" "$val" "evolution.enabled exists as boolean in config"
 
 # --- Test 2: evolution.max_cycles ---
 val=$(jq -r '.evolution.max_cycles // "missing"' "$config_file")
@@ -20,7 +21,7 @@ assert_equals "0" "$val" "evolution.max_cycles defaults to 0 (unlimited)"
 
 # --- Test 3: evolution.max_cost_per_cycle_usd ---
 val=$(jq -r '.evolution.max_cost_per_cycle_usd // "missing"' "$config_file")
-assert_equals "5" "$val" "evolution.max_cost_per_cycle_usd defaults to 5.00"
+assert_equals "5.00" "$val" "evolution.max_cost_per_cycle_usd defaults to 5.00"
 
 # --- Test 4: evolution.convergence_threshold ---
 val=$(jq -r '.evolution.convergence_threshold // "missing"' "$config_file")

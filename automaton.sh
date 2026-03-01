@@ -156,6 +156,18 @@ load_config() {
         METRICS_DEGRADATION_ALERT_THRESHOLD=$(jq -r '.metrics.degradation_alert_threshold // 3' "$config_file")
         METRICS_SNAPSHOT_RETENTION=$(jq -r '.metrics.snapshot_retention // 100' "$config_file")
 
+        # -- evolution (spec-41) --
+        EVOLVE_ENABLED=$(jq -r '.evolution.enabled // false' "$config_file")
+        EVOLVE_MAX_CYCLES=$(jq -r '.evolution.max_cycles // 0' "$config_file")
+        EVOLVE_MAX_COST_PER_CYCLE=$(jq -r '.evolution.max_cost_per_cycle_usd // 5.00' "$config_file")
+        EVOLVE_CONVERGENCE_THRESHOLD=$(jq -r '.evolution.convergence_threshold // 5' "$config_file")
+        EVOLVE_IDLE_GARDEN_THRESHOLD=$(jq -r '.evolution.idle_garden_threshold // 3' "$config_file")
+        EVOLVE_BRANCH_PREFIX=$(jq -r '.evolution.branch_prefix // "automaton/evolve-"' "$config_file")
+        EVOLVE_AUTO_MERGE=$(jq -r '.evolution.auto_merge // true' "$config_file")
+        EVOLVE_REFLECT_MODEL=$(jq -r '.evolution.reflect_model // "sonnet"' "$config_file")
+        EVOLVE_IDEATE_MODEL=$(jq -r '.evolution.ideate_model // "sonnet"' "$config_file")
+        EVOLVE_OBSERVE_MODEL=$(jq -r '.evolution.observe_model // "sonnet"' "$config_file")
+
         # -- safety (spec-45) --
         SAFETY_MAX_TOTAL_LINES=$(jq -r '.safety.max_total_lines // 15000' "$config_file")
         SAFETY_MAX_TOTAL_FUNCTIONS=$(jq -r '.safety.max_total_functions // 300' "$config_file")
@@ -295,6 +307,18 @@ load_config() {
         METRICS_TREND_WINDOW=5
         METRICS_DEGRADATION_ALERT_THRESHOLD=3
         METRICS_SNAPSHOT_RETENTION=100
+
+        # -- evolution (spec-41) --
+        EVOLVE_ENABLED="false"
+        EVOLVE_MAX_CYCLES=0
+        EVOLVE_MAX_COST_PER_CYCLE="5.00"
+        EVOLVE_CONVERGENCE_THRESHOLD=5
+        EVOLVE_IDLE_GARDEN_THRESHOLD=3
+        EVOLVE_BRANCH_PREFIX="automaton/evolve-"
+        EVOLVE_AUTO_MERGE="true"
+        EVOLVE_REFLECT_MODEL="sonnet"
+        EVOLVE_IDEATE_MODEL="sonnet"
+        EVOLVE_OBSERVE_MODEL="sonnet"
 
         # -- safety (spec-45) --
         SAFETY_MAX_TOTAL_LINES=15000

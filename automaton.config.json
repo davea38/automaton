@@ -132,6 +132,18 @@
     "degradation_alert_threshold": 3,
     "snapshot_retention": 100
   },
+  "evolution": {
+    "enabled": false,
+    "max_cycles": 0,
+    "max_cost_per_cycle_usd": 5.00,
+    "convergence_threshold": 5,
+    "idle_garden_threshold": 3,
+    "branch_prefix": "automaton/evolve-",
+    "auto_merge": true,
+    "reflect_model": "sonnet",
+    "ideate_model": "sonnet",
+    "observe_model": "sonnet"
+  },
   "safety": {
     "max_total_lines": 15000,
     "max_total_functions": 300,
