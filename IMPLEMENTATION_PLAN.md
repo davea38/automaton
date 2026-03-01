@@ -396,7 +396,7 @@ This spec adds the human-facing commands that wrap all evolution subsystems in a
 
 - [x] Implement `_cli_plant()` in `automaton.sh` that calls `_garden_plant_seed()` with `origin.type="human"` and displays the result including the assigned ID, priority (with human boost), and guidance to water the idea (WHY: human-planted seeds get a priority boost and need clear feedback so the human knows what to do next) <!-- test: tests/test_cli_plant.sh -->
 
-- [ ] Implement `_cli_water()` in `automaton.sh` that calls `_garden_water()` with the provided evidence, displays updated evidence count and priority, and reports any stage advancement that occurred (WHY: watering feedback must show the impact — did the evidence push the idea to the next stage? how did priority change?) <!-- test: tests/test_cli_water.sh -->
+- [x] Implement `_cli_water()` in `automaton.sh` that calls `_garden_water()` with the provided evidence, displays updated evidence count and priority, and reports any stage advancement that occurred (WHY: watering feedback must show the impact — did the evidence push the idea to the next stage? how did priority change?) <!-- test: tests/test_cli_water.sh -->
 
 - [ ] Implement `_cli_prune()` in `automaton.sh` that calls `_garden_wilt()` with the provided reason and displays confirmation (WHY: pruning is a destructive action — clear confirmation with the idea title and reason prevents accidental deletions) <!-- test: tests/test_cli_prune.sh -->
 
