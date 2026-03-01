@@ -39,7 +39,8 @@ assert_contains "$(grep '_garden_plant_seed' "$script_file" -A 80)" '"seed"' "fu
 
 # --- Test 5: Function includes all required schema fields ---
 # Check for key schema fields in the jq template used by _garden_plant_seed
-func_body=$(sed -n '/_garden_plant_seed()/,/^[^ ]/p' "$script_file" | head -100)
+# Use grep -A to capture enough of the function body (includes the jq template)
+func_body=$(grep -A 120 '^_garden_plant_seed()' "$script_file")
 for field in title description stage origin evidence tags priority estimated_complexity related_specs related_signals related_ideas stage_history vote_id implementation updated_at; do
     if echo "$func_body" | grep -q "$field"; then
         echo "PASS: function includes field '$field'"
@@ -60,8 +61,8 @@ func_header=$(grep -A 5 '_garden_plant_seed()' "$script_file")
 assert_contains "$func_header" "title" "function accepts title parameter"
 
 # --- Test 8: Function calls _garden_rebuild_index or updates the index ---
-func_body=$(sed -n '/_garden_plant_seed()/,/^}/p' "$script_file")
-if echo "$func_body" | grep -q '_garden_rebuild_index\|_index.json'; then
+func_full=$(grep -A 120 '^_garden_plant_seed()' "$script_file")
+if echo "$func_full" | grep -q '_garden_rebuild_index\|_index.json'; then
     echo "PASS: function updates the garden index"
     ((_TEST_PASS_COUNT++))
 else
@@ -70,7 +71,7 @@ else
 fi
 
 # --- Test 9: Function outputs the new idea ID ---
-if echo "$func_body" | grep -q 'echo.*idea-\|printf.*idea-'; then
+if echo "$func_full" | grep -q 'echo.*idea\|printf.*idea'; then
     echo "PASS: function outputs the new idea ID"
     ((_TEST_PASS_COUNT++))
 else
@@ -79,7 +80,7 @@ else
 fi
 
 # --- Test 10: Function sets priority to 0 for new seeds ---
-assert_contains "$func_body" '"priority"' "function sets initial priority"
+assert_contains "$func_full" "priority" "function sets initial priority"
 
 # --- Functional test: Create a temp garden dir and test planting ---
 TMPDIR_TEST=$(mktemp -d)

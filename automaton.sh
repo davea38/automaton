@@ -4379,6 +4379,199 @@ append_iteration_memory() {
 }
 
 # ---------------------------------------------------------------------------
+# Idea Garden (spec-38)
+# ---------------------------------------------------------------------------
+
+# Plants a new idea as a seed in .automaton/garden/.
+# Creates a JSON file with the complete idea schema, auto-increments the ID
+# from _index.json, records a stage_history entry, and rebuilds the index.
+#
+# Args: title description origin_type origin_source created_by
+#       [estimated_complexity] [tags_csv]
+# Outputs: the new idea ID (e.g. "idea-001") on stdout
+# Returns: 0 on success, 1 on failure
+_garden_plant_seed() {
+    local title="${1:?_garden_plant_seed requires title}"
+    local description="${2:?_garden_plant_seed requires description}"
+    local origin_type="${3:?_garden_plant_seed requires origin_type}"
+    local origin_source="${4:?_garden_plant_seed requires origin_source}"
+    local created_by="${5:?_garden_plant_seed requires created_by}"
+    local estimated_complexity="${6:-medium}"
+    local tags_csv="${7:-}"
+
+    local garden_dir="$AUTOMATON_DIR/garden"
+    local index_file="$garden_dir/_index.json"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Ensure garden directory exists
+    mkdir -p "$garden_dir"
+
+    # Initialize index if it doesn't exist
+    if [ ! -f "$index_file" ]; then
+        cat > "$index_file" << 'IDXEOF'
+{"total":0,"by_stage":{"seed":0,"sprout":0,"bloom":0,"harvest":0,"wilt":0},"bloom_candidates":[],"recent_activity":[],"next_id":1,"updated_at":"1970-01-01T00:00:00Z"}
+IDXEOF
+    fi
+
+    # Read and increment next_id
+    local next_id
+    next_id=$(jq -r '.next_id // 1' "$index_file")
+    local idea_id
+    idea_id=$(printf "idea-%03d" "$next_id")
+    local idea_file="$garden_dir/${idea_id}.json"
+
+    # Build tags JSON array from CSV
+    local tags_json="[]"
+    if [ -n "$tags_csv" ]; then
+        tags_json=$(echo "$tags_csv" | tr ',' '\n' | jq -R . | jq -s .)
+    fi
+
+    # Create the idea JSON file with complete schema
+    jq -n \
+        --arg id "$idea_id" \
+        --arg title "$title" \
+        --arg description "$description" \
+        --arg stage "seed" \
+        --arg origin_type "$origin_type" \
+        --arg origin_source "$origin_source" \
+        --arg created_by "$created_by" \
+        --arg created_at "$now" \
+        --argjson tags "$tags_json" \
+        --arg complexity "$estimated_complexity" \
+        --arg updated_at "$now" \
+        '{
+            id: $id,
+            title: $title,
+            description: $description,
+            stage: $stage,
+            origin: {
+                type: $origin_type,
+                source: $origin_source,
+                created_by: $created_by,
+                created_at: $created_at
+            },
+            evidence: [],
+            tags: $tags,
+            priority: 0,
+            estimated_complexity: $complexity,
+            related_specs: [],
+            related_signals: [],
+            related_ideas: [],
+            stage_history: [
+                {
+                    stage: "seed",
+                    entered_at: $created_at,
+                    reason: "Planted as new seed"
+                }
+            ],
+            vote_id: null,
+            implementation: null,
+            updated_at: $updated_at
+        }' > "$idea_file"
+
+    log "GARDEN" "Planted seed: $idea_id - $title"
+
+    # Rebuild the garden index
+    _garden_rebuild_index
+
+    echo "$idea_id"
+}
+
+# Regenerates .automaton/garden/_index.json from all idea files.
+# Provides total counts, by_stage breakdown, bloom_candidates sorted by priority,
+# recent_activity, next_id, and updated_at.
+_garden_rebuild_index() {
+    local garden_dir="$AUTOMATON_DIR/garden"
+    local index_file="$garden_dir/_index.json"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Collect all idea files
+    local idea_files
+    idea_files=$(find "$garden_dir" -name 'idea-*.json' -type f 2>/dev/null | sort)
+
+    local total=0
+    local seed_count=0 sprout_count=0 bloom_count=0 harvest_count=0 wilt_count=0
+    local max_id=0
+    local bloom_candidates="[]"
+    local recent_activity="[]"
+
+    for f in $idea_files; do
+        [ -f "$f" ] || continue
+        total=$((total + 1))
+
+        local stage id priority title updated_at_idea
+        stage=$(jq -r '.stage' "$f")
+        id=$(jq -r '.id' "$f")
+        priority=$(jq -r '.priority // 0' "$f")
+        title=$(jq -r '.title' "$f")
+        updated_at_idea=$(jq -r '.updated_at' "$f")
+
+        # Extract numeric ID for next_id calculation
+        local num
+        num=$(echo "$id" | sed 's/idea-0*//')
+        if [ "$num" -gt "$max_id" ] 2>/dev/null; then
+            max_id=$num
+        fi
+
+        # Count by stage
+        case "$stage" in
+            seed)    seed_count=$((seed_count + 1)) ;;
+            sprout)  sprout_count=$((sprout_count + 1)) ;;
+            bloom)   bloom_count=$((bloom_count + 1))
+                     bloom_candidates=$(echo "$bloom_candidates" | jq --arg id "$id" --arg title "$title" --argjson priority "$priority" '. + [{"id": $id, "title": $title, "priority": $priority}]')
+                     ;;
+            harvest) harvest_count=$((harvest_count + 1)) ;;
+            wilt)    wilt_count=$((wilt_count + 1)) ;;
+        esac
+
+        # Track recent activity (last stage_history entry)
+        local last_action last_at
+        last_action=$(jq -r '.stage_history[-1].stage // "unknown"' "$f")
+        last_at=$(jq -r '.stage_history[-1].entered_at // ""' "$f")
+        if [ -n "$last_at" ]; then
+            recent_activity=$(echo "$recent_activity" | jq --arg id "$id" --arg action "$last_action" --arg at "$last_at" '. + [{"id": $id, "action": $action, "at": $at}]')
+        fi
+    done
+
+    # Sort bloom candidates by priority descending
+    bloom_candidates=$(echo "$bloom_candidates" | jq 'sort_by(-.priority)')
+
+    # Keep only most recent 10 activity entries, sorted by time descending
+    recent_activity=$(echo "$recent_activity" | jq 'sort_by(.at) | reverse | .[0:10]')
+
+    local next_id=$((max_id + 1))
+
+    # Write the index
+    jq -n \
+        --argjson total "$total" \
+        --argjson seed "$seed_count" \
+        --argjson sprout "$sprout_count" \
+        --argjson bloom "$bloom_count" \
+        --argjson harvest "$harvest_count" \
+        --argjson wilt "$wilt_count" \
+        --argjson bloom_candidates "$bloom_candidates" \
+        --argjson recent_activity "$recent_activity" \
+        --argjson next_id "$next_id" \
+        --arg updated_at "$now" \
+        '{
+            total: $total,
+            by_stage: {
+                seed: $seed,
+                sprout: $sprout,
+                bloom: $bloom,
+                harvest: $harvest,
+                wilt: $wilt
+            },
+            bloom_candidates: $bloom_candidates,
+            recent_activity: $recent_activity,
+            next_id: $next_id,
+            updated_at: $updated_at
+        }' > "$index_file"
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
