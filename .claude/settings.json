@@ -1,0 +1,62 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/self-build-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Validating self-modification..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/capture-test-results.sh",
+            "timeout": 30,
+            "statusMessage": "Processing test results..."
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "automaton-*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/track-subagent-start.sh",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "automaton-*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/track-subagent-stop.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "TaskCompleted": [
+      {
+        "type": "command",
+        "command": ".claude/hooks/task-quality-gate.sh",
+        "timeout": 60,
+        "statusMessage": "Running quality gate..."
+      }
+    ]
+  }
+}

@@ -14,6 +14,12 @@ tools:
 permissionMode: bypassPermissions
 maxTurns: 100
 memory: project
+hooks:
+  Stop:
+    - type: command
+      command: .claude/hooks/builder-on-stop.sh
+      timeout: 30
+      statusMessage: "Finalizing builder results..."
 ---
 
 <!-- STATIC CONTENT — do not inject per-iteration data above this line -->

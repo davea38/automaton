@@ -4943,6 +4943,48 @@ log_partition_quality() {
 # Wave Execution Lifecycle (spec-16)
 # ---------------------------------------------------------------------------
 
+# Configures .claude/settings.local.json with dynamic hooks (file ownership)
+# that change per wave. Called before spawning builders.
+# WHY: file ownership hook must reference the current wave's assignments;
+# settings.local.json is gitignored and changes each wave. (spec-31 §7)
+configure_wave_hooks() {
+    local settings_local=".claude/settings.local.json"
+    mkdir -p "$(dirname "$settings_local")"
+
+    cat > "$settings_local" <<'HOOKS_EOF'
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/enforce-file-ownership.sh",
+            "timeout": 5,
+            "statusMessage": "Checking file ownership..."
+          }
+        ]
+      }
+    ]
+  }
+}
+HOOKS_EOF
+
+    log "CONDUCTOR" "Configured file ownership hook in $settings_local"
+}
+
+# Removes dynamic hooks from .claude/settings.local.json after a wave completes.
+# WHY: file ownership enforcement should only be active during parallel waves;
+# single-builder iterations should not be blocked by ownership checks. (spec-31 §7)
+cleanup_wave_hooks() {
+    local settings_local=".claude/settings.local.json"
+    if [ -f "$settings_local" ]; then
+        rm -f "$settings_local"
+        log "CONDUCTOR" "Removed dynamic hooks from $settings_local"
+    fi
+}
+
 # Creates .automaton/wave/assignments.json from selected tasks.
 # Takes the wave number and the selected tasks JSON (output of select_wave_tasks)
 # as arguments. Transforms each task into a builder assignment with sequential
@@ -5991,7 +6033,10 @@ cleanup_wave() {
     mkdir -p "$AUTOMATON_DIR/wave/results"
     rm -f "$AUTOMATON_DIR/wave/assignments.json"
 
-    # Step 4: Kill tmux builder windows (suppress errors for non-tmux runs)
+    # Step 4: Remove dynamic hooks (file ownership no longer needed)
+    cleanup_wave_hooks
+
+    # Step 5: Kill tmux builder windows (suppress errors for non-tmux runs)
     local session="${TMUX_SESSION_NAME:-automaton}"
     for ((i=1; i<=builder_count; i++)); do
         tmux kill-window -t "$session:builder-$i" 2>/dev/null || true
@@ -6681,6 +6726,9 @@ run_parallel_build() {
 
         # --- Step 4: Write assignments ---
         write_assignments "$wave_number" "$selected"
+
+        # --- Step 4a: Configure dynamic hooks for this wave (spec-31) ---
+        configure_wave_hooks
 
         # --- Step 5: Generate builder wrapper script ---
         generate_builder_wrapper
