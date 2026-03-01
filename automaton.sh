@@ -8982,6 +8982,198 @@ _evolve_check_budget() {
 }
 
 # ---------------------------------------------------------------------------
+# Evolution Resume State (spec-41 §11)
+# ---------------------------------------------------------------------------
+
+# Reads the last cycle directory in .automaton/evolution/ and determines which
+# phase was interrupted by checking for phase summary files. Returns the cycle
+# number and the phase to resume from via stdout (format: "cycle_id:phase").
+#
+# Phase files checked in order: reflect.json, ideate.json, evaluate.json,
+# implement.json, observe.json. The resume phase is the first missing file.
+# If IMPLEMENT was interrupted, checks for an existing evolution branch.
+#
+# Usage: resume_info=$(_evolve_resume_state)
+#        resume_cycle="${resume_info%%:*}"
+#        resume_phase="${resume_info##*:}"
+# Returns: 0 on success (resume info on stdout), 1 if no previous state
+_evolve_resume_state() {
+    local evo_dir="$AUTOMATON_DIR/evolution"
+
+    # Find the last cycle directory
+    local last_cycle_dir
+    last_cycle_dir=$(find "$evo_dir" -maxdepth 1 -type d -name 'cycle-*' 2>/dev/null | sort | tail -1)
+
+    if [ -z "$last_cycle_dir" ]; then
+        log "EVOLVE" "No previous evolution cycle found — starting fresh"
+        echo "1:reflect"
+        return 1
+    fi
+
+    # Extract cycle number from directory name (e.g., cycle-003 -> 3)
+    local resume_cycle
+    resume_cycle=$(basename "$last_cycle_dir" | sed 's/cycle-0*//')
+    [ -z "$resume_cycle" ] && resume_cycle=1
+
+    # Check cycle-summary.json — if it exists and status is "completed", start next cycle
+    local summary_file="$last_cycle_dir/cycle-summary.json"
+    if [ -f "$summary_file" ]; then
+        local status
+        status=$(jq -r '.status // "unknown"' "$summary_file" 2>/dev/null || echo "unknown")
+        if [ "$status" = "completed" ]; then
+            local next_cycle=$((resume_cycle + 1))
+            log "EVOLVE" "Last cycle $resume_cycle completed — resuming at cycle $next_cycle"
+            echo "${next_cycle}:reflect"
+            return 0
+        fi
+    fi
+
+    # Determine which phase was interrupted by checking for phase files
+    local resume_phase="reflect"
+    if [ -f "$last_cycle_dir/reflect.json" ]; then
+        resume_phase="ideate"
+    fi
+    if [ -f "$last_cycle_dir/ideate.json" ]; then
+        resume_phase="evaluate"
+    fi
+    if [ -f "$last_cycle_dir/evaluate.json" ]; then
+        resume_phase="implement"
+    fi
+    if [ -f "$last_cycle_dir/implement.json" ]; then
+        resume_phase="observe"
+    fi
+    if [ -f "$last_cycle_dir/observe.json" ]; then
+        # All phases completed but cycle-summary missing or failed — re-run observe
+        resume_phase="observe"
+    fi
+
+    # If IMPLEMENT was interrupted, check for an existing evolution branch
+    if [ "$resume_phase" = "implement" ] || [ "$resume_phase" = "observe" ]; then
+        local branch_prefix="${EVOLVE_BRANCH_PREFIX:-automaton/evolve-}"
+        local evolution_branch
+        evolution_branch=$(git branch --list "${branch_prefix}*" 2>/dev/null | head -1 | sed 's/^[* ]*//')
+        if [ -n "$evolution_branch" ]; then
+            log "EVOLVE" "Found interrupted evolution branch: $evolution_branch"
+        fi
+    fi
+
+    log "EVOLVE" "Resuming cycle $resume_cycle from phase: $resume_phase"
+    echo "${resume_cycle}:${resume_phase}"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Evolution Main Loop (spec-41 §8, §11)
+# ---------------------------------------------------------------------------
+
+# Orchestrates the evolution cycle loop: runs _evolve_run_cycle repeatedly
+# until convergence, budget exhaustion, cycle limit, pause, or circuit breaker.
+# Supports resume via start_cycle and start_phase parameters.
+#
+# Usage: _evolve_run_loop [start_cycle] [start_phase]
+#   start_cycle: cycle number to start from (default: 1)
+#   start_phase: phase to resume from within start_cycle (default: reflect)
+#                When not "reflect", the cycle runner skips completed phases.
+# Returns: 0 on convergence/completion, 1 on error, 2 on budget exhaustion
+_evolve_run_loop() {
+    local start_cycle="${1:-1}"
+    local start_phase="${2:-reflect}"
+    local max_cycles="${EVOLVE_MAX_CYCLES:-0}"
+
+    # Override max_cycles from CLI if specified
+    if [ "${ARG_CYCLES:-0}" -gt 0 ]; then
+        max_cycles="$ARG_CYCLES"
+    fi
+
+    log "EVOLVE" "Evolution loop starting (start_cycle=$start_cycle, max_cycles=${max_cycles:-unlimited}, start_phase=$start_phase)"
+
+    # Run safety preflight before starting cycles
+    if ! _safety_preflight 2>/dev/null; then
+        log "EVOLVE" "Safety preflight failed — cannot start evolution"
+        return 1
+    fi
+
+    # Ensure constitution exists
+    if [ ! -f "$AUTOMATON_DIR/constitution.md" ]; then
+        _constitution_create_default 2>/dev/null || true
+    fi
+
+    local cycle_id="$start_cycle"
+    local exit_reason=""
+
+    while true; do
+        # Check cycle limit
+        if [ "$max_cycles" -gt 0 ] && [ "$cycle_id" -gt "$((start_cycle + max_cycles - 1))" ]; then
+            log "EVOLVE" "Cycle limit reached ($max_cycles cycles)"
+            exit_reason="cycle_limit"
+            break
+        fi
+
+        # Check for pause flag
+        if [ -f "$AUTOMATON_DIR/evolution/pause" ]; then
+            log "EVOLVE" "Pause flag detected — stopping after current cycle"
+            exit_reason="paused"
+            break
+        fi
+
+        # Check per-cycle budget
+        local estimated_remaining=1
+        if [ "$max_cycles" -gt 0 ]; then
+            estimated_remaining=$((start_cycle + max_cycles - cycle_id))
+            [ "$estimated_remaining" -lt 1 ] && estimated_remaining=1
+        fi
+        if ! _evolve_check_budget "$cycle_id" "$estimated_remaining" >/dev/null 2>&1; then
+            log "EVOLVE" "Budget exhausted — stopping evolution"
+            exit_reason="budget_exhausted"
+            break
+        fi
+
+        # Run the cycle
+        local cycle_rc=0
+        _evolve_run_cycle "$cycle_id" || cycle_rc=$?
+
+        case "$cycle_rc" in
+            0)  # Cycle completed successfully
+                ;;
+            1)  # Phase failure — log but continue to next cycle
+                log "EVOLVE" "Cycle $cycle_id had a phase failure — continuing"
+                ;;
+            2)  # Budget exhaustion mid-cycle
+                log "EVOLVE" "Cycle $cycle_id hit budget limit"
+                exit_reason="budget_exhausted"
+                break
+                ;;
+            3)  # Circuit breaker tripped
+                log "EVOLVE" "Circuit breaker tripped during cycle $cycle_id"
+                exit_reason="circuit_breaker"
+                break
+                ;;
+        esac
+
+        # Check convergence after each completed cycle
+        local convergence_reason
+        if convergence_reason=$(_evolve_check_convergence 2>/dev/null); then
+            log "EVOLVE" "Convergence detected: $convergence_reason"
+            exit_reason="converged:${convergence_reason}"
+            break
+        fi
+
+        cycle_id=$((cycle_id + 1))
+    done
+
+    # Rebuild garden index and persist state
+    _garden_rebuild_index 2>/dev/null || true
+
+    log "EVOLVE" "Evolution loop finished (cycles_run=$((cycle_id - start_cycle + 1)), reason=${exit_reason:-completed})"
+
+    case "$exit_reason" in
+        budget_exhausted) return 2 ;;
+        circuit_breaker)  return 1 ;;
+        *)                return 0 ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
@@ -13140,6 +13332,33 @@ if [ "$ARG_EVOLVE" = "true" ]; then
     if [ "$ARG_CYCLES" -gt 0 ]; then
         log "ORCHESTRATOR" "Evolution limited to $ARG_CYCLES cycles"
     fi
+
+    # Initialize state (creates .automaton/ directory, garden, signals, etc.)
+    initialize
+
+    # Determine start point: resume or fresh
+    local evolve_start_cycle=1
+    local evolve_start_phase="reflect"
+    if [ "$ARG_RESUME" = "true" ]; then
+        local resume_info
+        if resume_info=$(_evolve_resume_state); then
+            evolve_start_cycle="${resume_info%%:*}"
+            evolve_start_phase="${resume_info##*:}"
+            log "ORCHESTRATOR" "Evolution resume: cycle=$evolve_start_cycle, phase=$evolve_start_phase"
+        else
+            log "ORCHESTRATOR" "No previous evolution state — starting fresh"
+        fi
+    fi
+
+    # Run the evolution loop
+    local evolve_rc=0
+    _evolve_run_loop "$evolve_start_cycle" "$evolve_start_phase" || evolve_rc=$?
+
+    case "$evolve_rc" in
+        0) log "ORCHESTRATOR" "Evolution completed successfully"; exit 0 ;;
+        2) log "ORCHESTRATOR" "Evolution stopped: budget exhausted (resumable with --evolve --resume)"; exit 2 ;;
+        *) log "ORCHESTRATOR" "Evolution stopped with errors"; exit 1 ;;
+    esac
 fi
 
 # --- Stats mode (spec-26) ---
