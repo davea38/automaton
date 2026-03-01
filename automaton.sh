@@ -273,7 +273,8 @@ read_state() {
 # First-run initialization: create .automaton/ structure, write initial state,
 # initialize budget tracking, and create an empty session log.
 initialize() {
-    mkdir -p "$AUTOMATON_DIR/agents" "$AUTOMATON_DIR/worktrees" "$AUTOMATON_DIR/inbox"
+    mkdir -p "$AUTOMATON_DIR/agents" "$AUTOMATON_DIR/worktrees" "$AUTOMATON_DIR/inbox" \
+             "$AUTOMATON_DIR/run-summaries"
 
     # Create parallel-mode directories and files when parallel is enabled
     if [ "${PARALLEL_ENABLED:-false}" = "true" ]; then
@@ -1793,6 +1794,115 @@ _self_continue_recommendation() {
 }
 
 # ---------------------------------------------------------------------------
+# Run Summaries (spec-34)
+# ---------------------------------------------------------------------------
+
+# Writes a per-run summary JSON to .automaton/run-summaries/.
+# Captures: phases completed, iterations, tokens, cost, learnings, git commits.
+# Called at the end of run_orchestration() and from _handle_shutdown().
+# Args: [exit_code] (default: 0)
+write_run_summary() {
+    local run_exit_code="${1:-0}"
+    local summaries_dir="$AUTOMATON_DIR/run-summaries"
+    mkdir -p "$summaries_dir"
+
+    # Build run_id from started_at timestamp (colons → hyphens for filename safety)
+    local run_ts="${started_at:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+    local run_id
+    run_id="run-$(echo "$run_ts" | tr ':' '-')"
+    local summary_file="$summaries_dir/${run_id}.json"
+
+    local completed_at
+    completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Phases completed from phase_history variable
+    local phases_json="[]"
+    if [ -n "${phase_history:-}" ] && [ "$phase_history" != "[]" ]; then
+        phases_json=$(echo "$phase_history" | jq -c '[.[].phase]')
+    fi
+
+    # Task counts from IMPLEMENTATION_PLAN.md
+    local tasks_completed=0 tasks_remaining=0
+    local plan_file="${PLAN_FILE:-IMPLEMENTATION_PLAN.md}"
+    if [ -f "$plan_file" ]; then
+        tasks_completed=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null || echo 0)
+        tasks_remaining=$(grep -c '^\- \[ \]' "$plan_file" 2>/dev/null || echo 0)
+    fi
+
+    # Token usage from budget.json
+    local input_tokens=0 output_tokens=0 cache_create=0 cache_read=0 cost_usd="0.00"
+    local budget_file="$AUTOMATON_DIR/budget.json"
+    if [ -f "$budget_file" ]; then
+        input_tokens=$(jq '.used.total_input // 0' "$budget_file")
+        output_tokens=$(jq '.used.total_output // 0' "$budget_file")
+        cache_create=$(jq '.used.total_cache_create // 0' "$budget_file")
+        cache_read=$(jq '.used.total_cache_read // 0' "$budget_file")
+        cost_usd=$(jq '.used.estimated_cost_usd // 0' "$budget_file")
+    fi
+
+    # Learnings added during this run (created_at >= started_at)
+    local learnings_added=0 new_learnings_json="[]"
+    local learnings_file="$AUTOMATON_DIR/learnings.json"
+    if [ -f "$learnings_file" ]; then
+        new_learnings_json=$(jq -c --arg since "$run_ts" '
+            [.entries[] | select(.created_at >= $since) | .id]
+        ' "$learnings_file" 2>/dev/null || echo "[]")
+        learnings_added=$(echo "$new_learnings_json" | jq 'length')
+    fi
+
+    # Git commits since run started
+    local commits_json="[]"
+    if [ -n "${run_ts:-}" ]; then
+        local raw_commits
+        raw_commits=$(git log --oneline --since="$run_ts" --format="%h" 2>/dev/null || true)
+        if [ -n "$raw_commits" ]; then
+            commits_json=$(echo "$raw_commits" | jq -R -s -c 'split("\n") | map(select(. != ""))')
+        fi
+    fi
+
+    # Write the summary JSON
+    jq -n \
+        --arg run_id "$run_id" \
+        --arg started_at "$run_ts" \
+        --arg completed_at "$completed_at" \
+        --argjson exit_code "$run_exit_code" \
+        --argjson phases_completed "$phases_json" \
+        --argjson iterations_total "${iteration:-0}" \
+        --argjson tasks_completed "$tasks_completed" \
+        --argjson tasks_remaining "$tasks_remaining" \
+        --argjson input_tokens "$input_tokens" \
+        --argjson output_tokens "$output_tokens" \
+        --argjson cache_create "$cache_create" \
+        --argjson cache_read "$cache_read" \
+        --argjson cost_usd "$cost_usd" \
+        --argjson learnings_added "$learnings_added" \
+        --argjson new_learnings "$new_learnings_json" \
+        --argjson git_commits "$commits_json" \
+        '{
+            run_id: $run_id,
+            started_at: $started_at,
+            completed_at: $completed_at,
+            exit_code: $exit_code,
+            phases_completed: $phases_completed,
+            iterations_total: $iterations_total,
+            tasks_completed: $tasks_completed,
+            tasks_remaining: $tasks_remaining,
+            tokens_used: {
+                input: $input_tokens,
+                output: $output_tokens,
+                cache_read: $cache_read,
+                cache_create: $cache_create
+            },
+            estimated_cost_usd: $cost_usd,
+            learnings_added: $learnings_added,
+            new_learnings: $new_learnings,
+            git_commits: $git_commits
+        }' > "$summary_file"
+
+    log "ORCHESTRATOR" "Run summary written to $summary_file"
+}
+
+# ---------------------------------------------------------------------------
 # Run Journal & Performance Tracking (spec-26)
 # ---------------------------------------------------------------------------
 
@@ -2776,6 +2886,7 @@ _handle_shutdown() {
     fi
     # Guard: only attempt state save if initialization has run (state vars exist)
     if [ -n "${started_at:-}" ]; then
+        write_run_summary 130 2>/dev/null || true
         write_state 2>/dev/null || true
         log "ORCHESTRATOR" "Interrupted by user (SIG${signal}). State saved for --resume." 2>/dev/null || true
     else
@@ -5490,6 +5601,9 @@ run_orchestration() {
     fi
 
     write_state
+
+    # Write persistent run summary (spec-34)
+    write_run_summary 0
 
     # Archive run to journal (spec-26)
     archive_run_journal
