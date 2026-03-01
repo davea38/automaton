@@ -146,7 +146,7 @@ Bootstrap eliminates the first N tool calls of every iteration that were spent r
 
 Agent Teams provides a native parallel execution backend as an alternative to automaton's bash-orchestrated tmux + worktree model, with self-claiming task lists and inter-agent messaging.
 
-- [ ] Add `parallel.mode` config field with values `"automaton"` (default, current behavior), `"agent-teams"`, and `"hybrid"` (future) (WHY: multiple parallel backends let users choose between the proven bash model and the native Agent Teams API)
+- [x] Add `parallel.mode` config field with values `"automaton"` (default, current behavior), `"agent-teams"`, and `"hybrid"` (future) (WHY: multiple parallel backends let users choose between the proven bash model and the native Agent Teams API)
 - [ ] Implement task list population: convert unchecked `IMPLEMENTATION_PLAN.md` tasks to Agent Teams shared task list format with dependency annotations (`<!-- depends: task-N -->`) mapped to blocked tasks (WHY: the shared task list replaces wave-based assignment; teammates self-claim tasks instead of receiving pre-assigned work)
 - [ ] Configure teammate spawning from `automaton-builder` agent definition (spec-27) with count from `parallel.max_builders`, permission mode from lead, and display mode from `parallel.teammate_display` (WHY: teammates use the same agent definitions as the wave-based builders, ensuring identical behavior regardless of parallel backend)
 - [ ] Create `.claude/hooks/teammate-idle.sh` for `TeammateIdle` hook: check for unclaimed tasks, exit 2 to keep teammate working or exit 0 to allow idle (WHY: TeammateIdle replaces stall detection from spec-16's wave polling; prevents teammates from going idle while work remains)
