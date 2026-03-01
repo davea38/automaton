@@ -133,7 +133,7 @@ Skills extract reusable workflow patterns from prompts, reducing prompt size by 
 
 Bootstrap eliminates the first N tool calls of every iteration that were spent reading AGENTS.md, IMPLEMENTATION_PLAN.md, specs, and state files.
 
-- [ ] Create `.automaton/init.sh` bootstrap script that assembles JSON manifest (project state, next task, recent commits, budget, modified files, high-confidence learnings) from file reads and git commands (WHY: context assembly by shell script is 100x faster than agent tool calls; saves 18-48K input tokens per iteration)
+- [x] Create `.automaton/init.sh` bootstrap script that assembles JSON manifest (project state, next task, recent commits, budget, modified files, high-confidence learnings) from file reads and git commands (WHY: context assembly by shell script is 100x faster than agent tool calls; saves 18-48K input tokens per iteration)
 - [ ] Integrate bootstrap into `run_agent()` in `automaton.sh`: call `init.sh` before each agent invocation, inject manifest into `<dynamic_context>` section (WHY: pre-assembled context arrives in the prompt, so the agent starts working immediately instead of spending turns reading files)
 - [ ] Replace "Phase 0: Load Context" instructions in all `PROMPT_*.md` files with bootstrap manifest placeholder (`{{BOOTSTRAP_MANIFEST}}`) and note that agents do NOT need to read state files themselves (WHY: Phase 0 instructions become dead weight when bootstrap provides the data; removing them reclaims prompt space)
 - [ ] Implement bootstrap failure handling: log error, fall back to empty `<dynamic_context>` and legacy agent-driven file reading, do NOT abort the iteration (WHY: bootstrap is an optimization, not a requirement; graceful degradation ensures iterations always proceed)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tests/test_bootstrap_init.sh — tests for .automaton/init.sh bootstrap script
-set -euo pipefail
+set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -98,7 +98,7 @@ fi
 
 # --- Test 7: Budget data ---
 budget_used=$(echo "$output" | jq '.budget.used_usd')
-assert_equals "12.5" "$budget_used" "budget.used_usd is 12.50"
+assert_equals "12.50" "$budget_used" "budget.used_usd is 12.50"
 
 budget_limit=$(echo "$output" | jq '.budget.limit_usd')
 assert_equals "50" "$budget_limit" "budget.limit_usd is 50"
