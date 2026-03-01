@@ -8703,6 +8703,152 @@ _write_observe_json() {
 }
 
 # ---------------------------------------------------------------------------
+# Evolution Cycle Runner (spec-41 §8)
+# ---------------------------------------------------------------------------
+
+# Orchestrates one complete evolution cycle: REFLECT → IDEATE → EVALUATE →
+# IMPLEMENT → OBSERVE. Manages per-cycle budget, takes pre/post metrics
+# snapshots, creates the cycle directory, and handles phase failures.
+#
+# Usage: _evolve_run_cycle <cycle_id>
+# Returns: 0 on success, 1 on phase failure, 2 on budget exhaustion,
+#          3 on circuit breaker trip
+_evolve_run_cycle() {
+    local cycle_id="${1:?_evolve_run_cycle requires cycle_id}"
+    local padded_cycle
+    padded_cycle=$(printf "%03d" "$cycle_id")
+    local cycle_dir="$AUTOMATON_DIR/evolution/cycle-${padded_cycle}"
+    mkdir -p "$cycle_dir"
+
+    log "EVOLVE" "=== Cycle $cycle_id starting ==="
+
+    # Check circuit breakers before starting the cycle
+    if _safety_any_breaker_tripped 2>/dev/null; then
+        log "EVOLVE" "Cycle $cycle_id aborted: circuit breaker tripped"
+        jq -n --argjson cycle_id "$cycle_id" --arg status "aborted" \
+            --arg reason "circuit_breaker_tripped" \
+            --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{cycle_id: $cycle_id, status: $status, reason: $reason, timestamp: $timestamp}' \
+            > "$cycle_dir/cycle-summary.json"
+        return 3
+    fi
+
+    # Take pre-cycle metrics snapshot
+    _metrics_snapshot "$cycle_id" 2>/dev/null || true
+
+    local cycle_status="completed"
+    local cycle_reason=""
+    local phases_completed=0
+
+    # --- Phase 1: REFLECT ---
+    log "EVOLVE" "Cycle $cycle_id: Phase 1/5 REFLECT"
+    if ! _evolve_reflect "$padded_cycle" 2>/dev/null; then
+        log "EVOLVE" "Cycle $cycle_id: REFLECT phase failed — aborting cycle"
+        cycle_status="failed"
+        cycle_reason="reflect_phase_failed"
+    fi
+    phases_completed=$((phases_completed + 1))
+
+    # Check circuit breakers after REFLECT
+    if [ "$cycle_status" = "completed" ] && _safety_any_breaker_tripped 2>/dev/null; then
+        log "EVOLVE" "Cycle $cycle_id: circuit breaker tripped after REFLECT"
+        cycle_status="aborted"
+        cycle_reason="circuit_breaker_tripped_after_reflect"
+    fi
+
+    # --- Phase 2: IDEATE ---
+    if [ "$cycle_status" = "completed" ]; then
+        log "EVOLVE" "Cycle $cycle_id: Phase 2/5 IDEATE"
+        if ! _evolve_ideate "$padded_cycle" 2>/dev/null; then
+            log "EVOLVE" "Cycle $cycle_id: IDEATE phase failed — aborting cycle"
+            cycle_status="failed"
+            cycle_reason="ideate_phase_failed"
+        fi
+        phases_completed=$((phases_completed + 1))
+    fi
+
+    # --- Phase 3: EVALUATE ---
+    local eval_result="skipped"
+    if [ "$cycle_status" = "completed" ]; then
+        log "EVOLVE" "Cycle $cycle_id: Phase 3/5 EVALUATE"
+        if ! _evolve_evaluate "$padded_cycle" 2>/dev/null; then
+            log "EVOLVE" "Cycle $cycle_id: EVALUATE phase failed — aborting cycle"
+            cycle_status="failed"
+            cycle_reason="evaluate_phase_failed"
+        else
+            # Check evaluate.json to determine if we have a candidate
+            local eval_file="$cycle_dir/evaluate.json"
+            if [ -f "$eval_file" ]; then
+                eval_result=$(jq -r '.result // "skipped"' "$eval_file" 2>/dev/null || echo "skipped")
+            fi
+        fi
+        phases_completed=$((phases_completed + 1))
+    fi
+
+    # --- Phase 4: IMPLEMENT (skip if no approved candidate) ---
+    if [ "$cycle_status" = "completed" ] && [ "$eval_result" = "approved" ]; then
+        log "EVOLVE" "Cycle $cycle_id: Phase 4/5 IMPLEMENT"
+        if ! _evolve_implement "$padded_cycle" 2>/dev/null; then
+            log "EVOLVE" "Cycle $cycle_id: IMPLEMENT phase failed — skipping to OBSERVE"
+            # Implementation failure is not fatal — OBSERVE will handle cleanup
+        fi
+        phases_completed=$((phases_completed + 1))
+    elif [ "$cycle_status" = "completed" ]; then
+        log "EVOLVE" "Cycle $cycle_id: Phase 4/5 IMPLEMENT skipped (no approved candidate, eval_result=$eval_result)"
+        phases_completed=$((phases_completed + 1))
+    fi
+
+    # --- Phase 5: OBSERVE ---
+    if [ "$cycle_status" = "completed" ]; then
+        log "EVOLVE" "Cycle $cycle_id: Phase 5/5 OBSERVE"
+        if ! _evolve_observe "$padded_cycle" 2>/dev/null; then
+            log "EVOLVE" "Cycle $cycle_id: OBSERVE phase failed"
+            cycle_status="failed"
+            cycle_reason="observe_phase_failed"
+        fi
+        phases_completed=$((phases_completed + 1))
+    fi
+
+    # Persist garden state after cycle
+    _garden_rebuild_index 2>/dev/null || true
+
+    # Write cycle summary
+    local observe_outcome="none"
+    local observe_file="$cycle_dir/observe.json"
+    if [ -f "$observe_file" ]; then
+        observe_outcome=$(jq -r '.outcome // "none"' "$observe_file" 2>/dev/null || echo "none")
+    fi
+
+    jq -n \
+        --argjson cycle_id "$cycle_id" \
+        --arg status "$cycle_status" \
+        --arg reason "$cycle_reason" \
+        --argjson phases_completed "$phases_completed" \
+        --arg eval_result "$eval_result" \
+        --arg observe_outcome "$observe_outcome" \
+        --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{
+            cycle_id: $cycle_id,
+            status: $status,
+            reason: $reason,
+            phases_completed: $phases_completed,
+            eval_result: $eval_result,
+            observe_outcome: $observe_outcome,
+            timestamp: $timestamp
+        }' > "$cycle_dir/cycle-summary.json"
+
+    log "EVOLVE" "=== Cycle $cycle_id $cycle_status (phases=$phases_completed, eval=$eval_result, outcome=$observe_outcome) ==="
+
+    if [ "$cycle_status" = "completed" ]; then
+        return 0
+    elif [ "$cycle_status" = "aborted" ]; then
+        return 3
+    else
+        return 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
