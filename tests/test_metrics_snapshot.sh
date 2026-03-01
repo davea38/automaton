@@ -209,4 +209,69 @@ fi
 has_version=$(echo "$result" | jq '.version // 0' 2>/dev/null || echo "0")
 assert_equals "1" "$has_version" "Metrics file has version field"
 
+# --- Test 16: Snapshot retention pruning — code references METRICS_SNAPSHOT_RETENTION ---
+grep_result=$(grep -c 'METRICS_SNAPSHOT_RETENTION' "$script_file" || true)
+if [ "$grep_result" -ge 2 ]; then
+    echo "PASS: automaton.sh references METRICS_SNAPSHOT_RETENTION for retention enforcement"
+    ((_TEST_PASS_COUNT++))
+else
+    echo "FAIL: automaton.sh should reference METRICS_SNAPSHOT_RETENTION for retention enforcement (found $grep_result)" >&2
+    ((_TEST_FAIL_COUNT++))
+fi
+
+# --- Test 17: Integration — snapshot retention prunes oldest when limit exceeded ---
+RETENTION_TEST_DIR=$(mktemp -d)
+trap 'rm -rf "$TEST_DIR" "$RETENTION_TEST_DIR"' EXIT
+
+mkdir -p "$RETENTION_TEST_DIR/.automaton/garden" "$RETENTION_TEST_DIR/.automaton/votes" "$RETENTION_TEST_DIR/specs" "$RETENTION_TEST_DIR/tests" "$RETENTION_TEST_DIR/.claude/agents" "$RETENTION_TEST_DIR/.claude/skills" "$RETENTION_TEST_DIR/.claude/hooks"
+cat > "$RETENTION_TEST_DIR/automaton.sh" << 'SCRIPTEOF'
+#!/usr/bin/env bash
+_func_one() { true; }
+SCRIPTEOF
+echo '{"stall_count": 0, "iteration": 5}' > "$RETENTION_TEST_DIR/.automaton/state.json"
+echo '{"mode":"api","limits":{"max_cost_usd":50},"used":{"total_input":1000,"total_output":500,"total_cache_create":0,"total_cache_read":0,"estimated_cost_usd":0.50},"history":[]}' > "$RETENTION_TEST_DIR/.automaton/budget.json"
+echo '{"total":0,"by_stage":{"seed":0,"sprout":0,"bloom":0,"harvest":0,"wilt":0},"bloom_candidates":[],"recent_activity":[],"next_id":1,"updated_at":"2026-03-01T00:00:00Z"}' > "$RETENTION_TEST_DIR/.automaton/garden/_index.json"
+echo '{"version":1,"signals":[]}' > "$RETENTION_TEST_DIR/.automaton/signals.json"
+echo '{"passed":1,"failed":0,"total":1}' > "$RETENTION_TEST_DIR/.automaton/test_results.json"
+echo '[]' > "$RETENTION_TEST_DIR/.automaton/self_modifications.json"
+
+# Pre-fill metrics file with 5 snapshots (set retention to 3)
+pre_snapshots='{"version":1,"snapshots":['
+for i in 1 2 3 4 5; do
+    [ "$i" -gt 1 ] && pre_snapshots+=','
+    pre_snapshots+="{\"cycle_id\":$i,\"timestamp\":\"2026-01-0${i}T00:00:00Z\",\"capability\":{},\"efficiency\":{},\"quality\":{},\"innovation\":{\"garden_harvested\":0},\"health\":{\"consecutive_no_improvement\":0}}"
+done
+pre_snapshots+='],"baselines":{}}'
+echo "$pre_snapshots" > "$RETENTION_TEST_DIR/.automaton/evolution-metrics.json"
+
+retention_result=$(
+    export AUTOMATON_DIR="$RETENTION_TEST_DIR/.automaton"
+    export METRICS_ENABLED="true"
+    export PROJECT_ROOT="$RETENTION_TEST_DIR"
+    export SCRIPT_PATH="$RETENTION_TEST_DIR/automaton.sh"
+    export BUDGET_MODE="api"
+    export METRICS_SNAPSHOT_RETENTION=3
+
+    func_body=$(awk '/^_metrics_snapshot\(\)/{found=1} found{print} found && /^}$/{exit}' "$script_file")
+    log() { true; }
+    eval "$func_body"
+    _metrics_snapshot 6 >/dev/null
+    cat "$AUTOMATON_DIR/evolution-metrics.json"
+)
+
+retention_count=$(echo "$retention_result" | jq '.snapshots | length' 2>/dev/null || echo "0")
+assert_equals "3" "$retention_count" "Snapshot retention prunes to configured limit (3)"
+
+# --- Test 18: After pruning, oldest snapshot should be gone, newest retained ---
+oldest_cycle=$(echo "$retention_result" | jq '.snapshots[0].cycle_id' 2>/dev/null || echo "0")
+newest_cycle=$(echo "$retention_result" | jq '.snapshots[-1].cycle_id' 2>/dev/null || echo "0")
+assert_equals "6" "$newest_cycle" "Newest snapshot (cycle 6) is retained after pruning"
+if [ "$oldest_cycle" -ge 4 ]; then
+    echo "PASS: Oldest remaining snapshot is cycle $oldest_cycle (cycles 1-3 pruned)"
+    ((_TEST_PASS_COUNT++))
+else
+    echo "FAIL: Oldest remaining snapshot should be >= cycle 4 (got cycle $oldest_cycle)" >&2
+    ((_TEST_FAIL_COUNT++))
+fi
+
 test_summary
