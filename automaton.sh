@@ -491,7 +491,7 @@ RATE
 # Uses jq for proper JSON escaping of free-text fields (e.g. task description).
 # Args: model prompt_file start end duration exit_code
 #       input_tokens output_tokens cache_create cache_read
-#       cost task status files_changed_json git_commit
+#       cost task status files_changed_json git_commit auto_compaction
 write_agent_history() {
     local model="$1" prompt_file="$2" agent_start="$3" agent_end="$4"
     local duration="$5" exit_code="$6"
@@ -499,6 +499,7 @@ write_agent_history() {
     local cache_create="${9:-0}" cache_read="${10:-0}"
     local cost="${11:-0}" task_desc="${12:-}" status="${13:-unknown}"
     local files_changed="${14:-[]}" git_commit="${15:-null}"
+    local auto_compaction="${16:-false}"
 
     local padded
     padded=$(printf "%03d" "$phase_iteration")
@@ -522,6 +523,7 @@ write_agent_history() {
         --arg status "$status" \
         --argjson files_changed "$files_changed" \
         --arg git_commit "$git_commit" \
+        --argjson auto_compaction_detected "$([ "$auto_compaction" = "true" ] && echo true || echo false)" \
         '{
             phase: $phase,
             iteration: $iteration,
@@ -541,7 +543,8 @@ write_agent_history() {
             task: $task,
             status: $status,
             files_changed: $files_changed,
-            git_commit: (if $git_commit == "null" then null else $git_commit end)
+            git_commit: (if $git_commit == "null" then null else $git_commit end),
+            auto_compaction_detected: $auto_compaction_detected
         }' > "$filename"
 }
 
@@ -756,6 +759,50 @@ extract_tokens() {
     LAST_OUTPUT_TOKENS=$(echo "$usage_line" | jq -r '.usage.output_tokens // 0')
     LAST_CACHE_CREATE=$(echo "$usage_line" | jq -r '.usage.cache_creation_input_tokens // 0')
     LAST_CACHE_READ=$(echo "$usage_line" | jq -r '.usage.cache_read_input_tokens // 0')
+}
+
+# Detects auto-compaction by finding input_tokens drops between turns in
+# stream-json output. Auto-compaction at ~95% context capacity compresses the
+# conversation, causing a significant drop in input_tokens on the next turn.
+# Sets global: LAST_AUTO_COMPACTION_DETECTED (true/false)
+# WHY: Knowing when compaction occurred helps explain unexpected behavior and
+# informs task sizing decisions (spec-33).
+detect_auto_compaction() {
+    local result_output="$1"
+    LAST_AUTO_COMPACTION_DETECTED=false
+
+    # Extract all input_tokens values from lines containing usage data
+    local token_values
+    token_values=$(echo "$result_output" \
+        | grep '"input_tokens"' \
+        | jq -r '.usage.input_tokens // empty' 2>/dev/null \
+        | grep -v '^$' || true)
+
+    [ -z "$token_values" ] && return 0
+
+    # Need at least 2 data points to detect a drop
+    local count
+    count=$(echo "$token_values" | wc -l)
+    [ "$count" -lt 2 ] && return 0
+
+    # Check for any drop where input_tokens decreases by more than 20%
+    local prev_tokens=0
+    local current_tokens
+    while IFS= read -r current_tokens; do
+        [ -z "$current_tokens" ] && continue
+        if [ "$prev_tokens" -gt 0 ] && [ "$current_tokens" -lt "$prev_tokens" ]; then
+            # Calculate drop percentage
+            local drop_pct
+            drop_pct=$(awk -v prev="$prev_tokens" -v curr="$current_tokens" \
+                'BEGIN { printf "%.0f", ((prev - curr) / prev) * 100 }')
+            if [ "$drop_pct" -ge 20 ]; then
+                LAST_AUTO_COMPACTION_DETECTED=true
+                log "ORCHESTRATOR" "WARNING: Auto-compaction detected in ${current_phase} iteration ${phase_iteration} (input_tokens dropped from ${prev_tokens} to ${current_tokens}, -${drop_pct}%). Uncommitted work may have been lost."
+                return 0
+            fi
+        fi
+        prev_tokens="$current_tokens"
+    done <<< "$token_values"
 }
 
 # Returns estimated USD cost for a given model and token counts.
@@ -5702,6 +5749,9 @@ post_iteration() {
     # 1. Extract tokens from stream-json output
     extract_tokens "$AGENT_RESULT"
 
+    # 1a. Detect auto-compaction (spec-33: token count drops between turns)
+    detect_auto_compaction "$AGENT_RESULT"
+
     # 2. Estimate cost for this iteration
     local iter_cost
     iter_cost=$(estimate_cost "$model" "$LAST_INPUT_TOKENS" "$LAST_OUTPUT_TOKENS" \
@@ -5766,7 +5816,8 @@ post_iteration() {
         "$duration" "$AGENT_EXIT_CODE" \
         "$LAST_INPUT_TOKENS" "$LAST_OUTPUT_TOKENS" \
         "$LAST_CACHE_CREATE" "$LAST_CACHE_READ" \
-        "$iter_cost" "$task_desc" "$status" "$files_changed" "$git_commit"
+        "$iter_cost" "$task_desc" "$status" "$files_changed" "$git_commit" \
+        "$LAST_AUTO_COMPACTION_DETECTED"
 
     # 10. Emit one-line status to stdout
     emit_status_line "$model" "$iter_cost"
