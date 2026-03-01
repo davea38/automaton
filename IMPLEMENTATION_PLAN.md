@@ -214,7 +214,7 @@ These specs build on the garden and signals to add collective decision-making an
 
 #### 39.1 Voter Definitions
 
-- [ ] Create 5 voter agent definition files in `.claude/agents/`: `voter-conservative.md`, `voter-ambitious.md`, `voter-efficiency.md`, `voter-quality.md`, `voter-advocate.md` with their respective perspectives, read-only constraints, and JSON output format (WHY: each voter brings a distinct evaluation lens — conservative for risk, ambitious for growth, efficiency for cost, quality for reliability, advocate for user experience — creating balanced collective judgment) <!-- test: tests/test_quorum_voters.sh -->
+- [x] Create 5 voter agent definition files in `.claude/agents/`: `voter-conservative.md`, `voter-ambitious.md`, `voter-efficiency.md`, `voter-quality.md`, `voter-advocate.md` with their respective perspectives, read-only constraints, and JSON output format (WHY: each voter brings a distinct evaluation lens — conservative for risk, ambitious for growth, efficiency for cost, quality for reliability, advocate for user experience — creating balanced collective judgment) <!-- test: tests/test_quorum_voters.sh -->
 
 #### 39.2 Quorum Mechanics
 
