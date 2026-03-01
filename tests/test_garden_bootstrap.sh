@@ -33,13 +33,15 @@ fi
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
-# Create the project directory structure
+# Create the project directory structure (2 commits needed for HEAD~1 in init.sh)
 mkdir -p "$tmpdir/.automaton/garden"
 git -C "$tmpdir" init -q 2>/dev/null
-# Create a dummy commit so git log works
 touch "$tmpdir/README"
 git -C "$tmpdir" add README
 git -C "$tmpdir" commit -q -m "init" 2>/dev/null
+touch "$tmpdir/file2"
+git -C "$tmpdir" add file2
+git -C "$tmpdir" commit -q -m "second" 2>/dev/null
 
 # Create a populated _index.json
 cat > "$tmpdir/.automaton/garden/_index.json" <<'IDXEOF'
@@ -97,6 +99,9 @@ git -C "$tmpdir2" init -q 2>/dev/null
 touch "$tmpdir2/README"
 git -C "$tmpdir2" add README
 git -C "$tmpdir2" commit -q -m "init" 2>/dev/null
+touch "$tmpdir2/file2"
+git -C "$tmpdir2" add file2
+git -C "$tmpdir2" commit -q -m "second" 2>/dev/null
 
 manifest2=$(bash "$init_script" "$tmpdir2" "build" "1" 2>/dev/null)
 val=$(echo "$manifest2" | jq -r '.garden_summary // "absent"')
@@ -109,6 +114,9 @@ git -C "$tmpdir3" init -q 2>/dev/null
 touch "$tmpdir3/README"
 git -C "$tmpdir3" add README
 git -C "$tmpdir3" commit -q -m "init" 2>/dev/null
+touch "$tmpdir3/file2"
+git -C "$tmpdir3" add file2
+git -C "$tmpdir3" commit -q -m "second" 2>/dev/null
 mkdir -p "$tmpdir3/.automaton/garden"
 cat > "$tmpdir3/.automaton/garden/_index.json" <<'IDXEOF'
 {

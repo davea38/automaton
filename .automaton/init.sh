@@ -109,6 +109,23 @@ generate_context() {
         fi
     fi
 
+    # --- Garden summary (from garden/_index.json, spec-38 §3) ---
+    local garden_index="$AUTOMATON_DIR/garden/_index.json"
+    if [ -f "$garden_index" ]; then
+        local garden_data
+        garden_data=$(jq '{
+            total: .total,
+            seeds: .by_stage.seed,
+            sprouts: .by_stage.sprout,
+            blooms: .by_stage.bloom,
+            top_bloom: (.bloom_candidates[0] // null)
+        }' "$garden_index" 2>/dev/null || echo '{}')
+        if [ "$garden_data" != "{}" ]; then
+            manifest=$(echo "$manifest" | jq --argjson gs "$garden_data" \
+                '. + {garden_summary: $gs}')
+        fi
+    fi
+
     echo "$manifest" | jq .
 }
 

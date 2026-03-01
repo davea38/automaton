@@ -170,7 +170,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 - [x] Add garden directory initialization to `initialize_state()` in `automaton.sh` that creates `.automaton/garden/` and an empty `_index.json` when `garden.enabled` is true (WHY: the garden directory must exist before any garden operations can write idea files) <!-- test: tests/test_garden_init.sh -->
 
-- [ ] Add `garden_summary` field to the bootstrap manifest in `.automaton/init.sh` sourced from `_index.json` (total, seeds, sprouts, blooms, top_bloom) (WHY: evolution agents need garden state in their prompt context without reading individual idea files) <!-- test: tests/test_garden_bootstrap.sh -->
+- [x] Add `garden_summary` field to the bootstrap manifest in `.automaton/init.sh` sourced from `_index.json` (total, seeds, sprouts, blooms, top_bloom) (WHY: evolution agents need garden state in their prompt context without reading individual idea files) <!-- test: tests/test_garden_bootstrap.sh -->
 
 - [ ] Implement backward compatibility: when `garden.enabled` is false, skip all garden operations and fall back to `.automaton/backlog.md` behavior from spec-25 (WHY: existing users who do not want the garden can continue using the flat backlog without any breakage) <!-- test: tests/test_garden_config.sh -->
 
