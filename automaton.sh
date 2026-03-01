@@ -6887,6 +6887,145 @@ _display_garden() {
     echo "Use --garden-detail ID for full details. Use --plant \"idea\" to add new seeds."
 }
 
+# Renders full details for a single garden idea including description, evidence
+# list with timestamps, related specs/signals, stage history, and vote status.
+# Accepts an idea ID (with or without "idea-" prefix).
+#
+# Usage: _display_garden_detail <idea_id>
+_display_garden_detail() {
+    local idea_id="$1"
+    local garden_dir="$AUTOMATON_DIR/garden"
+
+    # Normalize ID: add "idea-" prefix if not present
+    if [[ "$idea_id" != idea-* ]]; then
+        idea_id="idea-$(printf '%03d' "$idea_id" 2>/dev/null || echo "$idea_id")"
+    fi
+
+    local idea_file="$garden_dir/${idea_id}.json"
+
+    if [ ! -f "$idea_file" ]; then
+        echo "Idea '$idea_id' not found in the garden."
+        return 1
+    fi
+
+    # Read all fields from the idea file
+    local title stage priority complexity description vote_id
+    title=$(jq -r '.title // "Untitled"' "$idea_file")
+    stage=$(jq -r '.stage // "unknown"' "$idea_file")
+    priority=$(jq -r '.priority // 0' "$idea_file")
+    complexity=$(jq -r '.estimated_complexity // "unknown"' "$idea_file")
+    description=$(jq -r '.description // ""' "$idea_file")
+    vote_id=$(jq -r '.vote_id // empty' "$idea_file" 2>/dev/null || echo "")
+
+    # Get the date for the current stage
+    local stage_date=""
+    stage_date=$(jq -r --arg s "$stage" '.stage_history[] | select(.stage == $s) | .entered_at' "$idea_file" | tail -1)
+    if [ -n "$stage_date" ] && [ "$stage_date" != "null" ]; then
+        stage_date=$(echo "$stage_date" | cut -dT -f1)
+    else
+        stage_date="unknown"
+    fi
+
+    # Tags
+    local tags
+    tags=$(jq -r '.tags // [] | join(", ")' "$idea_file")
+    local tag_suffix=""
+    if [ -n "$tags" ]; then
+        tag_suffix=" ($tags)"
+    fi
+
+    # Header
+    echo "IDEA: ${idea_id} — ${title}${tag_suffix}"
+    echo "Stage: ${stage} (since ${stage_date})  |  Priority: ${priority}  |  Complexity: ${complexity}"
+    echo ""
+
+    # Description
+    echo "Description:"
+    if [ -n "$description" ]; then
+        echo "$description" | while IFS= read -r line; do
+            echo "  $line"
+        done
+    else
+        echo "  (no description)"
+    fi
+    echo ""
+
+    # Evidence
+    local evidence_count
+    evidence_count=$(jq '.evidence | length' "$idea_file")
+    echo "Evidence (${evidence_count} items):"
+    if [ "$evidence_count" -gt 0 ]; then
+        local i=0
+        while [ "$i" -lt "$evidence_count" ]; do
+            local ev_type ev_content ev_source ev_date
+            ev_type=$(jq -r ".evidence[$i].type // \"unknown\"" "$idea_file")
+            ev_content=$(jq -r ".evidence[$i].content // \"\"" "$idea_file")
+            ev_source=$(jq -r ".evidence[$i].source // \"\"" "$idea_file")
+            ev_date=$(jq -r ".evidence[$i].added_at // \"\"" "$idea_file")
+            if [ -n "$ev_date" ] && [ "$ev_date" != "null" ]; then
+                ev_date=$(echo "$ev_date" | cut -dT -f1)
+            else
+                ev_date=""
+            fi
+            local ev_suffix=""
+            if [ -n "$ev_source" ] || [ -n "$ev_date" ]; then
+                ev_suffix=" (${ev_source}${ev_date:+, $ev_date})"
+            fi
+            echo "  $((i + 1)). [${ev_type}] ${ev_content}${ev_suffix}"
+            i=$((i + 1))
+        done
+    else
+        echo "  (no evidence yet)"
+    fi
+    echo ""
+
+    # Related items
+    local specs signals
+    specs=$(jq -r '.related_specs // [] | if length > 0 then "specs " + (map(tostring) | join(", ")) else "" end' "$idea_file" 2>/dev/null || echo "")
+    signals=$(jq -r '.related_signals // [] | if length > 0 then "signals " + join(", ") else "" end' "$idea_file" 2>/dev/null || echo "")
+    local related_parts=""
+    [ -n "$specs" ] && related_parts="$specs"
+    if [ -n "$signals" ]; then
+        [ -n "$related_parts" ] && related_parts="$related_parts  |  "
+        related_parts="${related_parts}${signals}"
+    fi
+    if [ -n "$related_parts" ]; then
+        echo "Related: ${related_parts}"
+    else
+        echo "Related: (none)"
+    fi
+    echo ""
+
+    # Stage history
+    local history_count
+    history_count=$(jq '.stage_history | length' "$idea_file")
+    echo "Stage History:"
+    if [ "$history_count" -gt 0 ]; then
+        local i=0
+        while [ "$i" -lt "$history_count" ]; do
+            local h_stage h_date h_reason
+            h_stage=$(jq -r ".stage_history[$i].stage // \"\"" "$idea_file")
+            h_date=$(jq -r ".stage_history[$i].entered_at // \"\"" "$idea_file")
+            h_reason=$(jq -r ".stage_history[$i].reason // \"\"" "$idea_file")
+            if [ -n "$h_date" ] && [ "$h_date" != "null" ]; then
+                h_date=$(echo "$h_date" | cut -dT -f1)
+            fi
+            printf "  %-8s → %s  %s\n" "$h_stage" "$h_date" "$h_reason"
+            i=$((i + 1))
+        done
+    else
+        echo "  (no history)"
+    fi
+    echo ""
+
+    # Vote status
+    if [ -n "$vote_id" ] && [ "$vote_id" != "null" ]; then
+        echo "Vote: ${vote_id}"
+    else
+        echo "Vote: not yet evaluated"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Constitutional Principles (spec-40)
 # ---------------------------------------------------------------------------

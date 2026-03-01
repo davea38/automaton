@@ -384,7 +384,7 @@ This spec adds the human-facing commands that wrap all evolution subsystems in a
 
 - [x] Implement `_display_garden()` in `automaton.sh` that renders a formatted table of all non-wilted ideas sorted by stage (bloom first) then priority, with ID, stage, priority, title, and age columns (WHY: the garden table is the primary view into the evolution pipeline — the human needs to see at a glance what ideas exist and which are closest to implementation) <!-- test: tests/test_display_garden.sh -->
 
-- [ ] Implement `_display_garden_detail()` in `automaton.sh` that renders full details for a single idea including description, evidence list with timestamps, related specs/signals, stage history, and vote status (WHY: detail view lets the human evaluate whether an idea has sufficient evidence and understand its full history before deciding to water, promote, or prune it) <!-- test: tests/test_display_garden_detail.sh -->
+- [x] Implement `_display_garden_detail()` in `automaton.sh` that renders full details for a single idea including description, evidence list with timestamps, related specs/signals, stage history, and vote status (WHY: detail view lets the human evaluate whether an idea has sufficient evidence and understand its full history before deciding to water, promote, or prune it) <!-- test: tests/test_display_garden_detail.sh -->
 
 - [ ] Implement `_display_signals()` in `automaton.sh` that renders a formatted table of active signals with ID, type, strength, title, observation count, and linked idea status, plus summary counts of unlinked and strong signals (WHY: the signals view shows what the system is "noticing" — unlinked signals are opportunities for the human to plant related ideas) <!-- test: tests/test_display_signals.sh -->
 
