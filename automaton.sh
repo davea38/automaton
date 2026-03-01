@@ -7227,6 +7227,64 @@ _display_vote() {
     fi
 }
 
+# Renders the constitution article summary with version, amendment count, and
+# per-article protection levels. Matches the spec-44 §3.5 output format.
+#
+# Usage: _display_constitution
+_display_constitution() {
+    local const_file="$AUTOMATON_DIR/constitution.md"
+    local hist_file="$AUTOMATON_DIR/constitution-history.json"
+
+    if [ ! -f "$const_file" ]; then
+        echo "No constitution found. Constitution is created on first --evolve run."
+        return 0
+    fi
+
+    # Extract ratification date from "## Ratified: YYYY-MM-DD" line
+    local ratified_date
+    ratified_date=$(grep -m1 '## Ratified:' "$const_file" | sed 's/.*Ratified: *//' || echo "unknown")
+
+    # Count articles
+    local article_count
+    article_count=$(grep -c '^### Article' "$const_file" || echo "0")
+
+    # Get version and amendment count from history
+    local version=1
+    local amendment_count=0
+    if [ -f "$hist_file" ]; then
+        version=$(jq -r '.current_version // 1' "$hist_file")
+        amendment_count=$(jq '.amendments | length' "$hist_file" 2>/dev/null || echo "0")
+    fi
+
+    # Header
+    echo "AUTOMATON CONSTITUTION (v${version}, ratified ${ratified_date})"
+    echo "${article_count} articles, ${amendment_count} amendments"
+    echo ""
+
+    # Extract and display each article with its protection level
+    while IFS= read -r line; do
+        # Parse "### Article N: Title"
+        local art_num art_title
+        art_num=$(echo "$line" | sed 's/### Article \([^:]*\):.*/\1/')
+        art_title=$(echo "$line" | sed 's/### Article [^:]*: *//')
+
+        # Read the next non-empty line to get the protection level
+        local protection="unknown"
+        local prot_line
+        # Search for the Protection line after this article heading
+        prot_line=$(sed -n "/^### Article ${art_num}:/,/^### Article/{/\*\*Protection:/p;}" "$const_file" | head -1)
+        if [ -n "$prot_line" ]; then
+            protection=$(echo "$prot_line" | sed 's/.*Protection: *//;s/\*\*//g')
+        fi
+
+        printf "  Art. %-4s %-28s [%s]\n" "$art_num" "$art_title" "$protection"
+    done < <(grep '^### Article' "$const_file")
+
+    # Footer
+    echo ""
+    echo "Use --amend to propose changes. Full text: .automaton/constitution.md"
+}
+
 # ---------------------------------------------------------------------------
 # Constitutional Principles (spec-40)
 # ---------------------------------------------------------------------------

@@ -80,76 +80,58 @@ cat > "$TEST_DIR/constitution-history.json" << 'EOF'
 }
 EOF
 
-# Create a wrapper script that sources automaton.sh functions in isolation
-cat > "$TEST_DIR/run_display.sh" << RUNEOF
-#!/usr/bin/env bash
-set -uo pipefail
-AUTOMATON_DIR="$TEST_DIR"
-PROJECT_ROOT="$TEST_DIR"
-LOG_FILE="/dev/null"
-CONFIG_FILE="/dev/null"
+# Stub minimal functions needed by _display_constitution
+source_display_constitution() {
+    AUTOMATON_DIR="$TEST_DIR"
+    CONFIG_FILE="$TEST_DIR/config.json"
+    echo '{}' > "$CONFIG_FILE"
 
-# Stub log function
-log() { :; }
+    log() { :; }
+    export -f log
 
-# Stub config_get (not needed for display)
-config_get() { echo ""; }
+    # Extract _display_constitution function
+    eval "$(sed -n '/^_display_constitution()/,/^}/p' "$script_file")"
+}
 
-# Source only the function we need by extracting it
-# Instead, define AUTOMATON_DIR and source the function definition directly
-eval "\$(sed -n '/^_display_constitution()/,/^[^ ]/{ /^_display_constitution()/p; /^[^ ]/!p; }' "$SCRIPT_DIR/../automaton.sh")"
-_display_constitution
-RUNEOF
-chmod +x "$TEST_DIR/run_display.sh"
+source_display_constitution
 
 # Capture output
-output=$(bash "$TEST_DIR/run_display.sh" 2>/dev/null)
+output=$(_display_constitution 2>/dev/null)
 
 # --- Test 2: Header line contains CONSTITUTION ---
-echo "$output" | grep -q "AUTOMATON CONSTITUTION" || fail "Header should contain 'AUTOMATON CONSTITUTION'"
-pass "Header contains AUTOMATON CONSTITUTION"
+assert_contains "$output" "AUTOMATON CONSTITUTION" "Header contains AUTOMATON CONSTITUTION"
 
 # --- Test 3: Header shows version ---
-echo "$output" | grep -q "v1" || fail "Header should show version v1"
-pass "Header shows version"
+assert_contains "$output" "v1" "Header shows version v1"
 
 # --- Test 4: Header shows ratification date ---
-echo "$output" | grep -q "2026-03-01" || fail "Header should show ratification date"
-pass "Header shows ratification date"
+assert_contains "$output" "2026-03-01" "Header shows ratification date"
 
 # --- Test 5: Shows article count ---
-echo "$output" | grep -q "8 articles" || fail "Should show 8 articles"
-pass "Shows article count"
+assert_contains "$output" "8 articles" "Shows article count"
 
 # --- Test 6: Shows amendment count ---
-echo "$output" | grep -q "0 amendments" || fail "Should show 0 amendments"
-pass "Shows 0 amendments"
+assert_contains "$output" "0 amendments" "Shows 0 amendments"
 
 # --- Test 7: Shows Article I with unanimous protection ---
-echo "$output" | grep -q "Safety First" || fail "Should show Article I title"
-echo "$output" | grep -q "unanimous" || fail "Should show unanimous protection for Article I"
-pass "Shows Article I with protection level"
+assert_contains "$output" "Safety First" "Shows Article I title"
+assert_contains "$output" "unanimous" "Shows unanimous protection"
 
 # --- Test 8: Shows Article II ---
-echo "$output" | grep -q "Human Sovereignty" || fail "Should show Article II title"
-pass "Shows Article II"
+assert_contains "$output" "Human Sovereignty" "Shows Article II title"
 
 # --- Test 9: Shows Article VI with majority protection ---
-echo "$output" | grep -q "Incremental Growth" || fail "Should show Article VI title"
-echo "$output" | grep "Incremental Growth" | grep -q "majority" || fail "Should show majority protection for Article VI"
-pass "Shows Article VI with majority protection"
+assert_contains "$output" "Incremental Growth" "Shows Article VI title"
+assert_contains "$output" "majority" "Shows majority protection"
 
 # --- Test 10: Shows Article VIII ---
-echo "$output" | grep -q "Amendment Protocol" || fail "Should show Article VIII title"
-pass "Shows Article VIII"
+assert_contains "$output" "Amendment Protocol" "Shows Article VIII title"
 
 # --- Test 11: Footer shows guidance ---
-echo "$output" | grep -q "\-\-amend" || fail "Footer should mention --amend"
-pass "Footer mentions --amend"
+assert_contains "$output" "--amend" "Footer mentions --amend"
 
 # --- Test 12: Footer references constitution file ---
-echo "$output" | grep -q "constitution.md" || fail "Footer should reference constitution.md file"
-pass "Footer references constitution.md"
+assert_contains "$output" "constitution.md" "Footer references constitution.md"
 
 # ============================================================
 # Test with amendments
@@ -166,15 +148,13 @@ cat > "$TEST_DIR/constitution-history.json" << 'EOF'
 }
 EOF
 
-output2=$(bash "$TEST_DIR/run_display.sh" 2>/dev/null)
+output2=$(_display_constitution 2>/dev/null)
 
 # --- Test 13: Shows updated version ---
-echo "$output2" | grep -q "v3" || fail "Should show version v3 after amendments"
-pass "Shows updated version v3"
+assert_contains "$output2" "v3" "Shows updated version v3"
 
 # --- Test 14: Shows amendment count ---
-echo "$output2" | grep -q "2 amendments" || fail "Should show 2 amendments"
-pass "Shows 2 amendments"
+assert_contains "$output2" "2 amendments" "Shows 2 amendments"
 
 # ============================================================
 # Test with missing constitution
@@ -182,12 +162,10 @@ pass "Shows 2 amendments"
 
 rm -f "$TEST_DIR/constitution.md"
 
-output3=$(bash "$TEST_DIR/run_display.sh" 2>/dev/null)
+output3=$(_display_constitution 2>/dev/null)
 
 # --- Test 15: Shows message when no constitution exists ---
-echo "$output3" | grep -qi "no constitution\|not found\|does not exist\|not yet" || fail "Should show a message when constitution is missing"
-pass "Shows message when constitution is missing"
+assert_contains "$output3" "No constitution" "Shows message when constitution is missing"
 
 # Print summary
-echo ""
-echo "All _display_constitution() tests passed."
+test_summary
