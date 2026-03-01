@@ -5582,6 +5582,73 @@ _quorum_invoke_voter() {
     echo "$parsed_vote"
 }
 
+# Tally votes from all voters and determine the quorum result.
+# Counts approve/reject/abstain, reduces denominator for abstentions,
+# compares approve count against threshold for the decision_type,
+# and merges conditions from approving voters into the result.
+#
+# Args: votes_json decision_type
+#   votes_json: JSON object mapping voter names to vote objects
+#               e.g. {"conservative":{"vote":"approve","conditions":[...]}, ...}
+#   decision_type: one of seed_promotion, bloom_implementation,
+#                  constitutional_amendment, emergency_override
+# Outputs: JSON tally result to stdout with approve, reject, abstain counts,
+#          threshold, result (approved/rejected), and conditions_merged
+_quorum_tally() {
+    local votes_json="${1:?_quorum_tally requires votes_json}"
+    local decision_type="${2:?_quorum_tally requires decision_type}"
+
+    # Count votes by category
+    local approve_count reject_count abstain_count total
+    approve_count=$(echo "$votes_json" | jq '[.[] | select(.vote == "approve")] | length')
+    reject_count=$(echo "$votes_json" | jq '[.[] | select(.vote == "reject")] | length')
+    abstain_count=$(echo "$votes_json" | jq '[.[] | select(.vote == "abstain")] | length')
+    total=$(echo "$votes_json" | jq 'length')
+
+    # Reduce denominator for abstentions (spec-39 §3)
+    local denominator=$(( total - abstain_count ))
+
+    # Look up threshold for the decision type from config
+    local threshold
+    threshold=$(jq -r ".quorum.thresholds.${decision_type} // 3" "$CONFIG_FILE" 2>/dev/null || echo "3")
+
+    # Determine result: approved if approve_count >= threshold,
+    # but also handle edge case where denominator is 0 (all abstain)
+    local result
+    if [ "$denominator" -le 0 ]; then
+        # All voters abstained — cannot reach any threshold
+        result="rejected"
+        log "QUORUM" "WARN: all voters abstained, decision_type=$decision_type — rejecting"
+    elif [ "$approve_count" -ge "$threshold" ]; then
+        result="approved"
+    else
+        result="rejected"
+    fi
+
+    # Merge conditions from all approving voters into a flat array
+    local conditions_merged
+    conditions_merged=$(echo "$votes_json" | jq '[.[] | select(.vote == "approve") | .conditions[]? // empty] | unique')
+
+    log "QUORUM" "Tally: approve=$approve_count reject=$reject_count abstain=$abstain_count denominator=$denominator threshold=$threshold result=$result"
+
+    # Return structured tally result
+    jq -n \
+        --argjson approve "$approve_count" \
+        --argjson reject "$reject_count" \
+        --argjson abstain "$abstain_count" \
+        --argjson threshold "$threshold" \
+        --arg result "$result" \
+        --argjson conditions_merged "$conditions_merged" \
+        '{
+            approve: $approve,
+            reject: $reject,
+            abstain: $abstain,
+            threshold: $threshold,
+            result: $result,
+            conditions_merged: $conditions_merged
+        }'
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
