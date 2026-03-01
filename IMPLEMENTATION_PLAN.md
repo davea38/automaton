@@ -262,7 +262,7 @@ These specs build on the garden and signals to add collective decision-making an
 
 - [x] Add `metrics_trend` field to the bootstrap manifest in `.automaton/init.sh` (improving metrics list, degrading list, alerts, cycles_completed, last_harvest_cycle) (WHY: evolution agents need metrics trend awareness to inform REFLECT and OBSERVE decisions without re-analyzing raw data) <!-- test: tests/test_metrics_bootstrap.sh -->
 
-- [ ] Enforce snapshot retention by pruning oldest snapshots when count exceeds `snapshot_retention` (WHY: unbounded snapshot accumulation would grow the metrics file indefinitely — retention limits keep it manageable while preserving sufficient history for trend analysis) <!-- test: tests/test_metrics_snapshot.sh -->
+- [x] Enforce snapshot retention by pruning oldest snapshots when count exceeds `snapshot_retention` (WHY: unbounded snapshot accumulation would grow the metrics file indefinitely — retention limits keep it manageable while preserving sufficient history for trend analysis) <!-- test: tests/test_metrics_snapshot.sh -->
 
 ---
 

@@ -6207,6 +6207,16 @@ _metrics_snapshot() {
     local tmp="${metrics_file}.tmp"
     jq --argjson snap "$snapshot" '.snapshots += [$snap]' "$metrics_file" > "$tmp" && mv "$tmp" "$metrics_file"
 
+    # Enforce snapshot retention: prune oldest snapshots when count exceeds limit
+    local retention="${METRICS_SNAPSHOT_RETENTION:-100}"
+    local snap_count
+    snap_count=$(jq '.snapshots | length' "$metrics_file" 2>/dev/null || echo 0)
+    if [ "$snap_count" -gt "$retention" ]; then
+        local excess=$((snap_count - retention))
+        jq --argjson n "$excess" '.snapshots = .snapshots[$n:]' "$metrics_file" > "$tmp" && mv "$tmp" "$metrics_file"
+        log "METRICS" "Pruned $excess oldest snapshot(s), retaining $retention"
+    fi
+
     log "METRICS" "Snapshot recorded for cycle $cycle_id"
     echo "$metrics_file"
 }
