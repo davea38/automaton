@@ -6954,6 +6954,46 @@ populate_agent_teams_task_list() {
     log "ORCHESTRATOR" "Agent Teams task list: $task_count tasks ($blocked_count blocked by dependencies)"
 }
 
+# Builds the claude CLI command array for an Agent Teams session.
+# Configures the lead agent, teammate count, display mode, and permissions
+# from automaton config. The lead uses the automaton-builder agent definition
+# (spec-27) and teammates inherit the same definition.
+#
+# WHY: Centralizes command construction so run_agent_teams_build() stays
+# focused on orchestration. Teammates use the same agent definition as
+# wave-based builders, ensuring identical behavior. (spec-28 §4)
+#
+# Output: prints space-separated command arguments to stdout
+# Usage: cmd_args=$(build_agent_teams_command)
+build_agent_teams_command() {
+    local agent_name="automaton-builder"
+    local display_mode="${PARALLEL_TEAMMATE_DISPLAY:-in-process}"
+    local num_teammates="${MAX_BUILDERS:-3}"
+
+    local args=("--agent" "$agent_name")
+    args+=("--num-teammates" "$num_teammates")
+    args+=("--output-format" "stream-json")
+
+    # Display mode: in-process (default) or tmux
+    if [ "$display_mode" = "tmux" ]; then
+        args+=("--display-mode" "tmux")
+    else
+        args+=("--display-mode" "in-process")
+    fi
+
+    # Permission mode: inherited from lead. When the orchestrator uses
+    # --dangerously-skip-permissions, teammates inherit the same mode.
+    if [ "${FLAG_DANGEROUSLY_SKIP_PERMISSIONS:-false}" = "true" ]; then
+        args+=("--dangerously-skip-permissions")
+    fi
+
+    if [ "${FLAG_VERBOSE:-false}" = "true" ]; then
+        args+=("--verbose")
+    fi
+
+    echo "${args[@]}"
+}
+
 # Agent Teams build phase (spec-28). Uses the Claude Code Agent Teams API
 # instead of tmux + worktree wave orchestration. Teammates self-claim tasks
 # from a shared task list populated from IMPLEMENTATION_PLAN.md.
@@ -6972,23 +7012,56 @@ run_agent_teams_build() {
     # Populate the shared task list from the implementation plan
     populate_agent_teams_task_list
 
-    # Teammate spawning and budget tracking
-    # are implemented in subsequent spec-28 tasks.
+    local task_list_file="$AUTOMATON_DIR/wave/agent_teams_tasks.json"
+    local task_count
+    task_count=$(jq 'length' "$task_list_file" 2>/dev/null || echo 0)
 
-    # Fall back to single-builder until teammate spawning is implemented
-    log "ORCHESTRATOR" "Agent Teams fallback: running single-builder iterations"
-    while true; do
-        if ! run_single_builder_iteration; then
-            break
-        fi
-        # Check if build phase should end (all tasks done)
-        local unchecked
-        unchecked=$(grep -c '^\- \[ \]' "${PLAN_FILE:-IMPLEMENTATION_PLAN.md}" 2>/dev/null || echo 0)
-        if [ "$unchecked" -eq 0 ]; then
-            log "ORCHESTRATOR" "All tasks complete"
-            break
-        fi
-    done
+    if [ "$task_count" -eq 0 ]; then
+        log "ORCHESTRATOR" "No unchecked tasks remain — skipping Agent Teams session"
+        return 0
+    fi
+
+    # Build the claude command with teammate configuration
+    local cmd_args_str
+    cmd_args_str=$(build_agent_teams_command)
+
+    # Convert the space-separated string back into an array
+    local -a cmd_args
+    read -ra cmd_args <<< "$cmd_args_str"
+
+    log "ORCHESTRATOR" "Spawning Agent Teams session: claude ${cmd_args[*]}"
+
+    # Assemble dynamic context for the lead agent, including the task list.
+    # The lead distributes tasks to teammates via the shared task list.
+    local dynamic_context=""
+    dynamic_context+="## Agent Teams Build Session"$'\n'
+    dynamic_context+=""$'\n'
+    dynamic_context+="You are the lead of an Agent Teams session with ${MAX_BUILDERS} teammates."$'\n'
+    dynamic_context+="Teammates use the automaton-builder agent definition and self-claim tasks."$'\n'
+    dynamic_context+=""$'\n'
+    dynamic_context+="### Shared Task List"$'\n'
+    dynamic_context+=""$'\n'
+    dynamic_context+="$(cat "$task_list_file")"$'\n'
+    dynamic_context+=""$'\n'
+    dynamic_context+="### Instructions"$'\n'
+    dynamic_context+=""$'\n'
+    dynamic_context+="Distribute these tasks to your teammates. Each teammate should claim"$'\n'
+    dynamic_context+="and implement one task at a time. Blocked tasks (blocked=true) must"$'\n'
+    dynamic_context+="wait until their dependencies are complete."$'\n'
+
+    # Launch the Agent Teams session
+    local agent_result=""
+    local agent_exit_code=0
+
+    agent_result=$(echo "$dynamic_context" | claude "${cmd_args[@]}" 2>&1) || agent_exit_code=$?
+
+    log "ORCHESTRATOR" "Agent Teams session finished: exit_code=$agent_exit_code"
+
+    if [ "$agent_exit_code" -ne 0 ]; then
+        log "ORCHESTRATOR" "WARN: Agent Teams session exited with code $agent_exit_code"
+    fi
+
+    return 0
 }
 
 # Implements the 10-step wave dispatch loop for parallel builds.
