@@ -228,7 +228,7 @@ These specs build on the garden and signals to add collective decision-making an
 
 - [x] Implement `_quorum_evaluate_bloom()` in `automaton.sh` that selects the highest-priority bloom candidate, assembles proposal context (idea details, metrics, signals, bootstrap manifest), invokes all 5 voters sequentially, tallies votes, writes a vote record to `.automaton/votes/vote-{NNN}.json`, and advances/wilts the idea based on the result (WHY: this is the end-to-end evaluation flow — it connects garden bloom candidates to quorum decisions and records the full audit trail) <!-- test: tests/test_quorum_evaluate.sh -->
 
-- [ ] Implement `_quorum_check_budget()` in `automaton.sh` that tracks cumulative quorum tokens per cycle and skips remaining candidates when `max_cost_per_cycle_usd` is exceeded (WHY: quorum invocations cost real tokens — budget enforcement prevents runaway voting costs from consuming the evolution cycle's budget) <!-- test: tests/test_quorum_budget.sh -->
+- [x] Implement `_quorum_check_budget()` in `automaton.sh` that tracks cumulative quorum tokens per cycle and skips remaining candidates when `max_cost_per_cycle_usd` is exceeded (WHY: quorum invocations cost real tokens — budget enforcement prevents runaway voting costs from consuming the evolution cycle's budget) <!-- test: tests/test_quorum_budget.sh -->
 
 #### 39.3 Quorum Integration
 

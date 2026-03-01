@@ -5649,6 +5649,36 @@ _quorum_tally() {
         }'
 }
 
+# Check whether the quorum budget for the current cycle has been exceeded.
+# Tracks cumulative quorum token usage and compares estimated cost against
+# QUORUM_MAX_COST_PER_CYCLE. Uses a simple token-to-cost estimate based on
+# Sonnet pricing (~$3/M input + $15/M output tokens, approximated as $0.01/1K tokens).
+#
+# Args:
+#   $1 — tokens_used: cumulative tokens consumed by quorum voters this cycle
+# Returns: 0 if budget remains, 1 if budget exceeded
+_quorum_check_budget() {
+    local tokens_used="${1:?_quorum_check_budget requires tokens_used}"
+    local max_cost="${QUORUM_MAX_COST_PER_CYCLE:-1.00}"
+
+    # Estimate cost: ~$0.01 per 1000 tokens (conservative Sonnet estimate)
+    local estimated_cost
+    estimated_cost=$(echo "$tokens_used $max_cost" | awk '{
+        cost = $1 / 1000 * 0.01
+        printf "%.4f", cost
+    }')
+
+    local exceeded
+    exceeded=$(echo "$estimated_cost $max_cost" | awk '{print ($1 >= $2) ? "true" : "false"}')
+
+    if [ "$exceeded" = "true" ]; then
+        log "QUORUM" "Budget exceeded: ~\$${estimated_cost} used of \$${max_cost} max — skipping remaining candidates"
+        return 1
+    fi
+
+    return 0
+}
+
 # Evaluate the highest-priority bloom candidate through the quorum.
 # Selects the top bloom candidate from the garden, assembles proposal context
 # (idea details, metrics, signals), invokes all configured voters sequentially,
@@ -5682,6 +5712,12 @@ _quorum_evaluate_bloom() {
         return 1
     fi
 
+    # Check if quorum budget for this cycle has been exceeded
+    if ! _quorum_check_budget "${_QUORUM_CYCLE_TOKENS:-0}"; then
+        log "QUORUM" "Skipping bloom candidate $idea_id — quorum budget exceeded"
+        return 0
+    fi
+
     log "QUORUM" "Evaluating bloom candidate: $idea_id"
 
     # Assemble proposal context from idea details
@@ -5703,13 +5739,19 @@ _quorum_evaluate_bloom() {
     local voter_list
     IFS=',' read -ra voter_list <<< "$QUORUM_VOTERS"
 
+    local voter_tokens=0
     for voter_name in "${voter_list[@]}"; do
         voter_name=$(echo "$voter_name" | tr -d ' ')
         log "QUORUM" "Invoking voter: $voter_name for $idea_id"
         local vote_result
         vote_result=$(_quorum_invoke_voter "$voter_name" "$proposal_json")
         all_votes=$(echo "$all_votes" | jq --arg name "$voter_name" --argjson vote "$vote_result" '. + {($name): $vote}')
+        # Estimate tokens per voter (input prompt + output tokens)
+        voter_tokens=$(( voter_tokens + ${QUORUM_MAX_TOKENS_PER_VOTER:-500} ))
     done
+
+    # Accumulate cycle-level quorum token usage
+    _QUORUM_CYCLE_TOKENS=$(( ${_QUORUM_CYCLE_TOKENS:-0} + voter_tokens ))
 
     # Tally the votes using bloom_implementation threshold
     local tally_result
