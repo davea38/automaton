@@ -2146,6 +2146,45 @@ update_budget_history() {
     log "ORCHESTRATOR" "Budget history updated: ${total_tokens} tokens, \$${cost_usd} cost"
 }
 
+# Commits persistent state files (.automaton/ tracked files) to git.
+# Called at phase transitions, run completion, shutdown, and every 5 build
+# iterations to ensure persistent state survives interruptions (spec-34).
+commit_persistent_state() {
+    local phase="${1:-$current_phase}" iter="${2:-$iteration}"
+
+    # Persistent files that should be tracked in git
+    local -a persistent_files=(
+        "$AUTOMATON_DIR/budget-history.json"
+        "$AUTOMATON_DIR/learnings.json"
+        "$AUTOMATON_DIR/run-summaries"
+        "$AUTOMATON_DIR/test_results.json"
+        "$AUTOMATON_DIR/self_modifications.json"
+    )
+
+    # Stage only files that exist
+    local staged=false
+    for f in "${persistent_files[@]}"; do
+        if [ -e "$f" ]; then
+            git add "$f" 2>/dev/null && staged=true
+        fi
+    done
+
+    # Also stage AGENTS.md since it is generated from learnings.json
+    if [ -f "AGENTS.md" ]; then
+        git add "AGENTS.md" 2>/dev/null && staged=true
+    fi
+
+    if [ "$staged" != "true" ]; then
+        return 0
+    fi
+
+    # Only commit if there are staged changes
+    if ! git diff --cached --quiet 2>/dev/null; then
+        git commit -m "automaton: state checkpoint — ${phase} iteration ${iter}" 2>/dev/null || true
+        log "ORCHESTRATOR" "Persistent state committed (${phase} iter ${iter})"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Run Journal & Performance Tracking (spec-26)
 # ---------------------------------------------------------------------------
@@ -3131,6 +3170,7 @@ _handle_shutdown() {
     # Guard: only attempt state save if initialization has run (state vars exist)
     if [ -n "${started_at:-}" ]; then
         write_run_summary 130 2>/dev/null || true
+        commit_persistent_state "${current_phase:-unknown}" "${iteration:-0}" 2>/dev/null || true
         write_state 2>/dev/null || true
         log "ORCHESTRATOR" "Interrupted by user (SIG${signal}). State saved for --resume." 2>/dev/null || true
     else
@@ -5551,6 +5591,11 @@ post_iteration() {
         self_build_check_scope
         # Append iteration memory for incremental context (spec-24)
         append_iteration_memory
+
+        # Periodic persistent state checkpoint every 5 build iterations (spec-34)
+        if [ "$phase_iteration" -gt 0 ] && [ $((phase_iteration % 5)) -eq 0 ]; then
+            commit_persistent_state "build" "$iteration"
+        fi
     fi
 
     # 8. Persist state
@@ -5618,6 +5663,9 @@ transition_to_phase() {
 
     log "ORCHESTRATOR" "Phase transition → $new_phase"
     write_state
+
+    # Commit persistent state at phase transitions (spec-34)
+    commit_persistent_state "$current_phase" "$iteration"
 }
 
 # Main orchestration loop: drives the research → plan → build → review
@@ -5848,6 +5896,9 @@ run_orchestration() {
 
     # Write persistent run summary (spec-34)
     write_run_summary 0
+
+    # Commit persistent state at run completion (spec-34)
+    commit_persistent_state "$current_phase" "$iteration"
 
     # Archive run to journal (spec-26)
     archive_run_journal
