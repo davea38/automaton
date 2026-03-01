@@ -5175,6 +5175,67 @@ _signal_reinforce() {
        "$signals_file" > "$tmp_file" && mv "$tmp_file" "$signals_file"
 }
 
+# Finds an existing signal of the same type with sufficient word overlap.
+# Uses Jaccard similarity on key terms from title+description.
+# Returns the matching signal ID if overlap >= match_threshold, empty otherwise.
+#
+# Args: type title description
+# Outputs: matching signal ID (e.g. SIG-001) or empty string
+_signal_find_match() {
+    local type="${1:?_signal_find_match requires type}"
+    local title="${2:?_signal_find_match requires title}"
+    local description="${3:-}"
+
+    local signals_file="$AUTOMATON_DIR/signals.json"
+    [ -f "$signals_file" ] || return 0
+
+    local threshold="${STIGMERGY_MATCH_THRESHOLD:-0.6}"
+
+    # Extract same-type signal IDs, titles, and descriptions via jq
+    local candidates
+    candidates=$(jq -r --arg t "$type" \
+        '.signals[] | select(.type == $t) | "\(.id)\t\(.title) \(.description)"' \
+        "$signals_file" 2>/dev/null) || return 0
+
+    [ -n "$candidates" ] || return 0
+
+    # Build the new signal's word set (lowercase, unique, stop words removed)
+    local new_text
+    new_text=$(printf '%s %s' "$title" "$description" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n' | sort -u | grep -vxE '(a|an|the|in|on|at|of|to|is|it|and|or|for|by|with|from|that|this|was|are|has|been|but|not|its)' || true)
+
+    [ -n "$new_text" ] || return 0
+
+    local best_id=""
+    local best_score=0
+
+    while IFS=$'\t' read -r sig_id sig_text; do
+        # Build the existing signal's word set
+        local existing_text
+        existing_text=$(printf '%s' "$sig_text" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '\n' | sort -u | grep -vxE '(a|an|the|in|on|at|of|to|is|it|and|or|for|by|with|from|that|this|was|are|has|been|but|not|its)' || true)
+
+        [ -n "$existing_text" ] || continue
+
+        # Compute Jaccard similarity: |intersection| / |union|
+        local intersection union
+        intersection=$(comm -12 <(echo "$new_text") <(echo "$existing_text") | wc -l)
+        union=$(comm <(echo "$new_text") <(echo "$existing_text") | sed 's/^\t*//' | sort -u | wc -l)
+
+        [ "$union" -gt 0 ] || continue
+
+        # Compare using integer arithmetic (multiply by 100 to avoid floats)
+        local score_100=$(( intersection * 100 / union ))
+        local threshold_100
+        threshold_100=$(printf '%.0f' "$(echo "$threshold * 100" | bc 2>/dev/null || echo "60")")
+
+        if [ "$score_100" -ge "$threshold_100" ] && [ "$score_100" -gt "$best_score" ]; then
+            best_score=$score_100
+            best_id=$sig_id
+        fi
+    done <<< "$candidates"
+
+    echo "$best_id"
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------

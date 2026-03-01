@@ -186,7 +186,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 - [x] Implement `_signal_reinforce()` in `automaton.sh` that adds an observation to an existing signal and increases strength by `reinforce_increment` capped at 1.0 (WHY: reinforcement is the mechanism that makes repeated observations louder — it converts multiple weak observations into a strong signal) <!-- test: tests/test_signal_reinforce.sh -->
 
-- [ ] Implement `_signal_find_match()` in `automaton.sh` using word-overlap similarity (extract key terms from title+description, compare against same-type signals, return match if overlap >= `match_threshold`) (WHY: tag-based matching prevents duplicate signals for the same observation while allowing distinct signals for different issues) <!-- test: tests/test_signal_match.sh -->
+- [x] Implement `_signal_find_match()` in `automaton.sh` using word-overlap similarity (extract key terms from title+description, compare against same-type signals, return match if overlap >= `match_threshold`) (WHY: tag-based matching prevents duplicate signals for the same observation while allowing distinct signals for different issues) <!-- test: tests/test_signal_match.sh -->
 
 #### 42.2 Signal Lifecycle and Queries
 
