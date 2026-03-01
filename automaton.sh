@@ -895,6 +895,44 @@ check_cache_hit_ratio() {
     fi
 }
 
+# Checks context utilization for the current iteration against per-phase ceilings.
+# Logs a warning when utilization exceeds the ceiling (spec-33).
+# WHY: Performance degrades as context fills; warnings alert users to split tasks
+# or commit more frequently.
+check_context_utilization() {
+    local input_tokens="$1" output_tokens="$2" model="$3"
+
+    # Model context window sizes (all current models are 200K)
+    local context_window=200000
+    case "$model" in
+        opus|sonnet|haiku) context_window=200000 ;;
+    esac
+
+    # Per-phase context utilization ceilings
+    local ceiling
+    case "$current_phase" in
+        research) ceiling=60 ;;
+        plan)     ceiling=70 ;;
+        build)    ceiling=80 ;;
+        review)   ceiling=70 ;;
+        *)        ceiling=80 ;;
+    esac
+
+    local total_tokens=$((input_tokens + output_tokens))
+    [ "$total_tokens" -eq 0 ] && return 0
+
+    local utilization_pct
+    utilization_pct=$(awk -v total="$total_tokens" -v window="$context_window" \
+        'BEGIN { printf "%.0f", (total / window) * 100 }')
+
+    local exceeds
+    exceeds=$(awk -v u="$utilization_pct" -v c="$ceiling" 'BEGIN { print (u > c) ? 1 : 0 }')
+
+    if [ "$exceeds" -eq 1 ]; then
+        log "ORCHESTRATOR" "WARNING: ${current_phase^} iteration ${phase_iteration} context utilization ${utilization_pct}% exceeds ceiling ${ceiling}%. Consider smaller tasks or more frequent commits."
+    fi
+}
+
 # Enforces budget rules after each iteration. Returns 0 to continue,
 # 1 to force phase transition, or exits with code 2 for hard stops.
 # In API mode: enforces per-iteration, per-phase, total token, and cost limits.
@@ -5685,6 +5723,9 @@ post_iteration() {
 
     # 4a. Check cache hit ratio (spec-30: warn when rolling avg < 50% after 3+ iters)
     check_cache_hit_ratio
+
+    # 4b. Check context utilization against per-phase ceiling (spec-33)
+    check_context_utilization "$LAST_INPUT_TOKENS" "$LAST_OUTPUT_TOKENS" "$model"
 
     # 5. Check budget limits (may exit 2 for hard stops, return 1 for phase force)
     local budget_rc=0
