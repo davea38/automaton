@@ -402,7 +402,7 @@ This spec adds the human-facing commands that wrap all evolution subsystems in a
 
 - [x] Implement `_cli_promote()` in `automaton.sh` that calls `_garden_advance_stage()` with `force=true` to bypass thresholds and displays the new stage (WHY: human promotion is the mechanism for Article II sovereignty — the human can override the normal maturation process when they know an idea is ready) <!-- test: tests/test_cli_promote.sh -->
 
-- [ ] Implement `_cli_amend()` in `automaton.sh` that guides the human through the amendment process: select article, show current text, accept proposed change, create a garden idea tagged `constitutional`, and display next steps (WHY: constitutional amendments need a guided workflow because they affect governance — the human must see the current text and understand the quorum requirement before proceeding) <!-- test: tests/test_cli_amend.sh -->
+- [x] Implement `_cli_amend()` in `automaton.sh` that guides the human through the amendment process: select article, show current text, accept proposed change, create a garden idea tagged `constitutional`, and display next steps (WHY: constitutional amendments need a guided workflow because they affect governance — the human must see the current text and understand the quorum requirement before proceeding) <!-- test: tests/test_cli_amend.sh -->
 
 - [ ] Implement `_cli_override()` in `automaton.sh` that lists recently rejected ideas, accepts an override selection with confirmation, re-promotes the idea to bloom, and logs the override in the vote record and constitution history (WHY: overrides implement Article II sovereignty — they must be auditable with full trail so the system can learn from human corrections) <!-- test: tests/test_cli_override.sh -->
 

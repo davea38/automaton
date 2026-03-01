@@ -7490,6 +7490,197 @@ _cli_promote() {
     echo "Bypassed threshold check (human promotion). Ready for quorum evaluation."
 }
 
+# Guides the human through proposing a constitutional amendment.
+# Interactive: reads article selection, proposed change, and confirmation from stdin.
+# Creates a garden idea tagged 'constitutional' so the amendment follows normal lifecycle.
+# Called by --amend CLI command.
+#
+# Flow:
+#   1. Show header
+#   2. Read article number (I-VIII or 'new')
+#   3. Show current article text and protection level
+#   4. Read proposed change
+#   5. Show what will happen (quorum threshold)
+#   6. Read confirmation (y/n)
+#   7. Plant garden idea with constitutional tag
+#   8. Display next steps
+#
+# Returns: 0 on success, 1 on error or user abort
+_cli_amend() {
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then
+        echo "Error: Garden is not enabled. Set garden.enabled=true in automaton.config.json." >&2
+        return 1
+    fi
+
+    local const_file="$AUTOMATON_DIR/constitution.md"
+    if [ ! -f "$const_file" ]; then
+        echo "Error: Constitution not found at $const_file. Run --evolve first to initialize." >&2
+        return 1
+    fi
+
+    echo ""
+    echo "CONSTITUTIONAL AMENDMENT PROCESS"
+    echo ""
+
+    # Read article selection
+    printf "Which article to amend? (I-VIII or 'new' for new article): "
+    local article_input
+    read -r article_input
+
+    if [ "$article_input" = "new" ]; then
+        # New article proposal
+        printf "Enter the proposed new article (one line):\n"
+        local proposed_change
+        read -r proposed_change
+
+        echo ""
+        echo "This amendment will:"
+        echo "  - Add a new article to the constitution"
+        echo "  - Require quorum vote: 4/5 supermajority (constitutional_amendment threshold)"
+        echo "  - Be planted as a garden idea with tag 'constitutional'"
+        echo ""
+        printf "Proceed? (y/n): "
+        local confirm
+        read -r confirm
+
+        if [ "$confirm" != "y" ]; then
+            echo "Amendment cancelled."
+            return 0
+        fi
+
+        local idea_title="Constitutional amendment: New article — ${proposed_change:0:60}"
+        local idea_desc="Propose adding a new article to the constitution: $proposed_change"
+
+        local idea_id
+        idea_id=$(_garden_plant_seed \
+            "$idea_title" \
+            "$idea_desc" \
+            "human" \
+            "cli" \
+            "human" \
+            "medium" \
+            "constitutional")
+
+        if [ -z "$idea_id" ]; then
+            echo "Error: Failed to plant amendment idea." >&2
+            return 1
+        fi
+
+        _garden_recompute_priorities 2>/dev/null || true
+
+        echo ""
+        echo "Planted ${idea_id}: \"${idea_title}\""
+        echo "Tags: [constitutional]  |  Stage: seed"
+        echo "The idea will progress through normal garden lifecycle."
+        echo "For immediate evaluation, use: --promote ${idea_id}"
+        return 0
+    fi
+
+    # Validate article input (must be a roman numeral I-VIII)
+    local article_upper
+    article_upper=$(echo "$article_input" | tr '[:lower:]' '[:upper:]')
+    local valid_articles="I II III IV V VI VII VIII"
+    local found=false
+    for art in $valid_articles; do
+        if [ "$art" = "$article_upper" ]; then
+            found=true
+            break
+        fi
+    done
+
+    if [ "$found" != "true" ]; then
+        echo "Error: Invalid article '$article_input'. Use I-VIII or 'new'." >&2
+        return 1
+    fi
+
+    # Extract article title and protection level
+    local article_header
+    article_header=$(grep "^### Article ${article_upper}:" "$const_file" || true)
+    if [ -z "$article_header" ]; then
+        echo "Error: Article ${article_upper} not found in constitution." >&2
+        return 1
+    fi
+
+    local article_title
+    article_title=$(echo "$article_header" | sed "s/^### Article ${article_upper}: //")
+
+    # Extract protection level
+    local protection
+    protection=$(awk -v art="### Article ${article_upper}:" '
+        $0 ~ art { found=1; next }
+        found && /^\*\*Protection:/ { gsub(/\*\*Protection: /, ""); gsub(/\*\*/, ""); print; exit }
+    ' "$const_file")
+
+    # Extract article body text
+    local article_text
+    article_text=$(awk -v art="### Article ${article_upper}:" '
+        $0 ~ art { found=1; next }
+        found && /^\*\*Protection:/ { next }
+        found && /^$/ && !started { started=1; next }
+        found && /^### Article / { exit }
+        found && /^#/ { exit }
+        found { print }
+    ' "$const_file")
+
+    echo "Current text of Article ${article_upper}: \"${article_title}\" [${protection}]"
+    echo ""
+    echo "$article_text"
+    echo ""
+
+    printf "Enter the proposed change (one line):\n"
+    local proposed_change
+    read -r proposed_change
+
+    # Determine required quorum threshold based on protection level
+    local threshold_desc="3/5 majority"
+    case "$protection" in
+        unanimous) threshold_desc="4/5 supermajority" ;;
+        supermajority) threshold_desc="4/5 supermajority" ;;
+        majority) threshold_desc="3/5 majority" ;;
+    esac
+
+    echo ""
+    echo "This amendment will:"
+    echo "  - Modify Article ${article_upper} (protection: ${protection})"
+    echo "  - Require quorum vote: ${threshold_desc}"
+    echo "  - Be planted as a garden idea with tag 'constitutional'"
+    echo ""
+    printf "Proceed? (y/n): "
+    local confirm
+    read -r confirm
+
+    if [ "$confirm" != "y" ]; then
+        echo "Amendment cancelled."
+        return 0
+    fi
+
+    local idea_title="Constitutional amendment: Article ${article_upper} — ${proposed_change:0:60}"
+    local idea_desc="Propose modifying Article ${article_upper} (${article_title}): ${proposed_change}"
+
+    local idea_id
+    idea_id=$(_garden_plant_seed \
+        "$idea_title" \
+        "$idea_desc" \
+        "human" \
+        "cli" \
+        "human" \
+        "medium" \
+        "constitutional")
+
+    if [ -z "$idea_id" ]; then
+        echo "Error: Failed to plant amendment idea." >&2
+        return 1
+    fi
+
+    _garden_recompute_priorities 2>/dev/null || true
+
+    echo ""
+    echo "Planted ${idea_id}: \"${idea_title}\""
+    echo "Tags: [constitutional]  |  Stage: seed"
+    echo "The idea will progress through normal garden lifecycle."
+    echo "For immediate evaluation, use: --promote ${idea_id}"
+}
+
 # ---------------------------------------------------------------------------
 # Constitutional Principles (spec-40)
 # ---------------------------------------------------------------------------
