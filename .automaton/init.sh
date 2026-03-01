@@ -208,6 +208,34 @@ generate_context() {
         fi
     fi
 
+    # --- Constitution summary (from constitution.md + constitution-history.json, spec-40 §3) ---
+    local const_file="$AUTOMATON_DIR/constitution.md"
+    if [ -f "$const_file" ]; then
+        local const_hist="$AUTOMATON_DIR/constitution-history.json"
+        local article_count
+        article_count=$(grep -c '^### Article' "$const_file" || echo "0")
+        local version=1
+        if [ -f "$const_hist" ]; then
+            version=$(jq -r '.current_version // 1' "$const_hist" 2>/dev/null || echo "1")
+        fi
+        local const_data
+        const_data=$(jq -n \
+            --argjson articles "$article_count" \
+            --argjson version "$version" \
+            '{
+                articles: $articles,
+                version: $version,
+                key_constraints: [
+                    "Safety mechanisms must be preserved (Art. I)",
+                    "Human retains override authority (Art. II)",
+                    "Changes must target measurable metrics (Art. III)",
+                    "Each cycle implements at most 1 idea (Art. VI)"
+                ]
+            }')
+        manifest=$(echo "$manifest" | jq --argjson cs "$const_data" \
+            '. + {constitution_summary: $cs}')
+    fi
+
     echo "$manifest" | jq .
 }
 
