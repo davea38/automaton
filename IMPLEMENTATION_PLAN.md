@@ -304,7 +304,7 @@ These specs add the safety constraints and governance framework that the evoluti
 
 #### 45.2 Circuit Breakers
 
-- [ ] Add `safety` configuration section to `automaton.config.json` with all fields (max_total_lines, max_total_functions, min_test_pass_rate, max_consecutive_failures, max_consecutive_regressions, preserve_failed_branches, preflight_enabled, sandbox_testing_enabled) (WHY: safety thresholds need configuration — different projects have different acceptable limits for complexity, test coverage, and failure tolerance) <!-- test: tests/test_safety_config.sh -->
+- [x] Add `safety` configuration section to `automaton.config.json` with all fields (max_total_lines, max_total_functions, min_test_pass_rate, max_consecutive_failures, max_consecutive_regressions, preserve_failed_branches, preflight_enabled, sandbox_testing_enabled) (WHY: safety thresholds need configuration — different projects have different acceptable limits for complexity, test coverage, and failure tolerance) <!-- test: tests/test_safety_config.sh -->
 
 - [ ] Implement `_safety_check_breakers()`, `_safety_update_breaker()`, `_safety_any_breaker_tripped()`, and `_safety_reset_breakers()` in `automaton.sh` for the 5 circuit breakers (budget ceiling, error cascade at 3 failures, regression cascade at 2 regressions, complexity ceiling at line/function limits, test degradation below min pass rate), tracking state in `.automaton/evolution/circuit-breakers.json` (WHY: circuit breakers are the automatic safety net — they halt evolution before damage cascades, ensuring the system fails safe rather than fails dangerous) <!-- test: tests/test_safety_breakers.sh -->
 
@@ -320,7 +320,7 @@ These specs add the safety constraints and governance framework that the evoluti
 
 - [ ] Create `.claude/skills/rollback-executor.md` skill for guided manual rollback of a specific evolution cycle (WHY: when automatic rollback is insufficient — e.g., a merged change that was later found to be problematic — the human needs a guided process to cleanly undo a specific cycle's changes) <!-- test: tests/test_safety_rollback_skill.sh -->
 
-- [ ] Add `.automaton/evolution/` and `.automaton/evolution/circuit-breakers.json` to `.gitignore` as ephemeral state (WHY: per-cycle artifacts and circuit breaker state are ephemeral — they reset each evolution run; only the results persisted via garden, votes, and metrics matter across runs) <!-- test: none -->
+- [x] Add `.automaton/evolution/` and `.automaton/evolution/circuit-breakers.json` to `.gitignore` as ephemeral state (WHY: per-cycle artifacts and circuit breaker state are ephemeral — they reset each evolution run; only the results persisted via garden, votes, and metrics matter across runs) <!-- test: none -->
 
 ---
 

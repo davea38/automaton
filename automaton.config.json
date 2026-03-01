@@ -131,5 +131,15 @@
     "trend_window": 5,
     "degradation_alert_threshold": 3,
     "snapshot_retention": 100
+  },
+  "safety": {
+    "max_total_lines": 15000,
+    "max_total_functions": 300,
+    "min_test_pass_rate": 0.80,
+    "max_consecutive_failures": 3,
+    "max_consecutive_regressions": 2,
+    "preserve_failed_branches": true,
+    "preflight_enabled": true,
+    "sandbox_testing_enabled": true
   }
 }

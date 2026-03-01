@@ -20,7 +20,7 @@ assert_equals "300" "$val" "safety.max_total_functions defaults to 300"
 
 # --- Test 3: safety.min_test_pass_rate ---
 val=$(jq -r '.safety.min_test_pass_rate // "missing"' "$config_file")
-assert_equals "0.8" "$val" "safety.min_test_pass_rate defaults to 0.80"
+assert_equals "0.8" "${val%0}" "safety.min_test_pass_rate defaults to 0.80"
 
 # --- Test 4: safety.max_consecutive_failures ---
 val=$(jq -r '.safety.max_consecutive_failures // "missing"' "$config_file")

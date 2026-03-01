@@ -155,6 +155,16 @@ load_config() {
         METRICS_TREND_WINDOW=$(jq -r '.metrics.trend_window // 5' "$config_file")
         METRICS_DEGRADATION_ALERT_THRESHOLD=$(jq -r '.metrics.degradation_alert_threshold // 3' "$config_file")
         METRICS_SNAPSHOT_RETENTION=$(jq -r '.metrics.snapshot_retention // 100' "$config_file")
+
+        # -- safety (spec-45) --
+        SAFETY_MAX_TOTAL_LINES=$(jq -r '.safety.max_total_lines // 15000' "$config_file")
+        SAFETY_MAX_TOTAL_FUNCTIONS=$(jq -r '.safety.max_total_functions // 300' "$config_file")
+        SAFETY_MIN_TEST_PASS_RATE=$(jq -r '.safety.min_test_pass_rate // 0.80' "$config_file")
+        SAFETY_MAX_CONSECUTIVE_FAILURES=$(jq -r '.safety.max_consecutive_failures // 3' "$config_file")
+        SAFETY_MAX_CONSECUTIVE_REGRESSIONS=$(jq -r '.safety.max_consecutive_regressions // 2' "$config_file")
+        SAFETY_PRESERVE_FAILED_BRANCHES=$(jq -r '.safety.preserve_failed_branches // true' "$config_file")
+        SAFETY_PREFLIGHT_ENABLED=$(jq -r '.safety.preflight_enabled // true' "$config_file")
+        SAFETY_SANDBOX_TESTING_ENABLED=$(jq -r '.safety.sandbox_testing_enabled // true' "$config_file")
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -285,6 +295,16 @@ load_config() {
         METRICS_TREND_WINDOW=5
         METRICS_DEGRADATION_ALERT_THRESHOLD=3
         METRICS_SNAPSHOT_RETENTION=100
+
+        # -- safety (spec-45) --
+        SAFETY_MAX_TOTAL_LINES=15000
+        SAFETY_MAX_TOTAL_FUNCTIONS=300
+        SAFETY_MIN_TEST_PASS_RATE="0.80"
+        SAFETY_MAX_CONSECUTIVE_FAILURES=3
+        SAFETY_MAX_CONSECUTIVE_REGRESSIONS=2
+        SAFETY_PRESERVE_FAILED_BRANCHES="true"
+        SAFETY_PREFLIGHT_ENABLED="true"
+        SAFETY_SANDBOX_TESTING_ENABLED="true"
     fi
 }
 
