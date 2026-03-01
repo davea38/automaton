@@ -122,7 +122,7 @@ Hooks guarantee enforcement of rules that prompts can only request. File ownersh
 
 Skills extract reusable workflow patterns from prompts, reducing prompt size by an estimated 160 lines and improving consistency across agents.
 
-- [ ] Create `.claude/skills/spec-reader.md` with YAML frontmatter (name, description, tools: Read/Glob/Grep) and instructions to read all specs and output structured JSON summary (WHY: "read all specs" is duplicated across research, plan, and review prompts; a skill makes it consistent and testable)
+- [x] Create `.claude/skills/spec-reader.md` with YAML frontmatter (name, description, tools: Read/Glob/Grep) and instructions to read all specs and output structured JSON summary (WHY: "read all specs" is duplicated across research, plan, and review prompts; a skill makes it consistent and testable)
 - [ ] Create `.claude/skills/validation-suite.md` with project-type detection (package.json, Makefile, automaton.sh) and structured pass/fail output (WHY: inline validation instructions differ between build and review prompts; a unified skill ensures the same checks run everywhere)
 - [ ] Create `.claude/skills/context-loader.md` to load and assemble context from AGENTS.md, IMPLEMENTATION_PLAN.md, and recent git history (WHY: "Phase 0: Load Context" is duplicated across all four phase prompts at ~25 lines each; one skill replaces ~100 lines of prose)
 - [ ] Create `.claude/skills/plan-updater.md` for updating IMPLEMENTATION_PLAN.md task checkboxes and adding new tasks (WHY: plan update instructions are embedded in the build prompt; extracting to a skill makes the pattern reusable by the review agent for adding fix tasks)
