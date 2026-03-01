@@ -103,5 +103,13 @@
     "max_active_ideas": 50,
     "auto_seed_from_metrics": true,
     "auto_seed_from_signals": true
+  },
+  "stigmergy": {
+    "enabled": true,
+    "initial_strength": 0.3,
+    "reinforce_increment": 0.15,
+    "decay_floor": 0.05,
+    "match_threshold": 0.6,
+    "max_signals": 100
   }
 }

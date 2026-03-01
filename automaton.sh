@@ -129,6 +129,14 @@ load_config() {
         GARDEN_MAX_ACTIVE_IDEAS=$(jq -r '.garden.max_active_ideas // 50' "$config_file")
         GARDEN_AUTO_SEED_METRICS=$(jq -r '.garden.auto_seed_from_metrics // true' "$config_file")
         GARDEN_AUTO_SEED_SIGNALS=$(jq -r '.garden.auto_seed_from_signals // true' "$config_file")
+
+        # -- stigmergy (spec-42) --
+        STIGMERGY_ENABLED=$(jq -r '.stigmergy.enabled // true' "$config_file")
+        STIGMERGY_INITIAL_STRENGTH=$(jq -r '.stigmergy.initial_strength // 0.3' "$config_file")
+        STIGMERGY_REINFORCE_INCREMENT=$(jq -r '.stigmergy.reinforce_increment // 0.15' "$config_file")
+        STIGMERGY_DECAY_FLOOR=$(jq -r '.stigmergy.decay_floor // 0.05' "$config_file")
+        STIGMERGY_MATCH_THRESHOLD=$(jq -r '.stigmergy.match_threshold // 0.6' "$config_file")
+        STIGMERGY_MAX_SIGNALS=$(jq -r '.stigmergy.max_signals // 100' "$config_file")
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -233,6 +241,14 @@ load_config() {
         GARDEN_MAX_ACTIVE_IDEAS=50
         GARDEN_AUTO_SEED_METRICS="true"
         GARDEN_AUTO_SEED_SIGNALS="true"
+
+        # -- stigmergy (spec-42) --
+        STIGMERGY_ENABLED="true"
+        STIGMERGY_INITIAL_STRENGTH="0.3"
+        STIGMERGY_REINFORCE_INCREMENT="0.15"
+        STIGMERGY_DECAY_FLOOR="0.05"
+        STIGMERGY_MATCH_THRESHOLD="0.6"
+        STIGMERGY_MAX_SIGNALS=100
     fi
 }
 
@@ -5006,6 +5022,16 @@ _garden_get_bloom_candidates() {
     # Sort by priority descending, output only idea IDs
     echo "$candidates" | sort -t' ' -k1 -nr | awk '{print $2}'
     return 0
+}
+
+# ---------------------------------------------------------------------------
+# Stigmergic Signal Coordination (spec-42)
+# ---------------------------------------------------------------------------
+
+# Guard: returns 0 if stigmergy is enabled, 1 otherwise.
+# All signal functions should call this before operating.
+_signal_enabled() {
+    [ "${STIGMERGY_ENABLED:-true}" = "true" ]
 }
 
 # ---------------------------------------------------------------------------
