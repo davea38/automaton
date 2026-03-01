@@ -7286,6 +7286,56 @@ _display_constitution() {
 }
 
 # ---------------------------------------------------------------------------
+# CLI Action Functions (spec-44 §44.3)
+# ---------------------------------------------------------------------------
+
+# Plants a new seed in the garden with human origin and displays the result
+# including assigned ID, priority (with human boost), and watering guidance.
+#
+# Usage: _cli_plant "idea description"
+# Outputs: formatted plant confirmation to stdout
+# Returns: 0 on success, 1 on failure
+_cli_plant() {
+    local description="${1:?_cli_plant requires an idea description}"
+
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then
+        echo "Error: Garden is not enabled. Set garden.enabled=true in automaton.config.json." >&2
+        return 1
+    fi
+
+    # Plant the seed with human origin
+    local idea_id
+    idea_id=$(_garden_plant_seed \
+        "$description" \
+        "$description" \
+        "human" \
+        "cli" \
+        "human" \
+        "medium" \
+        "")
+
+    if [ -z "$idea_id" ]; then
+        echo "Error: Failed to plant seed." >&2
+        return 1
+    fi
+
+    # Recompute priorities so the human boost is reflected
+    _garden_recompute_priorities 2>/dev/null || true
+
+    # Read back the idea to get the computed priority
+    local idea_file="$AUTOMATON_DIR/garden/${idea_id}.json"
+    local priority=10
+    if [ -f "$idea_file" ]; then
+        priority=$(jq -r '.priority // 10' "$idea_file")
+    fi
+
+    # Display the result
+    echo "Planted seed ${idea_id}: \"${description}\""
+    echo "Origin: human  |  Stage: seed  |  Priority: ${priority} (+10 human boost)"
+    echo "Water with evidence using: --water ${idea_id} \"your evidence here\""
+}
+
+# ---------------------------------------------------------------------------
 # Constitutional Principles (spec-40)
 # ---------------------------------------------------------------------------
 
