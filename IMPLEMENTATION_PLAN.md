@@ -410,6 +410,6 @@ This spec adds the human-facing commands that wrap all evolution subsystems in a
 
 #### 44.4 Skills and Help
 
-- [ ] Create 4 skill files in `.claude/skills/`: `garden-tender.md` (guided garden review), `constitutional-review.md` (guided constitution review and amendments), `signal-reader.md` (guided signal interpretation), `metrics-analyzer.md` (guided metrics analysis and trend interpretation) (WHY: skills provide higher-level guided workflows beyond what individual CLI commands offer — they help the human make informed decisions about garden tending, governance, and system health) <!-- test: tests/test_cli_skills.sh -->
+- [x] Create 4 skill files in `.claude/skills/`: `garden-tender.md` (guided garden review), `constitutional-review.md` (guided constitution review and amendments), `signal-reader.md` (guided signal interpretation), `metrics-analyzer.md` (guided metrics analysis and trend interpretation) (WHY: skills provide higher-level guided workflows beyond what individual CLI commands offer — they help the human make informed decisions about garden tending, governance, and system health) <!-- test: tests/test_cli_skills.sh -->
 
 - [ ] Update `_show_help()` in `automaton.sh` to include all new commands organized by category (Standard Mode, Evolution Mode, Garden, Observation, Governance) (WHY: discoverable help text is essential — users who do not know about `--garden` or `--health` cannot use the evolution interface effectively) <!-- test: tests/test_cli_help.sh -->
