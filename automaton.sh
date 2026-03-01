@@ -929,6 +929,11 @@ RATE
         mkdir -p "$AUTOMATON_DIR/votes"
     fi
 
+    # Initialize evolution directory when evolution mode active (spec-41)
+    if [ "$ARG_EVOLVE" = "true" ] || [ "$EVOLVE_ENABLED" = "true" ]; then
+        mkdir -p "$AUTOMATON_DIR/evolution"
+    fi
+
     # Generate bootstrap script if it doesn't exist (spec-37, gap #1)
     generate_bootstrap_script
 

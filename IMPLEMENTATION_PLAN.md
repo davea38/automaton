@@ -336,7 +336,7 @@ This spec connects all the foundation (garden, signals), core (quorum, metrics),
 
 - [x] Add `evolution` configuration section to `automaton.config.json` with all fields (enabled, max_cycles, max_cost_per_cycle_usd, convergence_threshold, idle_garden_threshold, branch_prefix, auto_merge, reflect_model, ideate_model, observe_model) (WHY: cycle budget, convergence detection, and model selection need configuration before the loop starts) <!-- test: tests/test_evolve_config.sh -->
 
-- [ ] Add `.automaton/evolution/` ephemeral directory creation to initialization and update `.gitignore` to exclude it (WHY: per-cycle artifacts like reflect.json and ideate.json are ephemeral working state — they do not need to persist across evolution runs) <!-- test: none -->
+- [x] Add `.automaton/evolution/` ephemeral directory creation to initialization and update `.gitignore` to exclude it (WHY: per-cycle artifacts like reflect.json and ideate.json are ephemeral working state — they do not need to persist across evolution runs) <!-- test: none -->
 
 #### 41.2 Evolution Phases
 
