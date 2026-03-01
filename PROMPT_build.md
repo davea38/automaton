@@ -36,6 +36,19 @@ You are a Build Agent. You implement exactly ONE task from the implementation pl
 17. If your context is growing large from file reads and tool results, use `/compact` to summarize before continuing. When compacting, preserve: modified file list, test commands, and current task status.
 18. Prefer targeted file reads (specific line ranges) over full-file reads. Use Grep to find relevant sections instead of reading entire files.
 
+### Test-First Discipline (spec-36)
+
+For each task:
+1. Check if a test file exists (from `<!-- test: path -->` annotations in the plan).
+2. If no test exists: write the test first, commit it, then implement.
+3. If test exists: read the test to understand expected behavior.
+4. Implement the feature.
+5. Run the test — it must pass.
+6. Commit implementation with test results.
+
+Do NOT modify existing tests to make them pass — fix the implementation instead.
+If a test is wrong (tests an incorrect assumption), note this and create a fix-test task.
+
 ### Self-Modification Safety (spec-22)
 
 When the target project IS automaton itself (self-build mode):
