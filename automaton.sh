@@ -6466,6 +6466,235 @@ _metrics_compare() {
     '
 }
 
+# Renders the terminal health dashboard showing all 5 metric categories with
+# current/baseline/trend columns, bar charts for utilization metrics, and
+# trend indicators. This is the primary human interface for understanding the
+# system's quantitative state at a glance.
+#
+# Usage: _metrics_display_health
+_metrics_display_health() {
+    if [ "${METRICS_ENABLED:-true}" != "true" ]; then return 0; fi
+
+    local metrics_file="$AUTOMATON_DIR/evolution-metrics.json"
+    if [ ! -f "$metrics_file" ]; then
+        echo "No metrics data available. Run an evolution cycle first."
+        return 0
+    fi
+
+    local snap_count
+    snap_count=$(jq '.snapshots | length' "$metrics_file" 2>/dev/null || echo 0)
+    if [ "$snap_count" -eq 0 ]; then
+        echo "No metrics snapshots found."
+        return 0
+    fi
+
+    # Extract latest snapshot and baselines in a single jq call
+    local data
+    data=$(jq '{
+        snap: .snapshots[-1],
+        baselines: .baselines,
+        snap_count: (.snapshots | length),
+        prev: (if (.snapshots | length) >= 2 then .snapshots[-2] else null end)
+    }' "$metrics_file" 2>/dev/null)
+
+    local W=60  # dashboard width
+
+    # Helper: format a number with commas
+    _fmt_num() {
+        local n="$1"
+        if [ -z "$n" ] || [ "$n" = "null" ] || [ "$n" = "" ]; then echo ""; return; fi
+        echo "$n" | sed ':a;s/\B[0-9]\{3\}\>/,&/;ta'
+    }
+
+    # Helper: compute trend string between prev and current values
+    # Args: current baseline prev higher_is_better
+    _trend_str() {
+        local cur="$1" base="$2" prev="$3" hib="$4"
+        if [ -z "$base" ] || [ "$base" = "null" ]; then
+            echo "—"
+            return
+        fi
+        # Percentage change from baseline
+        local pct
+        pct=$(awk -v c="$cur" -v b="$base" 'BEGIN {
+            if (b == 0) { if (c == 0) print "0.0"; else print "100.0" }
+            else printf "%.1f", ((c - b) / b) * 100
+        }')
+        local sign="+"
+        if echo "$pct" | grep -q '^-'; then
+            sign=""
+        fi
+        # Determine arrow and improvement marker
+        local arrow="—" mark=""
+        if [ "$prev" != "null" ] && [ -n "$prev" ]; then
+            local cmp
+            cmp=$(awk -v c="$cur" -v p="$prev" 'BEGIN { if (c > p) print "up"; else if (c < p) print "down"; else print "same" }')
+            if [ "$cmp" = "up" ]; then
+                arrow="▲"
+                [ "$hib" = "true" ] && mark=" ✓"
+                [ "$hib" = "false" ] && mark=""
+            elif [ "$cmp" = "down" ]; then
+                arrow="▼"
+                [ "$hib" = "false" ] && mark=" ✓"
+                [ "$hib" = "true" ] && mark=""
+            fi
+        fi
+        if [ "$pct" = "0.0" ]; then
+            echo "— stable"
+        else
+            echo "${arrow} ${sign}${pct}%${mark}"
+        fi
+    }
+
+    # Helper: render a bar chart (width 10 chars)
+    _bar() {
+        local pct="$1"
+        local filled
+        filled=$(awk -v p="$pct" 'BEGIN { printf "%d", p / 10 }')
+        local empty=$((10 - filled))
+        local bar=""
+        local i
+        for ((i = 0; i < filled; i++)); do bar+="█"; done
+        for ((i = 0; i < empty; i++)); do bar+="░"; done
+        echo "$bar"
+    }
+
+    # Extract values from data using jq
+    _val() { echo "$data" | jq -r "$1" 2>/dev/null; }
+
+    # Print header
+    echo "╔══════════════════════════════════════════════════════════╗"
+    echo "║                   AUTOMATON HEALTH                       ║"
+    echo "╠══════════════════════════════════════════════════════════╣"
+    echo "║                                                          ║"
+
+    # --- CAPABILITY ---
+    printf "║  %-16s %-10s %-11s %-15s  ║\n" "CAPABILITY" "Current" "Baseline" "Trend"
+
+    local cap_lines cap_funcs cap_specs cap_tests
+    cap_lines=$(_val '.snap.capability.total_lines')
+    cap_funcs=$(_val '.snap.capability.total_functions')
+    cap_specs=$(_val '.snap.capability.total_specs')
+    cap_tests=$(_val '.snap.capability.total_tests')
+
+    local bl_lines bl_funcs bl_specs bl_tests
+    bl_lines=$(_val '.baselines.capability.total_lines // ""')
+    bl_funcs=$(_val '.baselines.capability.total_functions // ""')
+    bl_specs=$(_val '.baselines.capability.total_specs // ""')
+    bl_tests=$(_val '.baselines.capability.total_tests // ""')
+
+    local prev_lines prev_funcs prev_specs prev_tests
+    prev_lines=$(_val '.prev.capability.total_lines // null')
+    prev_funcs=$(_val '.prev.capability.total_functions // null')
+    prev_specs=$(_val '.prev.capability.total_specs // null')
+    prev_tests=$(_val '.prev.capability.total_tests // null')
+
+    local tr
+    tr=$(_trend_str "$cap_lines" "$bl_lines" "$prev_lines" "true")
+    printf "║  %-16s %-10s %-11s %-15s  ║\n" "Lines of code" "$(_fmt_num "$cap_lines")" "$(_fmt_num "$bl_lines")" "$tr"
+    tr=$(_trend_str "$cap_funcs" "$bl_funcs" "$prev_funcs" "true")
+    printf "║  %-16s %-10s %-11s %-15s  ║\n" "Functions" "$(_fmt_num "$cap_funcs")" "$(_fmt_num "$bl_funcs")" "$tr"
+    tr=$(_trend_str "$cap_specs" "$bl_specs" "$prev_specs" "true")
+    printf "║  %-16s %-10s %-11s %-15s  ║\n" "Specs" "$(_fmt_num "$cap_specs")" "$(_fmt_num "$bl_specs")" "$tr"
+    tr=$(_trend_str "$cap_tests" "$bl_tests" "$prev_tests" "true")
+    printf "║  %-16s %-10s %-11s %-15s  ║\n" "Tests" "$(_fmt_num "$cap_tests")" "$(_fmt_num "$bl_tests")" "$tr"
+
+    echo "║                                                          ║"
+
+    # --- EFFICIENCY ---
+    printf "║  %-16s %-10s %-11s %-15s  ║\n" "EFFICIENCY" "Current" "Baseline" "Trend"
+
+    local eff_tpt eff_stall eff_cache
+    eff_tpt=$(_val '.snap.efficiency.tokens_per_task')
+    eff_stall=$(_val '.snap.efficiency.stall_rate')
+    eff_cache=$(_val '.snap.efficiency.cache_hit_ratio')
+
+    local bl_tpt bl_stall
+    bl_tpt=$(_val '.baselines.efficiency.tokens_per_task // ""')
+    bl_stall=$(_val '.baselines.efficiency.stall_rate // ""')
+
+    local prev_tpt prev_stall prev_cache
+    prev_tpt=$(_val '.prev.efficiency.tokens_per_task // null')
+    prev_stall=$(_val '.prev.efficiency.stall_rate // null')
+    prev_cache=$(_val '.prev.efficiency.cache_hit_ratio // null')
+
+    tr=$(_trend_str "$eff_tpt" "$bl_tpt" "$prev_tpt" "false")
+    printf "║  %-16s %-10s %-11s %-15s  ║\n" "Tokens/task" "$(_fmt_num "$eff_tpt")" "$(_fmt_num "$bl_tpt")" "$tr"
+    tr=$(_trend_str "$eff_stall" "$bl_stall" "$prev_stall" "false")
+    printf "║  %-16s %-10s %-11s %-15s  ║\n" "Stall rate" "$eff_stall" "$bl_stall" "$tr"
+    tr=$(_trend_str "$eff_cache" "" "$prev_cache" "true")
+    printf "║  %-16s %-10s %-11s %-15s  ║\n" "Cache hit ratio" "$eff_cache" "" "$tr"
+
+    echo "║                                                          ║"
+
+    # --- QUALITY ---
+    printf "║  %-16s %-10s %-11s %-15s  ║\n" "QUALITY" "Current" "Baseline" "Trend"
+
+    local qual_tpr qual_rollback
+    qual_tpr=$(_val '.snap.quality.test_pass_rate')
+    qual_rollback=$(_val '.snap.quality.rollback_count')
+
+    local bl_tpr bl_rollback
+    bl_tpr=$(_val '.baselines.quality.test_pass_rate // ""')
+    bl_rollback=$(_val '.baselines.quality.rollback_count // ""')
+
+    local prev_tpr prev_rollback
+    prev_tpr=$(_val '.prev.quality.test_pass_rate // null')
+    prev_rollback=$(_val '.prev.quality.rollback_count // null')
+
+    tr=$(_trend_str "$qual_tpr" "$bl_tpr" "$prev_tpr" "true")
+    printf "║  %-16s %-10s %-11s %-15s  ║\n" "Test pass rate" "$qual_tpr" "$bl_tpr" "$tr"
+    tr=$(_trend_str "$qual_rollback" "$bl_rollback" "$prev_rollback" "false")
+    printf "║  %-16s %-10s %-11s %-15s  ║\n" "Rollbacks" "$qual_rollback" "$bl_rollback" "$tr"
+
+    echo "║                                                          ║"
+
+    # --- INNOVATION ---
+    printf "║  %-16s %-39s  ║\n" "INNOVATION" "Current"
+
+    local inn_seeds inn_sprouts inn_blooms inn_harvested inn_signals inn_strong
+    inn_seeds=$(_val '.snap.innovation.garden_seeds')
+    inn_sprouts=$(_val '.snap.innovation.garden_sprouts')
+    inn_blooms=$(_val '.snap.innovation.garden_blooms')
+    inn_harvested=$(_val '.snap.innovation.ideas_implemented_total')
+    inn_signals=$(_val '.snap.innovation.active_signals')
+
+    printf "║  Garden: %d seeds, %d sprouts, %d blooms%-17s  ║\n" \
+        "$inn_seeds" "$inn_sprouts" "$inn_blooms" ""
+    printf "║  Signals: %d active%-36s  ║\n" "$inn_signals" ""
+    printf "║  Harvested: %d ideas total%-30s  ║\n" "$inn_harvested" ""
+
+    echo "║                                                          ║"
+
+    # --- HEALTH ---
+    printf "║  %-16s %-39s  ║\n" "HEALTH" "Status"
+
+    local h_budget h_weekly h_risk h_breakers h_cycles
+    h_budget=$(_val '.snap.health.budget_utilization')
+    h_weekly=$(_val '.snap.health.weekly_allowance_remaining')
+    h_risk=$(_val '.snap.health.convergence_risk')
+    h_breakers=$(_val '.snap.health.circuit_breaker_trips')
+    h_cycles=$(_val '.snap.cycle_id')
+
+    local budget_pct
+    budget_pct=$(awk -v b="$h_budget" 'BEGIN { printf "%d", b * 100 }')
+    local weekly_pct
+    weekly_pct=$(awk -v w="$h_weekly" 'BEGIN { printf "%d", w * 100 }')
+
+    printf "║  Budget utilization  %3d%% %s%-20s  ║\n" "$budget_pct" "$(_bar "$budget_pct")" ""
+    printf "║  Weekly allowance    %3d%% remaining%-21s  ║\n" "$weekly_pct" ""
+    printf "║  Convergence risk    %-35s  ║\n" "$(echo "$h_risk" | tr '[:lower:]' '[:upper:]')"
+    printf "║  Circuit breakers    %d trips%-29s  ║\n" "$h_breakers" ""
+    printf "║  Evolution cycles    %d completed%-25s  ║\n" "$h_cycles" ""
+
+    echo "║                                                          ║"
+    echo "╚══════════════════════════════════════════════════════════╝"
+
+    local last_ts
+    last_ts=$(_val '.snap.timestamp')
+    echo "  Last snapshot: ${last_ts} (cycle ${h_cycles})"
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------

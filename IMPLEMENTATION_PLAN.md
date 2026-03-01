@@ -256,7 +256,7 @@ These specs build on the garden and signals to add collective decision-making an
 
 #### 43.3 Metrics Display and Integration
 
-- [ ] Implement `_metrics_display_health()` in `automaton.sh` that renders the terminal health dashboard with all 5 categories, current/baseline/trend columns, bar charts for utilization, and trend indicators (WHY: the `--health` dashboard is the primary human interface for understanding the system's quantitative state at a glance) <!-- test: tests/test_metrics_display.sh -->
+- [x] Implement `_metrics_display_health()` in `automaton.sh` that renders the terminal health dashboard with all 5 categories, current/baseline/trend columns, bar charts for utilization, and trend indicators (WHY: the `--health` dashboard is the primary human interface for understanding the system's quantitative state at a glance) <!-- test: tests/test_metrics_display.sh -->
 
 - [ ] Add `--health` CLI flag to argument parsing in `automaton.sh` that calls `_metrics_display_health()` and exits (WHY: `--health` is a standalone observation command that works without starting an evolution cycle) <!-- test: tests/test_metrics_display.sh -->
 
