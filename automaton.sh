@@ -96,6 +96,9 @@ load_config() {
 
         # -- max_plan_preset (spec-35) --
         MAX_PLAN_PRESET=$(jq -r '.max_plan_preset // false' "$config_file")
+
+        # -- agents (spec-27) --
+        AGENTS_USE_NATIVE_DEFINITIONS=$(jq -r '.agents.use_native_definitions // false' "$config_file")
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -175,6 +178,9 @@ load_config() {
 
         # -- max_plan_preset (spec-35) --
         MAX_PLAN_PRESET="false"
+
+        # -- agents (spec-27) --
+        AGENTS_USE_NATIVE_DEFINITIONS="false"
     fi
 }
 
@@ -590,6 +596,11 @@ RATE
 
     # Initialize structured learnings file (spec-34)
     init_learnings
+
+    # Migrate learnings to per-agent memory when native definitions enabled (spec-27)
+    if [ "$AGENTS_USE_NATIVE_DEFINITIONS" = "true" ]; then
+        migrate_learnings_to_agent_memory
+    fi
 
     # Create empty session.log (log() appends to this)
     : > "$AUTOMATON_DIR/session.log"
@@ -2588,6 +2599,93 @@ count_active_learnings() {
         return 0
     fi
     jq '.entries | map(select(.active == true)) | length' "$learnings_file"
+}
+
+# ---------------------------------------------------------------------------
+# Agent Memory Migration (spec-27)
+# ---------------------------------------------------------------------------
+
+# Migrates existing AGENTS.md learnings into per-agent memory files under
+# .claude/agent-memory/<name>/MEMORY.md. Called once on first run with
+# agents.use_native_definitions enabled. The build agent receives the bulk
+# of operational learnings since they are most relevant to implementation.
+# Also migrates structured learnings from learnings.json if available.
+migrate_learnings_to_agent_memory() {
+    local memory_base=".claude/agent-memory"
+    local builder_memory="$memory_base/automaton-builder/MEMORY.md"
+    local marker="$AUTOMATON_DIR/.learnings_migrated"
+
+    # Only migrate once — idempotent via marker file
+    if [ -f "$marker" ]; then
+        return 0
+    fi
+
+    # Ensure directories exist
+    local agents=("automaton-research" "automaton-planner" "automaton-builder" "automaton-reviewer" "automaton-self-researcher")
+    for agent in "${agents[@]}"; do
+        mkdir -p "$memory_base/$agent"
+    done
+
+    log "ORCHESTRATOR" "Migrating learnings to per-agent memory (spec-27)"
+
+    # Extract learnings from AGENTS.md (everything under ## Learnings)
+    local agents_learnings=""
+    if [ -f "AGENTS.md" ]; then
+        agents_learnings=$(sed -n '/^## Learnings/,/^## /{ /^## Learnings/d; /^## /d; p; }' "AGENTS.md" | sed '/^$/d' || true)
+    fi
+
+    # Extract structured learnings from learnings.json if available
+    local structured_learnings=""
+    local learnings_file="$AUTOMATON_DIR/learnings.json"
+    if [ -f "$learnings_file" ]; then
+        structured_learnings=$(jq -r '
+            .entries
+            | map(select(.active == true))
+            | sort_by(if .confidence == "high" then 0
+                      elif .confidence == "medium" then 1
+                      else 2 end)
+            | .[]
+            | "- " + .summary + (if .detail != "" then " (" + .detail + ")" else "" end)
+        ' "$learnings_file" 2>/dev/null || true)
+    fi
+
+    # Build the migrated content for the builder agent
+    local migrated=""
+    if [ -n "$agents_learnings" ]; then
+        migrated="${migrated}${agents_learnings}"$'\n'
+    fi
+    if [ -n "$structured_learnings" ]; then
+        if [ -n "$migrated" ]; then
+            migrated="${migrated}"$'\n'
+        fi
+        migrated="${migrated}${structured_learnings}"$'\n'
+    fi
+
+    # Append migrated learnings to builder's MEMORY.md (it gets the bulk)
+    if [ -n "$migrated" ] && [ -f "$builder_memory" ]; then
+        printf '%s' "$migrated" >> "$builder_memory"
+        log "ORCHESTRATOR" "Migrated learnings to $builder_memory"
+    fi
+
+    # Seed other agents with relevant subset headers (no content duplication)
+    for agent in "${agents[@]}"; do
+        local mem_file="$memory_base/$agent/MEMORY.md"
+        if [ ! -f "$mem_file" ]; then
+            cat > "$mem_file" <<EOF
+# ${agent} Memory
+
+## Guidelines
+- Keep this file under 200 lines (first 200 lines auto-included in system prompt)
+- Remove outdated entries when adding new ones
+
+## Learnings
+EOF
+        fi
+    done
+
+    # Write marker to prevent re-migration
+    echo "migrated=$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$marker"
+    log "ORCHESTRATOR" "Learnings migration complete — marker written to $marker"
 }
 
 # Generates AGENTS.md from learnings.json and project metadata (spec-34).
