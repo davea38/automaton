@@ -398,7 +398,7 @@ This spec adds the human-facing commands that wrap all evolution subsystems in a
 
 - [x] Implement `_cli_water()` in `automaton.sh` that calls `_garden_water()` with the provided evidence, displays updated evidence count and priority, and reports any stage advancement that occurred (WHY: watering feedback must show the impact — did the evidence push the idea to the next stage? how did priority change?) <!-- test: tests/test_cli_water.sh -->
 
-- [ ] Implement `_cli_prune()` in `automaton.sh` that calls `_garden_wilt()` with the provided reason and displays confirmation (WHY: pruning is a destructive action — clear confirmation with the idea title and reason prevents accidental deletions) <!-- test: tests/test_cli_prune.sh -->
+- [x] Implement `_cli_prune()` in `automaton.sh` that calls `_garden_wilt()` with the provided reason and displays confirmation (WHY: pruning is a destructive action — clear confirmation with the idea title and reason prevents accidental deletions) <!-- test: tests/test_cli_prune.sh -->
 
 - [ ] Implement `_cli_promote()` in `automaton.sh` that calls `_garden_advance_stage()` with `force=true` to bypass thresholds and displays the new stage (WHY: human promotion is the mechanism for Article II sovereignty — the human can override the normal maturation process when they know an idea is ready) <!-- test: tests/test_cli_promote.sh -->
 
