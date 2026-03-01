@@ -378,7 +378,7 @@ This spec adds the human-facing commands that wrap all evolution subsystems in a
 
 #### 44.1 Argument Parsing
 
-- [ ] Add argument parsing for all 15 new CLI flags to `automaton.sh`: `--plant`, `--garden`, `--garden-detail`, `--water`, `--prune`, `--promote`, `--health` (already in spec-43 but connect here), `--inspect`, `--constitution`, `--amend`, `--override`, `--pause-evolution`, `--signals`, and connect `--evolve`/`--cycles` from spec-41 (WHY: argument parsing is the entry point for all human interaction — each flag must be correctly parsed with its arguments before any display or action function can be invoked) <!-- test: tests/test_cli_args.sh -->
+- [x] Add argument parsing for all 15 new CLI flags to `automaton.sh`: `--plant`, `--garden`, `--garden-detail`, `--water`, `--prune`, `--promote`, `--health` (already in spec-43 but connect here), `--inspect`, `--constitution`, `--amend`, `--override`, `--pause-evolution`, `--signals`, and connect `--evolve`/`--cycles` from spec-41 (WHY: argument parsing is the entry point for all human interaction — each flag must be correctly parsed with its arguments before any display or action function can be invoked) <!-- test: tests/test_cli_args.sh -->
 
 #### 44.2 Display Functions
 
