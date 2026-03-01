@@ -406,7 +406,7 @@ This spec adds the human-facing commands that wrap all evolution subsystems in a
 
 - [x] Implement `_cli_override()` in `automaton.sh` that lists recently rejected ideas, accepts an override selection with confirmation, re-promotes the idea to bloom, and logs the override in the vote record and constitution history (WHY: overrides implement Article II sovereignty — they must be auditable with full trail so the system can learn from human corrections) <!-- test: tests/test_cli_override.sh -->
 
-- [ ] Implement `_cli_pause()` in `automaton.sh` that writes `.automaton/evolution/pause` flag file and displays confirmation message (WHY: pause is the non-destructive way to halt evolution — it lets the current phase complete and saves state for resume, unlike Ctrl+C which may interrupt mid-phase) <!-- test: tests/test_cli_pause.sh -->
+- [x] Implement `_cli_pause()` in `automaton.sh` that writes `.automaton/evolution/pause` flag file and displays confirmation message (WHY: pause is the non-destructive way to halt evolution — it lets the current phase complete and saves state for resume, unlike Ctrl+C which may interrupt mid-phase) <!-- test: tests/test_cli_pause.sh -->
 
 #### 44.4 Skills and Help
 

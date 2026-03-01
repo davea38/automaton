@@ -7813,6 +7813,30 @@ _cli_override() {
     echo "Override logged in ${selected_vote_id} with reason: \"Human override — Article II sovereignty\""
 }
 
+# Writes .automaton/evolution/pause flag file to halt the evolution loop
+# between phases. The evolution loop checks for this file between cycles
+# and stops cleanly when found. To unpause, delete the file and resume
+# with --evolve --resume.
+_cli_pause() {
+    local evol_dir="$AUTOMATON_DIR/evolution"
+    mkdir -p "$evol_dir"
+
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    cat > "$evol_dir/pause" << EOF
+paused_at=$now
+paused_by=human
+EOF
+
+    log "EVOLVE" "Pause flag written to $evol_dir/pause"
+    echo ""
+    echo "Evolution paused."
+    echo "The evolution loop will complete its current phase and stop."
+    echo ""
+    echo "To resume: rm .automaton/evolution/pause && ./automaton.sh --evolve --resume"
+}
+
 # ---------------------------------------------------------------------------
 # Constitutional Principles (spec-40)
 # ---------------------------------------------------------------------------
