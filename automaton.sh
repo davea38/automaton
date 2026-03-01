@@ -6870,6 +6870,90 @@ handle_wave_errors() {
     fi
 }
 
+# Converts unchecked tasks from IMPLEMENTATION_PLAN.md into the Agent Teams
+# shared task list format. Parses task descriptions, file annotations
+# (<!-- files: ... -->), and dependency annotations (<!-- depends: task-N -->).
+# Each task gets a sequential task_id (task-1, task-2, ...) and is marked
+# blocked if it depends on another uncompleted task.
+#
+# WHY: Agent Teams teammates self-claim tasks from a shared list instead of
+# receiving pre-assigned wave work. This function bridges the plan format
+# to the Agent Teams task model. (spec-28)
+#
+# Output: writes .automaton/wave/agent_teams_tasks.json
+# Returns: 0 on success, 1 if plan file is missing
+populate_agent_teams_task_list() {
+    local plan_file="${PLAN_FILE:-IMPLEMENTATION_PLAN.md}"
+    local output_file="$AUTOMATON_DIR/wave/agent_teams_tasks.json"
+
+    if [ ! -f "$plan_file" ]; then
+        log "ORCHESTRATOR" "Cannot populate task list: $plan_file not found"
+        return 1
+    fi
+
+    mkdir -p "$AUTOMATON_DIR/wave"
+
+    # Parse unchecked tasks with their annotations using awk state machine.
+    # Tracks the current task and collects <!-- files: --> and <!-- depends: -->
+    # annotations on subsequent lines. Emits the task when a non-annotation
+    # line is reached or at EOF.
+    # Output: tab-separated fields: line_number, task_text, files, depends
+    local parsed
+    parsed=$(awk '
+    function emit_task() {
+        if (task_line > 0) {
+            print task_line "\t" task_text "\t" files "\t" depends
+        }
+        task_line = 0; task_text = ""; files = ""; depends = ""
+    }
+    /^- \[ \]/ {
+        emit_task()
+        task_line = NR
+        task_text = $0
+        sub(/^- \[ \] /, "", task_text)
+        next
+    }
+    task_line > 0 && /<!-- files:/ {
+        f = $0
+        gsub(/.*<!-- files: /, "", f)
+        gsub(/ -->.*/, "", f)
+        files = f
+        next
+    }
+    task_line > 0 && /<!-- depends:/ {
+        d = $0
+        gsub(/.*<!-- depends: /, "", d)
+        gsub(/ -->.*/, "", d)
+        depends = d
+        next
+    }
+    task_line > 0 { emit_task() }
+    END { emit_task() }
+    ' "$plan_file")
+
+    # Convert parsed output to JSON with task IDs and blocked status
+    echo "$parsed" | jq -R -s '
+        split("\n") | map(select(. != "")) | to_entries | map(
+            .key as $idx |
+            .value | split("\t") | {
+                task_id: ("task-" + (($idx + 1) | tostring)),
+                line: (.[0] | gsub("^\\s+|\\s+$"; "") | tonumber),
+                subject: (.[1] | gsub("^\\s+|\\s+$"; "")),
+                files: (.[2] | gsub("^\\s+|\\s+$"; "") | split(", ") | map(select(. != ""))),
+                depends_on: (.[3] | gsub("^\\s+|\\s+$"; "") | split(", ") | map(select(. != ""))),
+                blocked: ((.[3] | gsub("^\\s+|\\s+$"; "")) != ""),
+                status: "pending"
+            }
+        )
+    ' > "$output_file"
+
+    local task_count blocked_count
+    task_count=$(jq 'length' "$output_file")
+    blocked_count=$(jq '[.[] | select(.blocked == true)] | length' "$output_file")
+
+    log "ORCHESTRATOR" "Agent Teams task list: $task_count tasks ($blocked_count blocked by dependencies)"
+}
+
 # Agent Teams build phase (spec-28). Uses the Claude Code Agent Teams API
 # instead of tmux + worktree wave orchestration. Teammates self-claim tasks
 # from a shared task list populated from IMPLEMENTATION_PLAN.md.
@@ -6885,11 +6969,13 @@ run_agent_teams_build() {
     # Ensure the experimental flag is set
     export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
 
-    # Task list population, teammate spawning, and budget tracking
-    # are implemented in subsequent spec-28 tasks.
-    log "ORCHESTRATOR" "Agent Teams mode: task list population, teammate spawning pending implementation"
+    # Populate the shared task list from the implementation plan
+    populate_agent_teams_task_list
 
-    # Fall back to single-builder until full Agent Teams integration is complete
+    # Teammate spawning and budget tracking
+    # are implemented in subsequent spec-28 tasks.
+
+    # Fall back to single-builder until teammate spawning is implemented
     log "ORCHESTRATOR" "Agent Teams fallback: running single-builder iterations"
     while true; do
         if ! run_single_builder_iteration; then
