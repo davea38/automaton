@@ -196,4 +196,4 @@ else
     ((_TEST_FAIL_COUNT++))
 fi
 
-print_summary
+test_summary

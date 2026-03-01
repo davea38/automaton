@@ -8849,6 +8849,72 @@ _evolve_run_cycle() {
 }
 
 # ---------------------------------------------------------------------------
+# Evolution Convergence Detection (spec-41 §8)
+# ---------------------------------------------------------------------------
+
+# Checks whether the evolution loop has converged and should stop.
+# Convergence occurs when:
+#   1. consecutive_no_improvement >= EVOLVE_CONVERGENCE_THRESHOLD
+#      (no cycle produced a "harvest" outcome in the last N cycles)
+#   2. No bloom candidates for EVOLVE_IDLE_GARDEN_THRESHOLD consecutive cycles
+#      (eval_result was "skipped" meaning no bloom candidate existed)
+#
+# Usage: reason=$(_evolve_check_convergence)
+# Returns: 0 if converged (reason on stdout), 1 if not converged
+_evolve_check_convergence() {
+    local evo_dir="$AUTOMATON_DIR/evolution"
+    local convergence_threshold="${EVOLVE_CONVERGENCE_THRESHOLD:-5}"
+    local idle_threshold="${EVOLVE_IDLE_GARDEN_THRESHOLD:-3}"
+
+    # Collect cycle summaries sorted by cycle number (ascending)
+    local cycle_dirs
+    cycle_dirs=$(find "$evo_dir" -maxdepth 1 -type d -name 'cycle-*' 2>/dev/null | sort)
+    [ -n "$cycle_dirs" ] || return 1
+
+    # Walk cycle summaries in order to compute consecutive streaks
+    local consecutive_no_improvement=0
+    local consecutive_no_bloom=0
+
+    while IFS= read -r cdir; do
+        local summary="$cdir/cycle-summary.json"
+        [ -f "$summary" ] || continue
+
+        local observe_outcome eval_result
+        observe_outcome=$(jq -r '.observe_outcome // "none"' "$summary" 2>/dev/null || echo "none")
+        eval_result=$(jq -r '.eval_result // "skipped"' "$summary" 2>/dev/null || echo "skipped")
+
+        # Track no-improvement streak (harvest resets; anything else increments)
+        if [ "$observe_outcome" = "harvest" ]; then
+            consecutive_no_improvement=0
+        else
+            consecutive_no_improvement=$((consecutive_no_improvement + 1))
+        fi
+
+        # Track idle garden streak (eval_result=skipped means no bloom candidate)
+        if [ "$eval_result" = "skipped" ]; then
+            consecutive_no_bloom=$((consecutive_no_bloom + 1))
+        else
+            consecutive_no_bloom=0
+        fi
+    done <<< "$cycle_dirs"
+
+    # Check convergence conditions
+    if [ "$consecutive_no_improvement" -ge "$convergence_threshold" ]; then
+        log "EVOLVE" "Convergence: $consecutive_no_improvement consecutive cycles without improvement (threshold=$convergence_threshold)"
+        echo "no_improvement:${consecutive_no_improvement}"
+        return 0
+    fi
+
+    if [ "$consecutive_no_bloom" -ge "$idle_threshold" ]; then
+        log "EVOLVE" "Convergence: $consecutive_no_bloom consecutive cycles with no bloom candidates (threshold=$idle_threshold)"
+        echo "idle_garden:${consecutive_no_bloom}"
+        return 0
+    fi
+
+    return 1
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
