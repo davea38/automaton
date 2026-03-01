@@ -1,1 +1,30 @@
-.automaton/
+# Automaton ephemeral state (runtime only — recreated each run)
+.automaton/state.json
+.automaton/state.json.tmp
+.automaton/rate.json
+.automaton/budget.json
+.automaton/budget.json.tmp
+.automaton/wave/
+.automaton/wave-history/
+.automaton/worktrees/
+.automaton/dashboard.txt
+.automaton/session.log
+.automaton/self_checksums.json
+.automaton/self_checksums.json.tmp
+.automaton/self_backup/
+.automaton/progress.txt
+.automaton/context_summary.md
+.automaton/iteration_memory.md
+.automaton/prompt_augmented.md
+.automaton/plan_checkpoint.md
+.automaton/agents/
+.automaton/inbox/
+.automaton/backlog.md
+.automaton/journal/
+
+# Automaton persistent state (git-tracked — DO NOT add to gitignore)
+# .automaton/budget-history.json
+# .automaton/learnings.json
+# .automaton/run-summaries/
+# .automaton/test_results.json
+# .automaton/self_modifications.json
