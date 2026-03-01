@@ -314,9 +314,9 @@ These specs add the safety constraints and governance framework that the evoluti
 
 - [x] Implement `_safety_preflight()` in `automaton.sh` that validates clean working tree, test pass rate above minimum, constitution exists or can be created, sufficient budget for at least one cycle, and no tripped circuit breakers (WHY: preflight catches problems before the first cycle starts — running evolution with a dirty tree or failing tests would produce unreliable results) <!-- test: tests/test_safety_preflight.sh -->
 
-- [ ] Create `.claude/hooks/evolution-safety-guard.sh` that enforces branch isolation (commits only on evolution branches), constitutional compliance, and scope limits during evolution mode (WHY: the hook is a guaranteed enforcement mechanism that runs before every commit — even if the build agent ignores prompt instructions, the hook blocks invalid commits) <!-- test: tests/test_safety_guard_hook.sh -->
+- [x] Create `.claude/hooks/evolution-safety-guard.sh` that enforces branch isolation (commits only on evolution branches), constitutional compliance, and scope limits during evolution mode (WHY: the hook is a guaranteed enforcement mechanism that runs before every commit — even if the build agent ignores prompt instructions, the hook blocks invalid commits) <!-- test: tests/test_safety_guard_hook.sh -->
 
-- [ ] Register `evolution-safety-guard.sh` in `.claude/settings.json` hooks configuration (WHY: the hook must be registered in settings to be invoked by Claude Code before commits during evolution) <!-- test: none -->
+- [x] Register `evolution-safety-guard.sh` in `.claude/settings.json` hooks configuration (WHY: the hook must be registered in settings to be invoked by Claude Code before commits during evolution) <!-- test: none -->
 
 - [ ] Create `.claude/skills/rollback-executor.md` skill for guided manual rollback of a specific evolution cycle (WHY: when automatic rollback is insufficient — e.g., a merged change that was later found to be problematic — the human needs a guided process to cleanly undo a specific cycle's changes) <!-- test: tests/test_safety_rollback_skill.sh -->
 
