@@ -117,6 +117,18 @@ load_config() {
 
         # -- agents (spec-27) --
         AGENTS_USE_NATIVE_DEFINITIONS=$(jq -r '.agents.use_native_definitions // false' "$config_file")
+
+        # -- garden (spec-38) --
+        GARDEN_ENABLED=$(jq -r '.garden.enabled // true' "$config_file")
+        GARDEN_SEED_TTL_DAYS=$(jq -r '.garden.seed_ttl_days // 14' "$config_file")
+        GARDEN_SPROUT_TTL_DAYS=$(jq -r '.garden.sprout_ttl_days // 30' "$config_file")
+        GARDEN_SPROUT_THRESHOLD=$(jq -r '.garden.sprout_threshold // 2' "$config_file")
+        GARDEN_BLOOM_THRESHOLD=$(jq -r '.garden.bloom_threshold // 3' "$config_file")
+        GARDEN_BLOOM_PRIORITY_THRESHOLD=$(jq -r '.garden.bloom_priority_threshold // 40' "$config_file")
+        GARDEN_SIGNAL_SEED_THRESHOLD=$(jq -r '.garden.signal_seed_threshold // 0.7' "$config_file")
+        GARDEN_MAX_ACTIVE_IDEAS=$(jq -r '.garden.max_active_ideas // 50' "$config_file")
+        GARDEN_AUTO_SEED_METRICS=$(jq -r '.garden.auto_seed_from_metrics // true' "$config_file")
+        GARDEN_AUTO_SEED_SIGNALS=$(jq -r '.garden.auto_seed_from_signals // true' "$config_file")
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -209,6 +221,18 @@ load_config() {
 
         # -- agents (spec-27) --
         AGENTS_USE_NATIVE_DEFINITIONS="false"
+
+        # -- garden (spec-38) --
+        GARDEN_ENABLED="true"
+        GARDEN_SEED_TTL_DAYS=14
+        GARDEN_SPROUT_TTL_DAYS=30
+        GARDEN_SPROUT_THRESHOLD=2
+        GARDEN_BLOOM_THRESHOLD=3
+        GARDEN_BLOOM_PRIORITY_THRESHOLD=40
+        GARDEN_SIGNAL_SEED_THRESHOLD="0.7"
+        GARDEN_MAX_ACTIVE_IDEAS=50
+        GARDEN_AUTO_SEED_METRICS="true"
+        GARDEN_AUTO_SEED_SIGNALS="true"
     fi
 }
 
@@ -783,6 +807,11 @@ RATE
     # Migrate learnings to per-agent memory when native definitions enabled (spec-27)
     if [ "$AGENTS_USE_NATIVE_DEFINITIONS" = "true" ]; then
         migrate_learnings_to_agent_memory
+    fi
+
+    # Initialize garden directory when enabled (spec-38)
+    if [ "$GARDEN_ENABLED" = "true" ]; then
+        mkdir -p "$AUTOMATON_DIR/garden"
     fi
 
     # Generate bootstrap script if it doesn't exist (spec-37, gap #1)

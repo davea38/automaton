@@ -91,5 +91,17 @@
   },
   "agents": {
     "use_native_definitions": false
+  },
+  "garden": {
+    "enabled": true,
+    "seed_ttl_days": 14,
+    "sprout_ttl_days": 30,
+    "sprout_threshold": 2,
+    "bloom_threshold": 3,
+    "bloom_priority_threshold": 40,
+    "signal_seed_threshold": 0.7,
+    "max_active_ideas": 50,
+    "auto_seed_from_metrics": true,
+    "auto_seed_from_signals": true
   }
 }
