@@ -4895,6 +4895,57 @@ _garden_prune_expired() {
     fi
 }
 
+# Checks for existing non-wilted ideas with matching tags before creating a
+# new seed. Returns the existing idea ID (on stdout) if a match is found.
+# A match requires at least one overlapping tag between the search tags and
+# the candidate idea's tags. Wilted and harvested ideas are excluded.
+#
+# Args: tags_csv (comma-separated tags to match against)
+# Returns: 0 and prints idea ID if duplicate found, 1 if no match
+_garden_find_duplicates() {
+    local tags_csv="${1:?_garden_find_duplicates requires tags_csv}"
+
+    local garden_dir="$AUTOMATON_DIR/garden"
+    local idea_files
+    idea_files=$(find "$garden_dir" -name 'idea-*.json' -type f 2>/dev/null | sort)
+    [ -n "$idea_files" ] || return 1
+
+    # Convert search tags CSV to newline-separated list for comparison
+    local search_tags
+    search_tags=$(echo "$tags_csv" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+    for f in $idea_files; do
+        [ -f "$f" ] || continue
+
+        local stage
+        stage=$(jq -r '.stage' "$f")
+
+        # Skip wilted and harvested ideas
+        [ "$stage" = "wilt" ] && continue
+        [ "$stage" = "harvest" ] && continue
+
+        # Get idea's tags as newline-separated list
+        local idea_tags
+        idea_tags=$(jq -r '.tags[]' "$f" 2>/dev/null)
+        [ -n "$idea_tags" ] || continue
+
+        # Check for any overlapping tag
+        local tag
+        while IFS= read -r tag; do
+            [ -n "$tag" ] || continue
+            if echo "$idea_tags" | grep -qxF "$tag"; then
+                local idea_id
+                idea_id=$(jq -r '.id' "$f")
+                log "GARDEN" "Duplicate detected: $idea_id matches tags [$tags_csv]"
+                echo "$idea_id"
+                return 0
+            fi
+        done <<< "$search_tags"
+    done
+
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
