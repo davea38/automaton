@@ -5361,6 +5361,83 @@ _signal_get_unlinked() {
         "$signals_file"
 }
 
+# Adds a garden idea ID to a signal's related_ideas array (dedup-safe).
+# This is one half of the bidirectional link between signals and garden ideas.
+#
+# Args: signal_id idea_id
+# Returns: 0 on success, 1 if signal not found or stigmergy disabled
+_signal_link_idea() {
+    if ! _signal_enabled; then return 1; fi
+    local signal_id="${1:?_signal_link_idea requires signal_id}"
+    local idea_id="${2:?_signal_link_idea requires idea_id}"
+
+    local signals_file="$AUTOMATON_DIR/signals.json"
+    [ -f "$signals_file" ] || return 1
+
+    # Check signal exists
+    local exists
+    exists=$(jq --arg id "$signal_id" '[.signals[] | select(.id == $id)] | length' "$signals_file")
+    [ "$exists" -gt 0 ] || return 1
+
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Add idea_id to related_ideas if not already present (deduplicate)
+    local tmp_file="${signals_file}.tmp"
+    jq --arg sid "$signal_id" \
+       --arg iid "$idea_id" \
+       --arg now "$now" \
+       '(.signals[] | select(.id == $sid)) |=
+            (if (.related_ideas | index($iid)) then .
+             else .related_ideas += [$iid]
+             end)
+        | .updated_at = $now' \
+       "$signals_file" > "$tmp_file" && mv "$tmp_file" "$signals_file"
+
+    log "SIGNAL" "Linked signal $signal_id -> idea $idea_id"
+}
+
+# Adds a signal ID to a garden idea's related_signals array (dedup-safe).
+# This is one half of the bidirectional link between signals and garden ideas.
+#
+# Args: idea_id signal_id
+# Returns: 0 on success, 1 if idea not found or garden disabled
+_garden_link_signal() {
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then return 1; fi
+    local idea_id="${1:?_garden_link_signal requires idea_id}"
+    local signal_id="${2:?_garden_link_signal requires signal_id}"
+
+    local idea_file="$AUTOMATON_DIR/garden/${idea_id}.json"
+    [ -f "$idea_file" ] || return 1
+
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Add signal_id to related_signals if not already present (deduplicate)
+    local tmp_file="${idea_file}.tmp"
+    jq --arg sid "$signal_id" \
+       --arg now "$now" \
+       'if (.related_signals | index($sid)) then .
+        else .related_signals += [$sid] | .updated_at = $now
+        end' \
+       "$idea_file" > "$tmp_file" && mv "$tmp_file" "$idea_file"
+
+    log "GARDEN" "Linked idea $idea_id -> signal $signal_id"
+}
+
+# Creates a bidirectional link between a signal and a garden idea.
+# Updates both the signal's related_ideas and the idea's related_signals.
+#
+# Args: signal_id idea_id
+# Returns: 0 on success
+_signal_garden_link() {
+    local signal_id="${1:?_signal_garden_link requires signal_id}"
+    local idea_id="${2:?_signal_garden_link requires idea_id}"
+
+    _signal_link_idea "$signal_id" "$idea_id"
+    _garden_link_signal "$idea_id" "$signal_id"
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------

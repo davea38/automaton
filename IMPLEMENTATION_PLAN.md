@@ -134,7 +134,7 @@ Eight new specs (38-45) introduce autonomous evolution capabilities: an idea gar
 
 ---
 
-## Tier 5: Evolution Foundation (Specs 38, 42)
+## Tier 5: Evolution Foundation (Specs 38, 42) — COMPLETE
 
 These two specs have no dependencies on other new specs. They provide the data structures (garden ideas and stigmergic signals) that all higher-tier specs build upon.
 
@@ -202,7 +202,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 - [x] Add `active_signals` field to the bootstrap manifest in `.automaton/init.sh` (total, strong count, strongest signal, unlinked_count) (WHY: evolution agents need signal awareness in their prompt context to inform reflection and ideation phases) <!-- test: tests/test_signal_bootstrap.sh -->
 
-- [ ] Add bidirectional linking between signals and garden ideas: update signal `related_ideas` when an idea is seeded from a signal, update idea `related_signals` when a signal triggers seeding (WHY: traceability between signals and ideas enables the evolution loop to understand why an idea exists and which observations support it) <!-- test: tests/test_signal_garden_link.sh -->
+- [x] Add bidirectional linking between signals and garden ideas: update signal `related_ideas` when an idea is seeded from a signal, update idea `related_signals` when a signal triggers seeding (WHY: traceability between signals and ideas enables the evolution loop to understand why an idea exists and which observations support it) <!-- test: tests/test_signal_garden_link.sh -->
 
 ---
 
