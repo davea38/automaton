@@ -29,3 +29,5 @@
 # .automaton/run-summaries/
 # .automaton/test_results.json
 # .automaton/self_modifications.json
+# .automaton/garden/              # Idea garden — individual idea JSON files
+# .automaton/garden/_index.json   # Garden index (regenerated but tracked for bootstrap)

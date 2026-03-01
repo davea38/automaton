@@ -144,7 +144,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 - [x] Add `garden` configuration section to `automaton.config.json` with all fields (enabled, seed_ttl_days, sprout_ttl_days, sprout_threshold, bloom_threshold, bloom_priority_threshold, signal_seed_threshold, max_active_ideas, auto_seed_from_metrics, auto_seed_from_signals) (WHY: configuration must exist before any garden functions can read thresholds and feature flags) <!-- test: tests/test_garden_config.sh -->
 
-- [ ] Update `.gitignore` to add `.automaton/garden/` as persistent git-tracked state and `.automaton/garden/_index.json` comment (WHY: garden ideas are persistent state that must survive directory loss; the index is regenerated but tracked for bootstrap) <!-- test: none -->
+- [x] Update `.gitignore` to add `.automaton/garden/` as persistent git-tracked state and `.automaton/garden/_index.json` comment (WHY: garden ideas are persistent state that must survive directory loss; the index is regenerated but tracked for bootstrap) <!-- test: none -->
 
 - [ ] Implement `_garden_plant_seed()` in `automaton.sh` that creates a new idea JSON file in `.automaton/garden/` with the full schema (id, title, description, stage=seed, origin, evidence=[], tags, priority=0, estimated_complexity, related_specs, related_signals, related_ideas, stage_history, vote_id=null, implementation=null, updated_at) and auto-increments the ID from `_index.json` (WHY: this is the primary write operation — every idea enters the garden as a seed, and the schema must be complete from the start to avoid migration later) <!-- test: tests/test_garden_plant.sh -->
 
