@@ -7026,6 +7026,83 @@ _display_garden_detail() {
     fi
 }
 
+# Renders a formatted table of active stigmergic signals with ID, type,
+# strength, title, observation count, and linked idea status. Includes
+# summary counts of unlinked and strong signals.
+#
+# Usage: _display_signals
+_display_signals() {
+    local signals_file="$AUTOMATON_DIR/signals.json"
+
+    if [ ! -f "$signals_file" ]; then
+        echo "No active signals. Signals are emitted during evolution cycles."
+        return 0
+    fi
+
+    local signal_count
+    signal_count=$(jq '.signals | length' "$signals_file")
+
+    if [ "$signal_count" -eq 0 ]; then
+        echo "ACTIVE SIGNALS — 0 signals"
+        echo ""
+        echo "No active signals. Signals are emitted during evolution cycles."
+        return 0
+    fi
+
+    # Count strong signals (strength >= 0.5)
+    local strong_count
+    strong_count=$(jq '[.signals[] | select(.strength >= 0.5)] | length' "$signals_file")
+
+    # Print header
+    echo "ACTIVE SIGNALS — ${signal_count} signals (${strong_count} strong)"
+    echo ""
+
+    # Print column headers
+    printf " %-8s %-20s %5s  %-35s %4s  %s\n" "ID" "TYPE" "STR" "TITLE" "OBS" "LINKED"
+
+    # Sort signals by strength descending and print each row
+    local sorted_signals
+    sorted_signals=$(jq '[.signals | sort_by(-.strength)[]]' "$signals_file")
+
+    local i=0
+    while [ "$i" -lt "$signal_count" ]; do
+        local sig_id sig_type sig_strength sig_title obs_count linked
+        sig_id=$(echo "$sorted_signals" | jq -r ".[$i].id")
+        sig_type=$(echo "$sorted_signals" | jq -r ".[$i].type")
+        sig_strength=$(echo "$sorted_signals" | jq -r ".[$i].strength")
+        sig_title=$(echo "$sorted_signals" | jq -r ".[$i].title")
+        obs_count=$(echo "$sorted_signals" | jq -r ".[$i].observations | length")
+
+        # Get linked idea (first related idea or dash)
+        local related_count
+        related_count=$(echo "$sorted_signals" | jq ".[$i].related_ideas | length")
+        if [ "$related_count" -gt 0 ]; then
+            linked=$(echo "$sorted_signals" | jq -r ".[$i].related_ideas[0]")
+        else
+            linked="—"
+        fi
+
+        # Truncate title to 35 chars
+        if [ "${#sig_title}" -gt 35 ]; then
+            sig_title="${sig_title:0:32}..."
+        fi
+
+        # Format strength as 2-decimal
+        sig_strength=$(printf "%.2f" "$sig_strength")
+
+        printf " %-8s %-20s %5s  %-35s %4s  %s\n" "$sig_id" "$sig_type" "$sig_strength" "$sig_title" "$obs_count" "$linked"
+        i=$((i + 1))
+    done
+
+    # Summary lines
+    local unlinked_count
+    unlinked_count=$(jq '[.signals[] | select(.related_ideas | length == 0)] | length' "$signals_file")
+
+    echo ""
+    echo "Unlinked signals (no garden idea): ${unlinked_count}"
+    echo "Strong signals (>= 0.5): ${strong_count}"
+}
+
 # ---------------------------------------------------------------------------
 # Constitutional Principles (spec-40)
 # ---------------------------------------------------------------------------
