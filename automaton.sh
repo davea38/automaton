@@ -64,6 +64,11 @@ load_config() {
         EXEC_TEST_SCAFFOLD_ITERATIONS=$(jq -r '.execution.test_scaffold_iterations // 2' "$config_file")
         EXEC_TEST_FRAMEWORK=$(jq -r '.execution.test_framework // "assertions"' "$config_file")
 
+        # -- bootstrap (spec-37) --
+        EXEC_BOOTSTRAP_ENABLED=$(jq -r '.execution.bootstrap_enabled // true' "$config_file")
+        EXEC_BOOTSTRAP_SCRIPT=$(jq -r '.execution.bootstrap_script // ".automaton/init.sh"' "$config_file")
+        EXEC_BOOTSTRAP_TIMEOUT_MS=$(jq -r '.execution.bootstrap_timeout_ms // 2000' "$config_file")
+
         # -- git --
         GIT_AUTO_PUSH=$(jq -r '.git.auto_push // true' "$config_file")
         GIT_AUTO_COMMIT=$(jq -r '.git.auto_commit // true' "$config_file")
@@ -150,6 +155,11 @@ load_config() {
         EXEC_TEST_FIRST_ENABLED="true"
         EXEC_TEST_SCAFFOLD_ITERATIONS=2
         EXEC_TEST_FRAMEWORK="assertions"
+
+        # -- bootstrap (spec-37) --
+        EXEC_BOOTSTRAP_ENABLED="true"
+        EXEC_BOOTSTRAP_SCRIPT=".automaton/init.sh"
+        EXEC_BOOTSTRAP_TIMEOUT_MS=2000
 
         # -- git --
         GIT_AUTO_PUSH="true"
@@ -3711,6 +3721,92 @@ generate_progress_txt() {
     } > "$progress_file"
 }
 
+# ---------------------------------------------------------------------------
+# Bootstrap (spec-37)
+# ---------------------------------------------------------------------------
+
+# Run bootstrap script and return manifest JSON via stdout.
+# On failure or when disabled, returns empty string and logs a warning.
+# Falls back gracefully — bootstrap is an optimization, not a requirement.
+#
+# Args:
+#   $1 — phase (optional, defaults to $current_phase)
+#   $2 — iteration (optional, defaults to $phase_iteration)
+_run_bootstrap() {
+    local phase="${1:-$current_phase}"
+    local iteration="${2:-$phase_iteration}"
+
+    if [ "$EXEC_BOOTSTRAP_ENABLED" != "true" ]; then
+        return 0
+    fi
+
+    local script_path="$EXEC_BOOTSTRAP_SCRIPT"
+    if [ ! -x "$script_path" ]; then
+        log "ORCHESTRATOR" "Bootstrap script not found or not executable: $script_path"
+        return 0
+    fi
+
+    local timeout_seconds=$(( EXEC_BOOTSTRAP_TIMEOUT_MS / 1000 ))
+    [ "$timeout_seconds" -lt 1 ] && timeout_seconds=1
+
+    local start_epoch
+    start_epoch=$(date +%s)
+
+    local manifest=""
+    if command -v timeout &>/dev/null; then
+        manifest=$(timeout "${timeout_seconds}s" "$script_path" "." "$phase" "$iteration" 2>/dev/null) || {
+            log "ORCHESTRATOR" "Bootstrap failed. Falling back to agent-driven context loading."
+            return 0
+        }
+    else
+        manifest=$("$script_path" "." "$phase" "$iteration" 2>/dev/null) || {
+            log "ORCHESTRATOR" "Bootstrap failed. Falling back to agent-driven context loading."
+            return 0
+        }
+    fi
+
+    # Validate JSON
+    if ! echo "$manifest" | jq empty 2>/dev/null; then
+        log "ORCHESTRATOR" "Bootstrap produced invalid JSON. Falling back to agent-driven context loading."
+        return 0
+    fi
+
+    # Check for error field in manifest
+    if echo "$manifest" | jq -e '.error' &>/dev/null; then
+        log "ORCHESTRATOR" "Bootstrap error: $(echo "$manifest" | jq -r '.error')"
+        return 0
+    fi
+
+    # Performance check
+    local end_epoch
+    end_epoch=$(date +%s)
+    local elapsed_seconds=$(( end_epoch - start_epoch ))
+    local target_seconds=$(( EXEC_BOOTSTRAP_TIMEOUT_MS / 1000 ))
+    if [ "$elapsed_seconds" -gt "$target_seconds" ]; then
+        log "ORCHESTRATOR" "WARNING: Bootstrap took ${elapsed_seconds}s (target: <${target_seconds}s). Consider optimizing init.sh."
+    fi
+
+    echo "$manifest"
+}
+
+# Format bootstrap manifest for inclusion in dynamic context.
+# Returns formatted markdown block or empty string if manifest is empty.
+#
+# Args:
+#   $1 — manifest JSON string
+_format_bootstrap_for_context() {
+    local manifest="$1"
+    if [ -z "$manifest" ]; then
+        return 0
+    fi
+    echo "## Bootstrap Manifest"
+    echo "<!-- Pre-assembled by init.sh — do NOT re-read these files -->"
+    echo '```json'
+    echo "$manifest" | jq .
+    echo '```'
+    echo ""
+}
+
 # Injects dynamic runtime context into the <dynamic_context> section of a prompt
 # file. Replaces placeholder content between <dynamic_context> and </dynamic_context>
 # with iteration number, budget remaining, recent diffs, and phase-specific data.
@@ -3734,6 +3830,12 @@ inject_dynamic_context() {
         sed -n '1,/<dynamic_context>/p' "$prompt_file"
 
         # --- Dynamic content injected by orchestrator ---
+
+        # Bootstrap manifest (spec-37): pre-assembled context from init.sh
+        if [ -n "${BOOTSTRAP_MANIFEST:-}" ]; then
+            _format_bootstrap_for_context "$BOOTSTRAP_MANIFEST"
+        fi
+
         echo "## Current State"
         echo ""
         echo "- Phase: $current_phase"
@@ -4133,6 +4235,11 @@ _build_dynamic_context_stdin() {
     local prompt_file="$1"
     local dynamic_content=""
 
+    # Bootstrap manifest (spec-37): pre-assembled context from init.sh
+    if [ -n "${BOOTSTRAP_MANIFEST:-}" ]; then
+        dynamic_content+=$(_format_bootstrap_for_context "$BOOTSTRAP_MANIFEST")$'\n'
+    fi
+
     dynamic_content+="## Current State"$'\n'
     dynamic_content+=""$'\n'
     dynamic_content+="- Phase: $current_phase"$'\n'
@@ -4217,6 +4324,13 @@ _build_dynamic_context_stdin() {
 run_agent() {
     local prompt_file="$1"
     local model="$2"
+
+    # Bootstrap (spec-37): pre-assemble context before agent invocation
+    BOOTSTRAP_MANIFEST=""
+    BOOTSTRAP_MANIFEST=$(_run_bootstrap)
+    if [ -n "$BOOTSTRAP_MANIFEST" ]; then
+        log "ORCHESTRATOR" "Bootstrap manifest assembled ($(echo "$BOOTSTRAP_MANIFEST" | wc -c | tr -d ' ') bytes)"
+    fi
 
     # Native agent definitions (spec-27): invoke claude --agent with dynamic
     # context piped via stdin. The static prompt lives in the agent definition

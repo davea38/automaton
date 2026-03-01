@@ -15,11 +15,13 @@ trap 'rm -rf "$TEMP_DIR"' EXIT
 # We source the function definition directly to test it in isolation.
 # Also define minimal stubs for dependencies (log, config vars).
 
-LOG_MESSAGES=""
-log() { LOG_MESSAGES+="[$1] $2"$'\n'; }
+LOG_FILE="$TEMP_DIR/log_messages.txt"
+: > "$LOG_FILE"
+log() { echo "[$1] $2" >> "$LOG_FILE"; }
+read_log() { cat "$LOG_FILE" 2>/dev/null; }
 
 setup_bootstrap_env() {
-    LOG_MESSAGES=""
+    : > "$LOG_FILE"
     EXEC_BOOTSTRAP_ENABLED="true"
     EXEC_BOOTSTRAP_SCRIPT="$TEMP_DIR/.automaton/init.sh"
     EXEC_BOOTSTRAP_TIMEOUT_MS=2000
@@ -38,8 +40,22 @@ INITEOF
     chmod +x "$TEMP_DIR/.automaton/init.sh"
 }
 
-# Extract _run_bootstrap from automaton.sh
-eval "$(sed -n '/^_run_bootstrap()/,/^}/p' "$PROJECT_ROOT/automaton.sh")"
+# Extract _run_bootstrap and _format_bootstrap_for_context from automaton.sh
+# Use awk to properly handle nested braces
+extract_function() {
+    local func_name="$1" file="$2"
+    awk "/^${func_name}\\(\\)/{found=1; depth=0} found{
+        for(i=1;i<=length(\$0);i++){
+            c=substr(\$0,i,1)
+            if(c==\"{\") depth++
+            if(c==\"}\") depth--
+        }
+        print
+        if(found && depth==0) exit
+    }" "$file"
+}
+eval "$(extract_function _run_bootstrap "$PROJECT_ROOT/automaton.sh")"
+eval "$(extract_function _format_bootstrap_for_context "$PROJECT_ROOT/automaton.sh")"
 
 # --- Test 1: Bootstrap produces valid JSON when enabled ---
 setup_bootstrap_env
@@ -63,7 +79,7 @@ setup_bootstrap_env
 EXEC_BOOTSTRAP_SCRIPT="$TEMP_DIR/.automaton/nonexistent.sh"
 manifest=$(_run_bootstrap)
 assert_equals "" "$manifest" "bootstrap returns empty when script missing"
-assert_contains "$LOG_MESSAGES" "not found" "logs warning when script missing"
+assert_contains "$(read_log)" "not found" "logs warning when script missing"
 
 # --- Test 5: init.sh that exits with error returns empty ---
 setup_bootstrap_env
@@ -74,7 +90,7 @@ INITEOF
 chmod +x "$TEMP_DIR/.automaton/init.sh"
 manifest=$(_run_bootstrap)
 assert_equals "" "$manifest" "bootstrap returns empty on script error"
-assert_contains "$LOG_MESSAGES" "Bootstrap failed" "logs fallback on script error"
+assert_contains "$(read_log)" "Bootstrap failed" "logs fallback on script error"
 
 # --- Test 6: init.sh that outputs invalid JSON returns empty ---
 setup_bootstrap_env
@@ -85,7 +101,7 @@ INITEOF
 chmod +x "$TEMP_DIR/.automaton/init.sh"
 manifest=$(_run_bootstrap)
 assert_equals "" "$manifest" "bootstrap returns empty on invalid JSON"
-assert_contains "$LOG_MESSAGES" "invalid JSON" "logs warning on invalid JSON"
+assert_contains "$(read_log)" "invalid JSON" "logs warning on invalid JSON"
 
 # --- Test 7: init.sh that outputs error field returns empty ---
 setup_bootstrap_env
@@ -96,30 +112,12 @@ INITEOF
 chmod +x "$TEMP_DIR/.automaton/init.sh"
 manifest=$(_run_bootstrap)
 assert_equals "" "$manifest" "bootstrap returns empty on error in manifest"
-assert_contains "$LOG_MESSAGES" "Bootstrap error" "logs error from manifest"
+assert_contains "$(read_log)" "Bootstrap error" "logs error from manifest"
 
 # --- Test 8: Bootstrap manifest formatted for dynamic context ---
 setup_bootstrap_env
 create_mock_init_sh
 manifest=$(_run_bootstrap)
-# The BOOTSTRAP_MANIFEST global should be set by run_agent, but we test the
-# format function that wraps it for injection
-_format_bootstrap_for_context() {
-    local manifest="$1"
-    if [ -z "$manifest" ]; then
-        return 0
-    fi
-    echo "## Bootstrap Manifest"
-    echo "<!-- Pre-assembled by init.sh — do NOT re-read these files -->"
-    echo '```json'
-    echo "$manifest" | jq .
-    echo '```'
-    echo ""
-}
-# Extract actual function from automaton.sh if it exists, otherwise use above
-if grep -q '_format_bootstrap_for_context()' "$PROJECT_ROOT/automaton.sh"; then
-    eval "$(sed -n '/^_format_bootstrap_for_context()/,/^}/p' "$PROJECT_ROOT/automaton.sh")"
-fi
 formatted=$(_format_bootstrap_for_context "$manifest")
 assert_contains "$formatted" "Bootstrap Manifest" "formatted context has header"
 assert_contains "$formatted" "project_state" "formatted context has manifest data"
