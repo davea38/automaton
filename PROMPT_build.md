@@ -8,7 +8,7 @@ You are in BUILDING mode. You will implement exactly ONE task, then stop.
 2. Study `IMPLEMENTATION_PLAN.md` to see all tasks.
 3. If `.automaton/context_summary.md` exists, read it for project state overview.
 4. If `.automaton/iteration_memory.md` exists, read the last 10 lines for recent build history.
-5. Study relevant files in `specs/` — use subagents proportional to codebase size. For a single-file project, 1-3 subagents suffice. Scale up for large multi-file projects.
+5. Study relevant files in `specs/`. Use subagents when the codebase is large enough to benefit from parallel reads; for small projects, read files directly.
 
 ## Phase 1 - Pick One Task
 
@@ -19,7 +19,7 @@ Consider which task should come next based on dependencies and priority.
 
 Before writing any code, study the existing codebase related to this task.
 Do NOT assume functionality is missing - search the code first.
-Use subagents proportional to codebase size for research, but only 1 Sonnet subagent for building and testing.
+Use subagents when research tasks can run in parallel; for simple lookups, work directly.
 Use Opus subagents when complex reasoning is needed (debugging, architectural decisions).
 
 ## Phase 3 - Implement
@@ -35,7 +35,7 @@ Run all relevant validation:
 - Linting (if applicable)
 - Build (if applicable)
 
-Use only 1 Sonnet subagent for running tests and builds (this creates helpful backpressure).
+Run tests and builds directly or with a single subagent. Keep validation sequential to catch failures before proceeding.
 Fix any failures before proceeding.
 
 ## Phase 5 - Update and Commit

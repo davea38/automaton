@@ -7,13 +7,13 @@ You will NOT implement anything.
 
 1. Study `AGENTS.md` for operational guidance.
 2. If `.automaton/context_summary.md` exists, read it first for a project state overview before reading specs.
-3. Study every file in `specs/` — use subagents proportional to codebase size. For a single-file project, 1-3 subagents suffice. Scale up for large multi-file projects.
-4. Study the existing codebase (`src/` or relevant directories) using subagents proportional to codebase size. Do NOT assume functionality is missing - confirm by searching the code first.
+3. Study every file in `specs/`. Use subagents when the codebase is large enough to benefit from parallel reads; for small projects, read files directly.
+4. Study the existing codebase (`src/` or relevant directories). Do NOT assume functionality is missing - confirm by searching the code first.
 
 ## Phase 1 - Gap Analysis
 
 Compare what the specs require against what already exists in the code.
-Use subagents proportional to codebase size to study existing source code and compare it against specs.
+Study existing source code and compare it against specs. Use subagents for parallel file reads when the codebase warrants it; for small projects, work directly.
 For each spec, identify what is:
 - Already implemented (mark as done)
 - Partially implemented (note what remains)
