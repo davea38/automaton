@@ -58,6 +58,16 @@ When the target project IS automaton itself (self-build mode):
 110. Do not modify protected functions (`run_orchestration`, `_handle_shutdown`) unless the task explicitly requires it.
 111. Keep changes under 200 lines per iteration. If a task requires more, split it into sub-tasks.
 112. After modifying `automaton.sh`, verify your changes don't break the syntax: think about whether `bash -n automaton.sh` would pass.
+
+### Evolution Mode Safety (spec-41)
+
+When building during an evolution cycle (on an `automaton/evolve-*` branch):
+
+113. All commits MUST be made on the evolution branch. Never commit directly to the working branch during evolution.
+114. Respect scope limits: maximum files changed per `self_build.max_files_per_iteration`, maximum lines changed per `self_build.max_lines_changed_per_iteration`.
+115. Protected functions listed in `self_build.protected_functions` must not be modified.
+116. Every implementation must pass syntax validation (`bash -n`) and the smoke test (`--dry-run`) before the iteration ends.
+117. If the constitutional compliance check fails, stop immediately — do not attempt further modifications on this branch.
 </rules>
 
 <instructions>
