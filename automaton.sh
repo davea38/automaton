@@ -5141,6 +5141,40 @@ _signal_emit() {
     echo "$signal_id"
 }
 
+# Reinforces an existing signal by adding an observation and increasing strength.
+# Strength increases by STIGMERGY_REINFORCE_INCREMENT, capped at 1.0.
+#
+# Args: signal_id agent cycle detail
+# Returns: 0 on success
+_signal_reinforce() {
+    if ! _signal_enabled; then return 1; fi
+    local signal_id="${1:?_signal_reinforce requires signal_id}"
+    local agent="${2:-unknown}"
+    local cycle="${3:-0}"
+    local detail="${4:-}"
+
+    local signals_file="$AUTOMATON_DIR/signals.json"
+    [ -f "$signals_file" ] || return 1
+
+    local reinforce_increment="${STIGMERGY_REINFORCE_INCREMENT:-0.15}"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    local tmp_file="${signals_file}.tmp"
+    jq --arg id "$signal_id" \
+       --argjson inc "$reinforce_increment" \
+       --arg agent "$agent" \
+       --argjson cycle "$cycle" \
+       --arg now "$now" \
+       --arg detail "$detail" \
+       '(.signals[] | select(.id == $id)) |=
+            (.observations += [{agent: $agent, cycle: $cycle, timestamp: $now, detail: $detail}]
+            | .strength = ([.strength + $inc, 1.0] | min)
+            | .last_reinforced_at = $now)
+        | .updated_at = $now' \
+       "$signals_file" > "$tmp_file" && mv "$tmp_file" "$signals_file"
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
