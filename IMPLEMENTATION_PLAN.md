@@ -260,7 +260,7 @@ These specs build on the garden and signals to add collective decision-making an
 
 - [x] Add `--health` CLI flag to argument parsing in `automaton.sh` that calls `_metrics_display_health()` and exits (WHY: `--health` is a standalone observation command that works without starting an evolution cycle) <!-- test: tests/test_metrics_display.sh -->
 
-- [ ] Add `metrics_trend` field to the bootstrap manifest in `.automaton/init.sh` (improving metrics list, degrading list, alerts, cycles_completed, last_harvest_cycle) (WHY: evolution agents need metrics trend awareness to inform REFLECT and OBSERVE decisions without re-analyzing raw data) <!-- test: tests/test_metrics_bootstrap.sh -->
+- [x] Add `metrics_trend` field to the bootstrap manifest in `.automaton/init.sh` (improving metrics list, degrading list, alerts, cycles_completed, last_harvest_cycle) (WHY: evolution agents need metrics trend awareness to inform REFLECT and OBSERVE decisions without re-analyzing raw data) <!-- test: tests/test_metrics_bootstrap.sh -->
 
 - [ ] Enforce snapshot retention by pruning oldest snapshots when count exceeds `snapshot_retention` (WHY: unbounded snapshot accumulation would grow the metrics file indefinitely — retention limits keep it manageable while preserving sufficient history for trend analysis) <!-- test: tests/test_metrics_snapshot.sh -->
 
