@@ -860,6 +860,14 @@ update_budget() {
 
     local total_iter_tokens=$((input_tokens + output_tokens))
 
+    # Calculate estimated context utilization (spec-33)
+    local context_window=200000
+    local estimated_utilization=0
+    if [ "$total_iter_tokens" -gt 0 ]; then
+        estimated_utilization=$(awk -v total="$total_iter_tokens" -v window="$context_window" \
+            'BEGIN { printf "%.1f", (total / window) * 100 }')
+    fi
+
     # Common jq update for both modes
     local jq_filter='
         .used.total_input += $input_tokens |
@@ -884,7 +892,8 @@ update_budget() {
             duration_seconds: $duration,
             task: $task,
             status: $status,
-            timestamp: $timestamp
+            timestamp: $timestamp,
+            estimated_utilization: $utilization
         }]'
 
     # In allowance mode, also update weekly token counters
@@ -907,6 +916,7 @@ update_budget() {
         --arg task "$task_desc" \
         --arg status "$status" \
         --arg timestamp "$timestamp" \
+        --argjson utilization "$estimated_utilization" \
         "$jq_filter" "$budget_file" > "$tmp"
     mv "$tmp" "$budget_file"
 }
@@ -2196,8 +2206,9 @@ update_budget_history() {
             'BEGIN { printf "%.2f", cr / denom }')
     fi
 
-    # Build per-phase breakdown from budget.json history
+    # Build per-phase breakdown and utilization stats from budget.json history
     local phases_json="{}"
+    local peak_utilization="0" avg_utilization="0"
     local budget_file="$AUTOMATON_DIR/budget.json"
     if [ -f "$budget_file" ]; then
         phases_json=$(jq -c '
@@ -2210,6 +2221,16 @@ update_budget_history() {
                 }
             }) | from_entries
         ' "$budget_file" 2>/dev/null || echo "{}")
+
+        # Extract peak and average context utilization from per-iteration history (spec-33)
+        peak_utilization=$(jq '
+            [.history // [] | .[].estimated_utilization // 0] |
+            if length > 0 then max else 0 end
+        ' "$budget_file" 2>/dev/null || echo "0")
+        avg_utilization=$(jq '
+            [.history // [] | .[].estimated_utilization // 0] |
+            if length > 0 then (add / length * 10 | round / 10) else 0 end
+        ' "$budget_file" 2>/dev/null || echo "0")
     fi
 
     # Determine current week boundaries
@@ -2231,6 +2252,8 @@ update_budget_history() {
         --argjson cost "$cost_usd" \
         --arg cache_hit_ratio "$cache_hit_ratio" \
         --argjson phases "$phases_json" \
+        --argjson peak_util "$peak_utilization" \
+        --argjson avg_util "$avg_utilization" \
         --arg week_start "$week_start" \
         --arg week_end "$week_end" \
         '
@@ -2241,6 +2264,8 @@ update_budget_history() {
             tokens_used: $tokens_used,
             estimated_cost_usd: ($cost | tonumber),
             cache_hit_ratio: ($cache_hit_ratio | tonumber),
+            peak_utilization: $peak_util,
+            avg_utilization: $avg_util,
             phases: $phases
         }] |
 

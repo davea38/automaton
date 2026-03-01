@@ -66,7 +66,7 @@ Context window management is the critical constraint for multi-iteration workflo
 - [x] Add compaction guidance to build and research prompts: use `/compact` for long investigations, prefer targeted file reads over full-file reads, scope investigations narrowly (WHY: proactive compaction preserves important context; narrow scoping prevents context waste)
 - [x] Implement auto-compaction detection in `automaton.sh` by detecting token count drops in `stream-json` output between turns within an iteration (WHY: knowing when compaction occurred helps explain unexpected behavior and informs task sizing decisions)
 - [x] Generate `.automaton/progress.txt` at each iteration with human-readable status (phase, iteration, completed/total tasks, last completed, currently blocked, key decisions) (WHY: any agent in any context window can read this one file to understand full project state without loading history)
-- [ ] Track context utilization per iteration in budget history as `estimated_utilization` field (WHY: historical utilization data informs future task sizing and helps identify phases that consistently hit context limits)
+- [x] Track context utilization per iteration in budget history as `estimated_utilization` field (WHY: historical utilization data informs future task sizing and helps identify phases that consistently hit context limits)
 
 ### Spec 35 — Max Plan Optimization (extends specs 23, 08, 12)
 
