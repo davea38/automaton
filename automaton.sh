@@ -1813,64 +1813,84 @@ generate_context_summary() {
     log "ORCHESTRATOR" "Context summary generated: $summary_file"
 }
 
-# Generates diff-based context for build iterations after the first.
-# Returns the path to a temp prompt file with incremental context prepended.
-# Args: base_prompt_file
-# Outputs: path to augmented prompt file (or empty string if first iteration)
-generate_incremental_build_prompt() {
-    local base_prompt="$1"
-    local augmented="$AUTOMATON_DIR/prompt_build_augmented.md"
+# Injects dynamic runtime context into the <dynamic_context> section of a prompt
+# file. Replaces placeholder content between <dynamic_context> and </dynamic_context>
+# with iteration number, budget remaining, recent diffs, and phase-specific data.
+# The static prefix (everything before <dynamic_context>) is preserved byte-for-byte,
+# enabling prompt caching (spec-30).
+#
+# Args: prompt_file
+# Outputs: path to augmented prompt file (or empty string if no injection needed)
+inject_dynamic_context() {
+    local prompt_file="$1"
+    local augmented="$AUTOMATON_DIR/prompt_augmented.md"
 
-    # First build iteration: use base prompt as-is
-    if [ "$phase_iteration" -le 1 ]; then
+    # If no <dynamic_context> tag found, skip injection
+    if ! grep -q '<dynamic_context>' "$prompt_file"; then
         echo ""
         return 0
     fi
 
-    local plan_file="IMPLEMENTATION_PLAN.md"
-    if [ "${ARG_SELF:-false}" = "true" ] && [ -f "$AUTOMATON_DIR/backlog.md" ]; then
-        plan_file="$AUTOMATON_DIR/backlog.md"
-    fi
-
     {
+        # Static prefix: everything up to and including <dynamic_context>
+        sed -n '1,/<dynamic_context>/p' "$prompt_file"
+
+        # --- Dynamic content injected by orchestrator ---
+        echo "## Current State"
+        echo ""
+        echo "- Phase: $current_phase"
+        echo "- Iteration: $phase_iteration"
+
+        # Budget remaining
+        if [ -f "$AUTOMATON_DIR/budget.json" ]; then
+            local remaining
+            remaining=$(jq '.tokens_remaining // "unknown"' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "unknown")
+            echo "- Budget remaining: $remaining tokens"
+        fi
+        echo ""
+
         # Context summary if available
         if [ -f "$AUTOMATON_DIR/context_summary.md" ]; then
             cat "$AUTOMATON_DIR/context_summary.md"
             echo ""
         fi
 
-        # Recent changes from git
-        echo "## Recent Changes"
-        echo '```'
-        git diff --stat HEAD~3 2>/dev/null || echo "No recent changes."
-        echo '```'
-        echo ""
+        # Build-specific context for iterations after the first
+        if [ "$current_phase" = "build" ] && [ "$phase_iteration" -gt 1 ]; then
+            local plan_file="IMPLEMENTATION_PLAN.md"
+            if [ "${ARG_SELF:-false}" = "true" ] && [ -f "$AUTOMATON_DIR/backlog.md" ]; then
+                plan_file="$AUTOMATON_DIR/backlog.md"
+            fi
 
-        # Current focus: next unchecked tasks
-        echo "## Current Focus"
-        if [ -f "$plan_file" ]; then
-            grep '\[ \]' "$plan_file" | head -5 || echo "All tasks complete."
-        fi
-        echo ""
-
-        # Iteration memory
-        if [ -f "$AUTOMATON_DIR/iteration_memory.md" ]; then
-            echo "## Recent Iteration History"
-            tail -5 "$AUTOMATON_DIR/iteration_memory.md"
-            echo ""
-        fi
-
-        # Self-build codebase overview
-        if [ "$SELF_BUILD_ENABLED" = "true" ] && [ -f "automaton.sh" ]; then
-            echo "## Codebase Overview (automaton.sh)"
+            echo "## Recent Changes"
             echo '```'
-            grep -n '^[a-z_]*()' automaton.sh | head -40 || true
+            git diff --stat HEAD~3 2>/dev/null || echo "No recent changes."
             echo '```'
             echo ""
+
+            echo "## Current Focus"
+            if [ -f "$plan_file" ]; then
+                grep '\[ \]' "$plan_file" | head -5 || echo "All tasks complete."
+            fi
+            echo ""
+
+            if [ -f "$AUTOMATON_DIR/iteration_memory.md" ]; then
+                echo "## Recent Iteration History"
+                tail -5 "$AUTOMATON_DIR/iteration_memory.md"
+                echo ""
+            fi
+
+            if [ "$SELF_BUILD_ENABLED" = "true" ] && [ -f "automaton.sh" ]; then
+                echo "## Codebase Overview (automaton.sh)"
+                echo '```'
+                grep -n '^[a-z_]*()' automaton.sh | head -40 || true
+                echo '```'
+                echo ""
+            fi
         fi
 
-        # Base prompt
-        cat "$base_prompt"
+        # Suffix: </dynamic_context> and everything after
+        sed -n '/<\/dynamic_context>/,$p' "$prompt_file"
     } > "$augmented"
 
     echo "$augmented"
@@ -2165,14 +2185,14 @@ run_agent() {
         return 0
     fi
 
-    # Incremental context for build iterations after the first (spec-24)
+    # Inject dynamic context (iteration, budget, diffs) into <dynamic_context>
+    # section at the end of the prompt, preserving the static prefix for
+    # prompt caching (spec-29, spec-30)
     local effective_prompt="$prompt_file"
-    if [ "$current_phase" = "build" ]; then
-        local augmented
-        augmented=$(generate_incremental_build_prompt "$prompt_file")
-        if [ -n "$augmented" ] && [ -f "$augmented" ]; then
-            effective_prompt="$augmented"
-        fi
+    local augmented
+    augmented=$(inject_dynamic_context "$prompt_file")
+    if [ -n "$augmented" ] && [ -f "$augmented" ]; then
+        effective_prompt="$augmented"
     fi
 
     # Log prompt size for token efficiency tracking (spec-24)

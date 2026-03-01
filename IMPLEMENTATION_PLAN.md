@@ -29,7 +29,7 @@ This is the foundation spec. Five other specs (30, 27, 33, 36, 37) depend on the
 - [x] Restructure `PROMPT_build.md` with XML-tagged sections, replace `<promise>COMPLETE</promise>` with `<result status="complete">`, and add anti-overengineering guardrails (WHY: structured result signaling integrates with file-state verification; guardrails prevent known Claude 4.6 anti-patterns)
 - [x] Restructure `PROMPT_review.md` with XML-tagged sections, remove "be thorough"/"be exhaustive", and add "focus on correctness, not style" (WHY: Opus 4.6 is already thorough; redundant thoroughness directives cause review over-flagging)
 - [x] Add `<!-- DYNAMIC CONTEXT BELOW — injected by orchestrator -->` separator and parallel tool calling directive to all `PROMPT_*.md` files (WHY: the separator defines the cache boundary for spec-30; the parallel directive ensures maximum tool call parallelism)
-- [ ] Update `run_agent()` in `automaton.sh` to inject dynamic context (iteration number, budget, diffs) after the static separator instead of prepending (WHY: injecting dynamic data into the static prefix would invalidate the prompt cache every iteration)
+- [x] Update `run_agent()` in `automaton.sh` to inject dynamic context (iteration number, budget, diffs) after the static separator instead of prepending (WHY: injecting dynamic data into the static prefix would invalidate the prompt cache every iteration)
 
 ### Spec 34 — Structured State via Git
 
