@@ -4730,9 +4730,8 @@ if [ "$PARALLEL_ENABLED" = "true" ]; then
             exit 1
         fi
     elif [ "${PARALLEL_MODE:-automaton}" = "agent-teams" ]; then
-        # Agent Teams mode requires the experimental feature flag (spec-28)
-        export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
-        log "ORCHESTRATOR" "Agent Teams mode enabled (parallel.mode=agent-teams, display=${PARALLEL_TEAMMATE_DISPLAY:-in-process})"
+        # Agent Teams mode: validate version, set env flag, configure display (spec-28 §10)
+        setup_agent_teams_environment
     elif [ "${PARALLEL_MODE:-automaton}" = "hybrid" ]; then
         echo "Error: parallel.mode 'hybrid' is reserved for future use and not yet implemented." >&2
         exit 1
@@ -6868,6 +6867,48 @@ handle_wave_errors() {
         log "CONDUCTOR" "Single-builder fallback also failed."
         return 1  # signal caller that no progress was made
     fi
+}
+
+# Validates the Claude Code environment for Agent Teams mode (spec-28 §10).
+# Sets the experimental feature flag, checks that the installed Claude Code
+# version supports Agent Teams, and configures display mode.
+#
+# WHY: Agent Teams requires an experimental flag and a compatible Claude Code
+# version. Validation at startup prevents cryptic failures mid-build. The
+# version check is a warning (not a hard failure) because Agent Teams is
+# experimental and version detection may be imprecise.
+#
+# Returns: 0 always (warnings are non-fatal)
+setup_agent_teams_environment() {
+    # Set the experimental feature flag required by Agent Teams
+    export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+
+    # Validate Claude Code version supports Agent Teams
+    local _claude_version=""
+    _claude_version=$(claude --version 2>/dev/null || echo "unknown")
+
+    if [ "$_claude_version" = "unknown" ]; then
+        log "WARNING" "Could not determine Claude Code version. Agent Teams may not be supported."
+    else
+        # Agent Teams requires Claude Code 1.0.0+. Parse major version.
+        local _major_ver=""
+        _major_ver=$(echo "$_claude_version" | grep -oE '^[0-9]+' | head -1)
+        if [ -n "$_major_ver" ] && [ "$_major_ver" -lt 1 ] 2>/dev/null; then
+            log "WARNING" "Claude Code version ${_claude_version} may not support Agent Teams. Version 1.0.0+ recommended."
+        fi
+    fi
+
+    # Configure display mode
+    local display_mode="${PARALLEL_TEAMMATE_DISPLAY:-in-process}"
+    if [ "$display_mode" = "tmux" ]; then
+        # Verify tmux is available for tmux display mode
+        if ! command -v tmux >/dev/null 2>&1; then
+            log "WARNING" "tmux display mode requested but tmux not installed. Falling back to in-process."
+            PARALLEL_TEAMMATE_DISPLAY="in-process"
+        fi
+    fi
+
+    log "ORCHESTRATOR" "Agent Teams mode enabled (parallel.mode=agent-teams, display=${PARALLEL_TEAMMATE_DISPLAY:-in-process}, claude=${_claude_version})"
 }
 
 # Converts unchecked tasks from IMPLEMENTATION_PLAN.md into the Agent Teams
