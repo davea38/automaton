@@ -4478,6 +4478,128 @@ IDXEOF
     echo "$idea_id"
 }
 
+# Adds an evidence item to an existing idea, updates updated_at,
+# and calls _garden_advance_stage() if thresholds are met.
+#
+# Args: idea_id evidence_type observation added_by
+# Returns: 0 on success, 1 if idea not found
+_garden_water() {
+    local idea_id="${1:?_garden_water requires idea_id}"
+    local evidence_type="${2:?_garden_water requires evidence_type}"
+    local observation="${3:?_garden_water requires observation}"
+    local added_by="${4:?_garden_water requires added_by}"
+
+    local garden_dir="$AUTOMATON_DIR/garden"
+    local idea_file="$garden_dir/${idea_id}.json"
+
+    if [ ! -f "$idea_file" ]; then
+        log "GARDEN" "Idea $idea_id not found"
+        return 1
+    fi
+
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Add evidence item and update timestamp
+    local tmp_file="${idea_file}.tmp"
+    jq --arg type "$evidence_type" \
+       --arg obs "$observation" \
+       --arg by "$added_by" \
+       --arg now "$now" \
+       '.evidence += [{type: $type, observation: $obs, added_by: $by, added_at: $now}] | .updated_at = $now' \
+       "$idea_file" > "$tmp_file" && mv "$tmp_file" "$idea_file"
+
+    log "GARDEN" "Watered $idea_id with $evidence_type evidence"
+
+    # Check if stage advancement is warranted
+    local stage evidence_count
+    stage=$(jq -r '.stage' "$idea_file")
+    evidence_count=$(jq '.evidence | length' "$idea_file")
+
+    if [ "$stage" = "seed" ] && [ "$evidence_count" -ge "$GARDEN_SPROUT_THRESHOLD" ]; then
+        _garden_advance_stage "$idea_id" "sprout" "Evidence count ($evidence_count) reached sprout threshold ($GARDEN_SPROUT_THRESHOLD)"
+    elif [ "$stage" = "sprout" ]; then
+        local priority
+        priority=$(jq -r '.priority // 0' "$idea_file")
+        if [ "$evidence_count" -ge "$GARDEN_BLOOM_THRESHOLD" ] && [ "$priority" -ge "$GARDEN_BLOOM_PRIORITY_THRESHOLD" ]; then
+            _garden_advance_stage "$idea_id" "bloom" "Evidence count ($evidence_count) and priority ($priority) met bloom thresholds"
+        fi
+    fi
+
+    _garden_rebuild_index
+}
+
+# Transitions an idea to the next lifecycle stage.
+# Validates threshold requirements for automatic transitions.
+# Supports a force parameter for human promotion (bypasses thresholds).
+#
+# Args: idea_id target_stage reason [force]
+# Returns: 0 on success, 1 on failure
+_garden_advance_stage() {
+    local idea_id="${1:?_garden_advance_stage requires idea_id}"
+    local target_stage="${2:?_garden_advance_stage requires target_stage}"
+    local reason="${3:?_garden_advance_stage requires reason}"
+    local force="${4:-false}"
+
+    local garden_dir="$AUTOMATON_DIR/garden"
+    local idea_file="$garden_dir/${idea_id}.json"
+
+    if [ ! -f "$idea_file" ]; then
+        log "GARDEN" "Idea $idea_id not found"
+        return 1
+    fi
+
+    local current_stage
+    current_stage=$(jq -r '.stage' "$idea_file")
+
+    # Validate stage transition order (unless forced)
+    if [ "$force" != "true" ]; then
+        local transition="${current_stage}_to_${target_stage}"
+        case "$transition" in
+            seed_to_sprout|sprout_to_bloom|bloom_to_harvest) ;;
+            *)
+                log "GARDEN" "Invalid transition: $current_stage -> $target_stage for $idea_id"
+                return 1
+                ;;
+        esac
+
+        # Validate thresholds for non-forced transitions
+        local evidence_count
+        evidence_count=$(jq '.evidence | length' "$idea_file")
+
+        if [ "$target_stage" = "sprout" ] && [ "$evidence_count" -lt "$GARDEN_SPROUT_THRESHOLD" ]; then
+            log "GARDEN" "Cannot advance $idea_id to sprout: need $GARDEN_SPROUT_THRESHOLD evidence, have $evidence_count"
+            return 1
+        fi
+
+        if [ "$target_stage" = "bloom" ]; then
+            local priority
+            priority=$(jq -r '.priority // 0' "$idea_file")
+            if [ "$evidence_count" -lt "$GARDEN_BLOOM_THRESHOLD" ]; then
+                log "GARDEN" "Cannot advance $idea_id to bloom: need $GARDEN_BLOOM_THRESHOLD evidence, have $evidence_count"
+                return 1
+            fi
+            if [ "$priority" -lt "$GARDEN_BLOOM_PRIORITY_THRESHOLD" ]; then
+                log "GARDEN" "Cannot advance $idea_id to bloom: need priority >= $GARDEN_BLOOM_PRIORITY_THRESHOLD, have $priority"
+                return 1
+            fi
+        fi
+    fi
+
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Update stage and record history
+    local tmp_file="${idea_file}.tmp"
+    jq --arg stage "$target_stage" \
+       --arg now "$now" \
+       --arg reason "$reason" \
+       '.stage = $stage | .updated_at = $now | .stage_history += [{stage: $stage, entered_at: $now, reason: $reason}]' \
+       "$idea_file" > "$tmp_file" && mv "$tmp_file" "$idea_file"
+
+    log "GARDEN" "Advanced $idea_id: $current_stage -> $target_stage"
+}
+
 # Regenerates .automaton/garden/_index.json from all idea files.
 # Provides total counts, by_stage breakdown, bloom_candidates sorted by priority,
 # recent_activity, next_id, and updated_at.
