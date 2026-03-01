@@ -7604,6 +7604,68 @@ _safety_reset_breakers() {
 }
 
 # ---------------------------------------------------------------------------
+# Rollback Protocol (spec-45 §4)
+# ---------------------------------------------------------------------------
+
+# Execute the rollback protocol when OBSERVE detects regression or a circuit
+# breaker trips during IMPLEMENT. This is the recovery mechanism — it ensures
+# every failure is recorded, signaled, and learned from while leaving the
+# codebase untouched.
+#
+# Steps:
+#   1. Switch back to the working branch (abandon evolution branch)
+#   2. Preserve the failed evolution branch for debugging (never delete)
+#   3. Wilt the responsible idea so it is not re-attempted without new evidence
+#   4. Emit a quality_concern signal for future cycles to learn from
+#   5. Log the rollback event to self_modifications.json (audit trail)
+#   6. Increment regression_cascade circuit breaker counter
+#
+# Args: cycle_id idea_id reason
+# Returns: 0 on success, 1 if branch abandon fails
+_safety_rollback() {
+    local cycle_id="${1:?_safety_rollback requires cycle_id}"
+    local idea_id="${2:?_safety_rollback requires idea_id}"
+    local reason="${3:?_safety_rollback requires reason}"
+    local branch
+    branch=$(_safety_branch_get_name "$cycle_id" "$idea_id")
+
+    log "SAFETY" "Rollback initiated: cycle=$cycle_id idea=$idea_id reason=$reason"
+
+    # 1. Switch back to working branch (preserves evolution branch for debugging)
+    if ! _safety_branch_abandon "$cycle_id" "$idea_id"; then
+        log "SAFETY" "Rollback: WARNING — failed to abandon branch $branch"
+        return 1
+    fi
+
+    # 2. Branch preserved by _safety_branch_abandon (it never deletes)
+    log "SAFETY" "Rollback: branch $branch preserved for debugging"
+
+    # 3. Wilt the responsible idea
+    _garden_wilt "$idea_id" "Rollback: $reason" 2>/dev/null || true
+
+    # 4. Emit quality_concern signal
+    _signal_emit "quality_concern" \
+        "Implementation of idea-${idea_id} caused regression" \
+        "Rollback triggered: $reason" \
+        "safety" "$cycle_id" "" 2>/dev/null || true
+
+    # 5. Record in self_modifications.json (audit trail)
+    local audit_file="$AUTOMATON_DIR/self_modifications.json"
+    [ -f "$audit_file" ] || echo '[]' > "$audit_file"
+    local now; now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    jq --arg ts "$now" --arg cid "$cycle_id" --arg iid "$idea_id" \
+       --arg rsn "$reason" --arg br "$branch" \
+       '. + [{timestamp:$ts, action:"rollback", cycle_id:$cid, idea_id:$iid, reason:$rsn, branch:$br}]' \
+       "$audit_file" > "${audit_file}.tmp" && mv "${audit_file}.tmp" "$audit_file"
+
+    # 6. Increment circuit breaker counters (regression_cascade)
+    _safety_update_breaker "regression_cascade"
+
+    log "SAFETY" "Rollback complete: cycle=$cycle_id idea=$idea_id"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
