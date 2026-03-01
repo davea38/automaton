@@ -5034,6 +5034,113 @@ _signal_enabled() {
     [ "${STIGMERGY_ENABLED:-true}" = "true" ]
 }
 
+# Returns the default decay_rate for a given signal type.
+# See spec-42 §3 for type-specific decay rates.
+_signal_default_decay_rate() {
+    local type="$1"
+    case "$type" in
+        attention_needed)    echo "0.10" ;;
+        promising_approach)  echo "0.05" ;;
+        recurring_pattern)   echo "0.05" ;;
+        efficiency_opportunity) echo "0.08" ;;
+        quality_concern)     echo "0.07" ;;
+        complexity_warning)  echo "0.06" ;;
+        *)                   echo "0.05" ;;
+    esac
+}
+
+# Lazily initializes .automaton/signals.json with an empty structure.
+# Called on first signal emission, not during initialize_state().
+_signal_init_file() {
+    local signals_file="$AUTOMATON_DIR/signals.json"
+    if [ ! -f "$signals_file" ]; then
+        cat > "$signals_file" << 'SIGEOF'
+{"version":1,"signals":[],"next_id":1,"updated_at":"1970-01-01T00:00:00Z"}
+SIGEOF
+    fi
+}
+
+# Emits a new signal or reinforces an existing one if a match is found.
+# Creates .automaton/signals.json lazily on first call.
+#
+# Args: type title description agent cycle detail
+# Returns: 0 on success, outputs signal ID (SIG-NNN)
+_signal_emit() {
+    if ! _signal_enabled; then return 1; fi
+    local type="${1:?_signal_emit requires type}"
+    local title="${2:?_signal_emit requires title}"
+    local description="${3:?_signal_emit requires description}"
+    local agent="${4:-unknown}"
+    local cycle="${5:-0}"
+    local detail="${6:-}"
+
+    local signals_file="$AUTOMATON_DIR/signals.json"
+
+    # Lazy initialization — create signals.json on first emission
+    _signal_init_file
+
+    # Check for existing matching signal to reinforce instead of duplicate
+    local match_id
+    match_id=$(_signal_find_match "$type" "$title" "$description")
+
+    if [ -n "$match_id" ]; then
+        # Reinforce the existing signal with a new observation
+        _signal_reinforce "$match_id" "$agent" "$cycle" "$detail"
+        log "SIGNAL" "Reinforced: $match_id - $title"
+        echo "$match_id"
+        return 0
+    fi
+
+    # No match — create a new signal
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    local next_id
+    next_id=$(jq -r '.next_id // 1' "$signals_file")
+    local signal_id
+    signal_id=$(printf "SIG-%03d" "$next_id")
+
+    local decay_rate
+    decay_rate=$(_signal_default_decay_rate "$type")
+
+    local initial_strength="${STIGMERGY_INITIAL_STRENGTH:-0.3}"
+
+    # Append the new signal and update next_id
+    local tmp_file="${signals_file}.tmp"
+    jq --arg id "$signal_id" \
+       --arg type "$type" \
+       --arg title "$title" \
+       --arg desc "$description" \
+       --argjson strength "$initial_strength" \
+       --argjson decay_rate "$decay_rate" \
+       --arg agent "$agent" \
+       --argjson cycle "$cycle" \
+       --arg now "$now" \
+       --arg detail "$detail" \
+       '.signals += [{
+            id: $id,
+            type: $type,
+            title: $title,
+            description: $desc,
+            strength: $strength,
+            decay_rate: $decay_rate,
+            observations: [{
+                agent: $agent,
+                cycle: $cycle,
+                timestamp: $now,
+                detail: $detail
+            }],
+            related_ideas: [],
+            created_at: $now,
+            last_reinforced_at: $now,
+            last_decayed_at: $now
+        }] | .next_id = (.next_id + 1) | .updated_at = $now' \
+       "$signals_file" > "$tmp_file" && mv "$tmp_file" "$signals_file"
+
+    log "SIGNAL" "Emitted: $signal_id - $title (type=$type, strength=$initial_strength)"
+    echo "$signal_id"
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------

@@ -182,7 +182,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 - [x] Update `.gitignore` to add `.automaton/signals.json` as persistent git-tracked state (WHY: signals accumulate evidence across runs and must survive directory loss to maintain coordination history) <!-- test: none -->
 
-- [ ] Implement `_signal_emit()` in `automaton.sh` that creates a new signal in `.automaton/signals.json` with full schema (id, type, title, description, strength=initial_strength, decay_rate from type defaults, observations[], related_ideas, created_at, last_reinforced_at, last_decayed_at), or reinforces an existing signal if `_signal_find_match()` returns a match (WHY: emission is the core write operation — agents leave persistent markers in the environment that guide future agents) <!-- test: tests/test_signal_emit.sh -->
+- [x] Implement `_signal_emit()` in `automaton.sh` that creates a new signal in `.automaton/signals.json` with full schema (id, type, title, description, strength=initial_strength, decay_rate from type defaults, observations[], related_ideas, created_at, last_reinforced_at, last_decayed_at), or reinforces an existing signal if `_signal_find_match()` returns a match (WHY: emission is the core write operation — agents leave persistent markers in the environment that guide future agents) <!-- test: tests/test_signal_emit.sh -->
 
 - [ ] Implement `_signal_reinforce()` in `automaton.sh` that adds an observation to an existing signal and increases strength by `reinforce_increment` capped at 1.0 (WHY: reinforcement is the mechanism that makes repeated observations louder — it converts multiple weak observations into a strong signal) <!-- test: tests/test_signal_reinforce.sh -->
 
