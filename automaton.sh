@@ -6971,6 +6971,77 @@ _constitution_check() {
     echo "$result"
 }
 
+# Validates that a proposed amendment does not violate immutable constraints.
+# These constraints are enforced in code independently of the constitution text:
+#   1. unanimous articles cannot have their protection level reduced
+#   2. Article VIII cannot be removed or weakened
+#
+# Usage: _constitution_validate_amendment "VIII" "protection_change" "supermajority" ""
+#   article:         Article number (I, II, III, IV, V, VI, VII, VIII)
+#   amendment_type:  "modify", "remove", or "protection_change"
+#   new_protection:  New protection level (only for protection_change)
+#   new_text:        New article text (only for modify)
+# Returns: 0 if allowed, 1 if blocked by immutable constraints
+_constitution_validate_amendment() {
+    local article="$1"
+    local amendment_type="$2"
+    local new_protection="${3:-}"
+    local new_text="${4:-}"
+
+    # Hardcoded immutable articles and their protection levels.
+    # These are the articles that have "unanimous" protection and thus
+    # cannot have their protection level reduced per spec-40 §2.
+    local -A IMMUTABLE_ARTICLES=(
+        ["I"]="unanimous"
+        ["II"]="unanimous"
+        ["VIII"]="unanimous"
+    )
+
+    # Protection level hierarchy for comparison (higher = stricter)
+    local -A PROTECTION_RANK=(
+        ["majority"]=1
+        ["supermajority"]=2
+        ["unanimous"]=3
+    )
+
+    # --- Constraint 1: Article VIII cannot be removed ---
+    if [ "$article" = "VIII" ] && [ "$amendment_type" = "remove" ]; then
+        log "CONSTITUTION" "BLOCKED: Article VIII cannot be removed (immutable constraint)"
+        return 1
+    fi
+
+    # --- Constraint 2: Article VIII cannot be weakened ---
+    if [ "$article" = "VIII" ] && [ "$amendment_type" = "modify" ] && [ -n "$new_text" ]; then
+        # Check for weakening: text that reduces amendment threshold requirements
+        # Weakening indicators: removing supermajority/4\/5 requirement, adding "simple majority", etc.
+        local lower_text
+        lower_text=$(echo "$new_text" | tr '[:upper:]' '[:lower:]')
+        # If the new text mentions "simple majority" or "majority vote" without
+        # "supermajority" or "4/5", it is weakening the amendment protocol
+        if echo "$lower_text" | grep -qE 'simple majority|majority vote'; then
+            if ! echo "$lower_text" | grep -qE 'supermajority|4/5|constitutional_amendment'; then
+                log "CONSTITUTION" "BLOCKED: Article VIII cannot be weakened (immutable constraint)"
+                return 1
+            fi
+        fi
+    fi
+
+    # --- Constraint 3: unanimous articles cannot have protection reduced ---
+    if [ "$amendment_type" = "protection_change" ] && [ -n "$new_protection" ]; then
+        local current_protection="${IMMUTABLE_ARTICLES[$article]:-}"
+        if [ -n "$current_protection" ]; then
+            local current_rank="${PROTECTION_RANK[$current_protection]:-0}"
+            local new_rank="${PROTECTION_RANK[$new_protection]:-0}"
+            if [ "$new_rank" -lt "$current_rank" ]; then
+                log "CONSTITUTION" "BLOCKED: Article $article has '$current_protection' protection which cannot be reduced (immutable constraint)"
+                return 1
+            fi
+        fi
+    fi
+
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
