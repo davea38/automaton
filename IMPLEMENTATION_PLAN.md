@@ -138,7 +138,7 @@ Bootstrap eliminates the first N tool calls of every iteration that were spent r
 - [x] Replace "Phase 0: Load Context" instructions in all `PROMPT_*.md` files with bootstrap manifest placeholder (`{{BOOTSTRAP_MANIFEST}}`) and note that agents do NOT need to read state files themselves (WHY: Phase 0 instructions become dead weight when bootstrap provides the data; removing them reclaims prompt space)
 - [x] Implement bootstrap failure handling: log error, fall back to empty `<dynamic_context>` and legacy agent-driven file reading, do NOT abort the iteration (WHY: bootstrap is an optimization, not a requirement; graceful degradation ensures iterations always proceed)
 - [x] Track cold start token savings (`bootstrap_tokens_saved`, `bootstrap_time_ms`) in budget history and enforce 2-second performance target with warning on overrun (WHY: quantifying savings validates the bootstrap approach; the 2-second target ensures bootstrap does not become a bottleneck)
-- [ ] Add `execution.bootstrap_enabled` (default true), `execution.bootstrap_script`, and `execution.bootstrap_timeout_ms` to `automaton.config.json` (WHY: users who prefer agent-driven context loading can disable bootstrap; configurable script path supports custom bootstrap implementations)
+- [x] Add `execution.bootstrap_enabled` (default true), `execution.bootstrap_script`, and `execution.bootstrap_timeout_ms` to `automaton.config.json` (WHY: users who prefer agent-driven context loading can disable bootstrap; configurable script path supports custom bootstrap implementations)
 
 ## Tier 4: Capstone (Depends on Tier 3)
 
