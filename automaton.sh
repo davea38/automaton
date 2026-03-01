@@ -5265,6 +5265,33 @@ _signal_decay_all() {
     log "SIGNAL" "Decay applied: $remaining signals remaining (floor=$decay_floor)"
 }
 
+_signal_prune() {
+    if ! _signal_enabled; then return 1; fi
+
+    local signals_file="$AUTOMATON_DIR/signals.json"
+    [ -f "$signals_file" ] || return 0
+
+    local max_signals="${STIGMERGY_MAX_SIGNALS:-100}"
+    local current_count
+    current_count=$(jq '.signals | length' "$signals_file")
+
+    if [ "$current_count" -le "$max_signals" ]; then
+        return 0
+    fi
+
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local pruned=$(( current_count - max_signals ))
+
+    local tmp_file="${signals_file}.tmp"
+    jq --argjson keep "$max_signals" \
+       --arg now "$now" \
+       '.signals = (.signals | sort_by(-.strength) | .[0:$keep]) | .updated_at = $now' \
+       "$signals_file" > "$tmp_file" && mv "$tmp_file" "$signals_file"
+
+    log "SIGNAL" "Pruned $pruned weakest signals (max=$max_signals, kept strongest $max_signals)"
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
