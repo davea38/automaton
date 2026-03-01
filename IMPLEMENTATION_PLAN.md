@@ -77,7 +77,7 @@ Max Plan subscribers have zero token cost within allowance but need pacing and m
 - [x] Add `--budget-check` CLI flag that displays weekly allowance status (used, remaining, reserve, daily pace, recommended run budget) without starting a run (WHY: users need to check budget before committing to a run, especially when sharing allowance across projects)
 - [x] Apply higher parallel defaults when in allowance mode (5 builders, 5s stagger, 5 research iterations) unless user has explicitly overridden (WHY: no per-token cost means more parallelism is free; faster completion with no cost penalty)
 - [x] Create `~/.automaton/allowance.json` for cross-project allowance tracking with per-project usage, weekly totals, and week rollover archiving (WHY: Max Plan users running automaton on multiple projects share one allowance; cross-project tracking prevents over-allocation)
-- [ ] Add `max_plan_preset: true` config shortcut that applies all Max Plan defaults (allowance mode, Opus everywhere, 5 builders, 5s stagger, max_plan rate limits) (WHY: one-line config for Max Plan users instead of setting 6+ individual fields)
+- [x] Add `max_plan_preset: true` config shortcut that applies all Max Plan defaults (allowance mode, Opus everywhere, 5 builders, 5s stagger, max_plan rate limits) (WHY: one-line config for Max Plan users instead of setting 6+ individual fields)
 - [ ] Display weekly summary on resume after week boundary and implement graceful allowance exhaustion (complete current iteration, save state, exit code 2) (WHY: users need visibility into week-over-week usage trends; graceful exhaustion prevents data loss)
 
 ### Spec 27 — Native Subagent Definitions (depends on spec-29)

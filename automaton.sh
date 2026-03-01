@@ -93,6 +93,9 @@ load_config() {
 
         # -- journal (spec-26) --
         JOURNAL_MAX_RUNS=$(jq -r '.journal.max_runs // 50' "$config_file")
+
+        # -- max_plan_preset (spec-35) --
+        MAX_PLAN_PRESET=$(jq -r '.max_plan_preset // false' "$config_file")
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -169,6 +172,41 @@ load_config() {
 
         # -- journal (spec-26) --
         JOURNAL_MAX_RUNS=50
+
+        # -- max_plan_preset (spec-35) --
+        MAX_PLAN_PRESET="false"
+    fi
+}
+
+# Applies Max Plan preset defaults when max_plan_preset is true (spec-35).
+# Sets budget mode to allowance and models to opus, enabling cascading
+# optimizations: rate limits and parallel defaults trigger from allowance mode.
+# Only overrides values that still match their non-preset defaults, so
+# individual config overrides take precedence.
+_apply_max_plan_preset() {
+    if [ "$MAX_PLAN_PRESET" != "true" ]; then
+        return 0
+    fi
+
+    local changed=""
+
+    if [ "$BUDGET_MODE" = "api" ]; then
+        BUDGET_MODE="allowance"
+        changed="${changed}budget.mode=allowance "
+    fi
+
+    if [ "$MODEL_RESEARCH" = "sonnet" ]; then
+        MODEL_RESEARCH="opus"
+        changed="${changed}models.research=opus "
+    fi
+
+    if [ "$MODEL_BUILDING" = "sonnet" ]; then
+        MODEL_BUILDING="opus"
+        changed="${changed}models.building=opus "
+    fi
+
+    if [ -n "$changed" ]; then
+        log "ORCHESTRATOR" "Max Plan preset: defaults applied (${changed% })"
     fi
 }
 
@@ -3959,6 +3997,11 @@ if [ "$ARG_SELF" = "true" ]; then
     BUDGET_MODE="allowance"
     log "ORCHESTRATOR" "Self-build mode activated: self_build.enabled=true, budget.mode=allowance"
 fi
+
+# --- Apply Max Plan preset (spec-35) ---
+# Must run after load_config and CLI overrides since max_plan_preset sets BUDGET_MODE
+# to allowance, which cascades into rate limit and parallel default functions below.
+_apply_max_plan_preset
 
 # --- Apply rate limit preset (spec-35) ---
 # Must run after load_config and CLI overrides since both can change BUDGET_MODE.

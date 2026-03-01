@@ -1,4 +1,5 @@
 {
+  "max_plan_preset": false,
   "models": {
     "primary": "opus",
     "research": "sonnet",
