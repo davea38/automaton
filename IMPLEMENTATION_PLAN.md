@@ -246,7 +246,7 @@ These specs build on the garden and signals to add collective decision-making an
 
 - [x] Implement `_metrics_snapshot()` in `automaton.sh` that collects all 5 metric categories — capability (line/function/spec/test counts from source files), efficiency (tokens/task, cache ratio, stall rate from run metadata), quality (test pass rate, rollbacks, syntax errors from results files), innovation (garden/signal/vote counts from their state files), health (budget utilization, convergence risk, circuit breakers, error rate) — and appends the snapshot to `.automaton/evolution-metrics.json` (WHY: snapshots are the raw data for all trend analysis — each data point captures the system's complete quantitative state at a moment in time) <!-- test: tests/test_metrics_snapshot.sh -->
 
-- [ ] Implement `_metrics_set_baselines()` in `automaton.sh` that records the first snapshot's values as baselines in the metrics file, and `_metrics_get_latest()` that returns the most recent snapshot (WHY: baselines establish the reference point for all improvement/regression comparisons — without them, there is no way to know if the system is getting better or worse) <!-- test: tests/test_metrics_baselines.sh -->
+- [x] Implement `_metrics_set_baselines()` in `automaton.sh` that records the first snapshot's values as baselines in the metrics file, and `_metrics_get_latest()` that returns the most recent snapshot (WHY: baselines establish the reference point for all improvement/regression comparisons — without them, there is no way to know if the system is getting better or worse) <!-- test: tests/test_metrics_baselines.sh -->
 
 #### 43.2 Metrics Analysis
 

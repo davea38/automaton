@@ -6211,6 +6211,69 @@ _metrics_snapshot() {
     echo "$metrics_file"
 }
 
+# Records the first snapshot's values as baselines in the metrics file.
+# Baselines are set once and never updated automatically — they establish the
+# reference point for all improvement/regression comparisons. If baselines
+# already exist (non-empty object), this function is a no-op.
+#
+# Usage: _metrics_set_baselines
+_metrics_set_baselines() {
+    if [ "${METRICS_ENABLED:-true}" != "true" ]; then return 0; fi
+
+    local metrics_file="$AUTOMATON_DIR/evolution-metrics.json"
+    if [ ! -f "$metrics_file" ]; then return 0; fi
+
+    # Check if baselines already exist (non-empty object)
+    local existing
+    existing=$(jq '.baselines // {}' "$metrics_file" 2>/dev/null)
+    if [ -n "$existing" ] && [ "$existing" != "{}" ] && [ "$existing" != "null" ]; then
+        return 0
+    fi
+
+    # Check if there are any snapshots to use
+    local snap_count
+    snap_count=$(jq '.snapshots | length' "$metrics_file" 2>/dev/null || echo 0)
+    if [ "$snap_count" -eq 0 ]; then return 0; fi
+
+    # Extract baselines from first snapshot
+    local tmp="${metrics_file}.tmp"
+    jq '.baselines = {
+        capability: {
+            total_lines: .snapshots[0].capability.total_lines,
+            total_functions: .snapshots[0].capability.total_functions,
+            total_specs: .snapshots[0].capability.total_specs,
+            total_tests: .snapshots[0].capability.total_tests
+        },
+        efficiency: {
+            tokens_per_task: .snapshots[0].efficiency.tokens_per_task,
+            stall_rate: .snapshots[0].efficiency.stall_rate
+        },
+        quality: {
+            test_pass_rate: .snapshots[0].quality.test_pass_rate,
+            rollback_count: .snapshots[0].quality.rollback_count
+        }
+    }' "$metrics_file" > "$tmp" && mv "$tmp" "$metrics_file"
+
+    log "METRICS" "Baselines recorded from first snapshot"
+}
+
+# Returns the most recent snapshot from evolution-metrics.json as JSON on stdout.
+# Returns nothing if no snapshots exist or the metrics file is missing.
+#
+# Usage: latest=$(_metrics_get_latest)
+_metrics_get_latest() {
+    if [ "${METRICS_ENABLED:-true}" != "true" ]; then return 0; fi
+
+    local metrics_file="$AUTOMATON_DIR/evolution-metrics.json"
+    if [ ! -f "$metrics_file" ]; then return 0; fi
+
+    local result
+    result=$(jq '.snapshots | last // empty' "$metrics_file" 2>/dev/null)
+    if [ -n "$result" ] && [ "$result" != "null" ]; then
+        echo "$result"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
