@@ -43,6 +43,7 @@ load_config() {
         RATE_COOLDOWN_SECONDS=$(jq -r '.rate_limits.cooldown_seconds // 60' "$config_file")
         RATE_BACKOFF_MULTIPLIER=$(jq -r '.rate_limits.backoff_multiplier // 2' "$config_file")
         RATE_MAX_BACKOFF_SECONDS=$(jq -r '.rate_limits.max_backoff_seconds // 300' "$config_file")
+        RATE_LIMIT_PRESET=$(jq -r '.rate_limits.preset // "auto"' "$config_file")
 
         # -- execution --
         EXEC_MAX_ITER_RESEARCH=$(jq -r '.execution.max_iterations.research // 3' "$config_file")
@@ -118,6 +119,7 @@ load_config() {
         RATE_COOLDOWN_SECONDS=60
         RATE_BACKOFF_MULTIPLIER=2
         RATE_MAX_BACKOFF_SECONDS=300
+        RATE_LIMIT_PRESET="auto"
 
         # -- execution --
         EXEC_MAX_ITER_RESEARCH=3
@@ -168,6 +170,46 @@ load_config() {
         # -- journal (spec-26) --
         JOURNAL_MAX_RUNS=50
     fi
+}
+
+# Applies rate limit presets based on budget mode (spec-35).
+# When budget.mode is "allowance", Max Plan subscribers have higher rate limits.
+# The preset field controls behavior:
+#   "auto"        — use max_plan in allowance mode, api_default otherwise (default)
+#   "max_plan"    — always use Max Plan rate limits
+#   "api_default" — always use API-tier rate limits
+_apply_rate_limit_preset() {
+    local apply_preset=""
+
+    case "$RATE_LIMIT_PRESET" in
+        max_plan)
+            apply_preset="max_plan"
+            ;;
+        api_default)
+            apply_preset="api_default"
+            ;;
+        auto|"")
+            if [ "$BUDGET_MODE" = "allowance" ]; then
+                apply_preset="max_plan"
+            else
+                apply_preset="api_default"
+            fi
+            ;;
+        *)
+            log "ORCHESTRATOR" "WARNING: Unknown rate_limits.preset '$RATE_LIMIT_PRESET', using api_default"
+            apply_preset="api_default"
+            ;;
+    esac
+
+    if [ "$apply_preset" = "max_plan" ]; then
+        RATE_TOKENS_PER_MINUTE=200000
+        RATE_REQUESTS_PER_MINUTE=100
+        RATE_COOLDOWN_SECONDS=30
+        RATE_BACKOFF_MULTIPLIER=1.5
+        RATE_MAX_BACKOFF_SECONDS=120
+        log "ORCHESTRATOR" "Rate limit preset: max_plan (200K tpm, 100 rpm, 30s cooldown)"
+    fi
+    # api_default: values already loaded from config/defaults — nothing to override
 }
 
 # ---------------------------------------------------------------------------
@@ -3386,6 +3428,10 @@ if [ "$ARG_SELF" = "true" ]; then
     log "ORCHESTRATOR" "Self-build mode activated: self_build.enabled=true, budget.mode=allowance"
 fi
 
+# --- Apply rate limit preset (spec-35) ---
+# Must run after load_config and CLI overrides since both can change BUDGET_MODE.
+_apply_rate_limit_preset
+
 # --- Check parallel-mode dependencies (tmux, git worktree support) ---
 # When parallel.enabled is true, tmux and git 2.5+ are required.
 # Check after load_config so PARALLEL_ENABLED is resolved.
@@ -6290,7 +6336,9 @@ if [ "$ARG_DRY_RUN" = "true" ]; then
     echo "    max lines:     ${SELF_BUILD_MAX_LINES}"
     echo "    smoke test:    ${SELF_BUILD_REQUIRE_SMOKE}"
     echo "  Rate limits:"
+    echo "    preset:        ${RATE_LIMIT_PRESET}"
     echo "    tokens/min:    ${RATE_TOKENS_PER_MINUTE}"
+    echo "    requests/min:  ${RATE_REQUESTS_PER_MINUTE}"
     echo "    cooldown:      ${RATE_COOLDOWN_SECONDS}s (backoff: x${RATE_BACKOFF_MULTIPLIER}, max: ${RATE_MAX_BACKOFF_SECONDS}s)"
     echo "  Execution:"
     echo "    max iterations: research=${EXEC_MAX_ITER_RESEARCH}, plan=${EXEC_MAX_ITER_PLAN}, build=${EXEC_MAX_ITER_BUILD}, review=${EXEC_MAX_ITER_REVIEW}"

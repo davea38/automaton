@@ -23,6 +23,7 @@
     "reserve_percentage": 20
   },
   "rate_limits": {
+    "preset": "auto",
     "tokens_per_minute": 80000,
     "requests_per_minute": 50,
     "cooldown_seconds": 60,

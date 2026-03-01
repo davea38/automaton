@@ -72,7 +72,7 @@ Context window management is the critical constraint for multi-iteration workflo
 
 Max Plan subscribers have zero token cost within allowance but need pacing and multi-project tracking to avoid exhausting the weekly allowance.
 
-- [ ] Add `rate_limits_presets` to `automaton.sh` with `api_default` and `max_plan` profiles, and auto-apply `max_plan` preset when `budget.mode` is `"allowance"` (WHY: Max Plan has higher rate limits; using API-tier limits leaves performance on the table)
+- [x] Add `rate_limits_presets` to `automaton.sh` with `api_default` and `max_plan` profiles, and auto-apply `max_plan` preset when `budget.mode` is `"allowance"` (WHY: Max Plan has higher rate limits; using API-tier limits leaves performance on the table)
 - [ ] Implement daily budget pacing: calculate `daily_budget = remaining_allowance / days_until_reset` and use as run-level token ceiling; warn if daily budget < 500K tokens (WHY: without pacing, a single Monday run can exhaust the entire week's allowance)
 - [ ] Add `--budget-check` CLI flag that displays weekly allowance status (used, remaining, reserve, daily pace, recommended run budget) without starting a run (WHY: users need to check budget before committing to a run, especially when sharing allowance across projects)
 - [ ] Apply higher parallel defaults when in allowance mode (5 builders, 5s stagger, 5 research iterations) unless user has explicitly overridden (WHY: no per-token cost means more parallelism is free; faster completion with no cost penalty)
