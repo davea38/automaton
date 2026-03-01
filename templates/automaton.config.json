@@ -77,5 +77,8 @@
   },
   "journal": {
     "max_runs": 50
+  },
+  "agents": {
+    "use_native_definitions": false
   }
 }

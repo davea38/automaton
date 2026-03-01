@@ -89,7 +89,7 @@ Migrates agent spawning from bare `claude -p` with piped prompts to structured `
 - [x] Migrate static prompt content from `PROMPT_*.md` into agent definition bodies using spec-29 XML structure (WHY: the agent definition body serves as the system prompt; content must use the XML-tagged format from spec-29)
 - [x] Add `isolation: worktree` to build agent definition for parallel mode and document the nesting constraint (`Agent` tool unavailable inside subagents) in each agent's `<rules>` section (WHY: worktree isolation replaces manual git worktree management from spec-17; documenting nesting prevents agents from attempting impossible subagent spawning)
 - [x] Configure `memory: project` for all agents to use `.claude/agent-memory/<name>/MEMORY.md` and implement AGENTS.md learnings migration on first run (WHY: per-agent persistent memory replaces monolithic AGENTS.md learnings; first 200 lines auto-included in system prompt)
-- [ ] Add `agents.use_native_definitions` flag to `automaton.config.json` (default false) and update `run_agent()` in `automaton.sh` to invoke `claude --agent` when flag is true, piping only dynamic context via stdin (WHY: migration flag allows gradual rollout; keeping `claude -p` as default preserves backward compatibility)
+- [x] Add `agents.use_native_definitions` flag to `automaton.config.json` (default false) and update `run_agent()` in `automaton.sh` to invoke `claude --agent` when flag is true, piping only dynamic context via stdin (WHY: migration flag allows gradual rollout; keeping `claude -p` as default preserves backward compatibility)
 
 ### Spec 36 — Test-First Build Strategy (depends on spec-29)
 

@@ -3999,8 +3999,88 @@ check_phase_timeout() {
 # Agent Invocation
 # ---------------------------------------------------------------------------
 
+# Maps a PROMPT_*.md filename to the corresponding native agent name (spec-27).
+# Returns the agent name on stdout, or empty string if no mapping exists.
+_prompt_to_agent_name() {
+    local prompt_file="$1"
+    local basename
+    basename=$(basename "$prompt_file")
+
+    case "$basename" in
+        PROMPT_research.md)       echo "automaton-research" ;;
+        PROMPT_plan.md)           echo "automaton-planner" ;;
+        PROMPT_build.md)          echo "automaton-builder" ;;
+        PROMPT_review.md)         echo "automaton-reviewer" ;;
+        PROMPT_self_research.md)  echo "automaton-self-researcher" ;;
+        *)                        echo "" ;;
+    esac
+}
+
+# Extracts only the dynamic context portion for native agent invocation.
+# Unlike inject_dynamic_context() which augments the full prompt file,
+# this returns just the dynamic content that gets piped to `claude --agent`
+# since the static prompt is already in the agent definition file.
+_build_dynamic_context_stdin() {
+    local prompt_file="$1"
+    local dynamic_content=""
+
+    dynamic_content+="## Current State"$'\n'
+    dynamic_content+=""$'\n'
+    dynamic_content+="- Phase: $current_phase"$'\n'
+    dynamic_content+="- Iteration: $phase_iteration"$'\n'
+
+    if [ -f "$AUTOMATON_DIR/budget.json" ]; then
+        local remaining
+        remaining=$(jq '.tokens_remaining // "unknown"' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "unknown")
+        dynamic_content+="- Budget remaining: $remaining tokens"$'\n'
+    fi
+    dynamic_content+=""$'\n'
+
+    if [ -f "$AUTOMATON_DIR/context_summary.md" ]; then
+        dynamic_content+=$(cat "$AUTOMATON_DIR/context_summary.md")$'\n'
+        dynamic_content+=""$'\n'
+    fi
+
+    if [ "$current_phase" = "build" ] && [ "$phase_iteration" -gt 1 ]; then
+        local plan_file="IMPLEMENTATION_PLAN.md"
+        if [ "${ARG_SELF:-false}" = "true" ] && [ -f "$AUTOMATON_DIR/backlog.md" ]; then
+            plan_file="$AUTOMATON_DIR/backlog.md"
+        fi
+
+        dynamic_content+="## Recent Changes"$'\n'
+        dynamic_content+='```'$'\n'
+        dynamic_content+=$(git diff --stat HEAD~3 2>/dev/null || echo "No recent changes.")$'\n'
+        dynamic_content+='```'$'\n'
+        dynamic_content+=""$'\n'
+
+        dynamic_content+="## Current Focus"$'\n'
+        if [ -f "$plan_file" ]; then
+            dynamic_content+=$(grep '\[ \]' "$plan_file" | head -5 || echo "All tasks complete.")$'\n'
+        fi
+        dynamic_content+=""$'\n'
+
+        if [ -f "$AUTOMATON_DIR/iteration_memory.md" ]; then
+            dynamic_content+="## Recent Iteration History"$'\n'
+            dynamic_content+=$(tail -5 "$AUTOMATON_DIR/iteration_memory.md")$'\n'
+            dynamic_content+=""$'\n'
+        fi
+
+        if [ "$SELF_BUILD_ENABLED" = "true" ] && [ -f "automaton.sh" ]; then
+            dynamic_content+="## Codebase Overview (automaton.sh)"$'\n'
+            dynamic_content+='```'$'\n'
+            dynamic_content+=$(grep -n '^[a-z_]*()' automaton.sh | head -40 || true)$'\n'
+            dynamic_content+='```'$'\n'
+            dynamic_content+=""$'\n'
+        fi
+    fi
+
+    echo "$dynamic_content"
+}
+
 # Centralized agent invocation. Pipes the given prompt file into `claude -p`
 # with stream-json output, the specified model, and configured flags.
+# When agents.use_native_definitions is true (spec-27), invokes
+# `claude --agent <name>` instead, piping only dynamic context via stdin.
 # Captures all output and the exit code in global variables for downstream
 # processing (token extraction, error classification, budget tracking).
 #
@@ -4017,6 +4097,45 @@ run_agent() {
     local prompt_file="$1"
     local model="$2"
 
+    # Native agent definitions (spec-27): invoke claude --agent with dynamic
+    # context piped via stdin. The static prompt lives in the agent definition
+    # file under .claude/agents/.
+    if [ "$AGENTS_USE_NATIVE_DEFINITIONS" = "true" ]; then
+        local agent_name
+        agent_name=$(_prompt_to_agent_name "$prompt_file")
+
+        if [ -z "$agent_name" ]; then
+            log "ORCHESTRATOR" "ERROR: No native agent mapping for: $prompt_file"
+            AGENT_RESULT=""
+            AGENT_EXIT_CODE=1
+            return 0
+        fi
+
+        local dynamic_context
+        dynamic_context=$(_build_dynamic_context_stdin "$prompt_file")
+
+        local cmd_args=("--agent" "$agent_name" "--output-format" "stream-json" "--model" "$model")
+
+        if [ "$FLAG_DANGEROUSLY_SKIP_PERMISSIONS" = "true" ]; then
+            cmd_args+=("--dangerously-skip-permissions")
+        fi
+
+        if [ "$FLAG_VERBOSE" = "true" ]; then
+            cmd_args+=("--verbose")
+        fi
+
+        log "ORCHESTRATOR" "Invoking native agent: name=$agent_name model=$model"
+
+        AGENT_RESULT=""
+        AGENT_EXIT_CODE=0
+
+        AGENT_RESULT=$(echo "$dynamic_context" | claude "${cmd_args[@]}" 2>&1) || AGENT_EXIT_CODE=$?
+
+        log "ORCHESTRATOR" "Agent finished: exit_code=$AGENT_EXIT_CODE"
+        return 0
+    fi
+
+    # Legacy mode: pipe full prompt to claude -p
     if [ ! -f "$prompt_file" ]; then
         log "ORCHESTRATOR" "ERROR: Prompt file not found: $prompt_file"
         AGENT_RESULT=""
