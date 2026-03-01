@@ -3,7 +3,7 @@
 <context>
 ## Project Context
 
-Context is pre-loaded via the `context-loader` skill. This provides AGENTS.md, IMPLEMENTATION_PLAN.md, and recent git history. The `validation-suite` and `plan-updater` skills are available for running tests and updating the plan.
+Context is pre-assembled by the bootstrap script and injected into `<dynamic_context>` below. You do NOT need to read AGENTS.md, IMPLEMENTATION_PLAN.md, state files, or budget files — that data is already provided. The `validation-suite` and `plan-updater` skills are available for running tests and updating the plan.
 
 Study relevant files in `specs/` as needed for the current task.
 </context>
@@ -143,5 +143,5 @@ If you intend to call multiple tools and there are no dependencies between the c
 <dynamic_context>
 ## Current State
 
-<!-- Orchestrator injects: iteration number, budget remaining, task assignment, recent diffs -->
+<!-- Orchestrator injects: {{BOOTSTRAP_MANIFEST}}, iteration number, budget remaining, task assignment, recent diffs -->
 </dynamic_context>

@@ -3,7 +3,7 @@
 <context>
 ## Project Context
 
-Context is pre-loaded via the `context-loader` and `spec-reader` skills. These provide AGENTS.md, IMPLEMENTATION_PLAN.md, recent git history, and structured spec summaries.
+Context is pre-assembled by the bootstrap script and injected into `<dynamic_context>` below. You do NOT need to read AGENTS.md, IMPLEMENTATION_PLAN.md, state files, or budget files — that data is already provided. The `spec-reader` skill is available for structured spec summaries.
 
 Study the existing codebase (`src/` or relevant directories). Do NOT assume functionality is missing — confirm by searching the code first.
 </context>
@@ -97,5 +97,5 @@ If you intend to call multiple tools and there are no dependencies between the c
 <dynamic_context>
 ## Current State
 
-<!-- Orchestrator injects: iteration number, budget remaining, project state -->
+<!-- Orchestrator injects: {{BOOTSTRAP_MANIFEST}}, iteration number, budget remaining, project state -->
 </dynamic_context>

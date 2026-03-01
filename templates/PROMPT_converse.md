@@ -110,5 +110,5 @@ If you intend to call multiple tools and there are no dependencies between the c
 <dynamic_context>
 ## Current State
 
-<!-- Orchestrator injects: iteration number, budget remaining, project state -->
+<!-- Orchestrator injects: {{BOOTSTRAP_MANIFEST}}, iteration number, budget remaining, project state -->
 </dynamic_context>

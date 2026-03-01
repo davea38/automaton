@@ -4,11 +4,11 @@
 
 You are in SELF-BUILD RESEARCH mode. You will analyze automaton's own performance data, research Claude CLI best practices, and identify optimization opportunities. You will NOT write any code.
 
-## Phase 0 - Load Context
+## Pre-assembled Context
 
-Context is pre-loaded via the `context-loader` and `self-analysis` skills. These provide AGENTS.md, IMPLEMENTATION_PLAN.md, recent git history, and automaton.sh function analysis.
+Context is pre-assembled by the bootstrap script and injected into `<dynamic_context>` below. You do NOT need to read AGENTS.md, IMPLEMENTATION_PLAN.md, state files, or budget files — that data is already provided. The `self-analysis` skill is available for automaton.sh function analysis.
 
-Additionally, read `.automaton/budget.json` for token usage patterns and `.automaton/backlog.md` for existing improvement tasks.
+Additionally, read `.automaton/backlog.md` for existing improvement tasks.
 
 ## Phase 1 - Performance Analysis
 
@@ -64,5 +64,5 @@ If you intend to call multiple tools and there are no dependencies between the c
 <dynamic_context>
 ## Current State
 
-<!-- Orchestrator injects: iteration number, budget remaining, project state -->
+<!-- Orchestrator injects: {{BOOTSTRAP_MANIFEST}}, iteration number, budget remaining, project state -->
 </dynamic_context>
