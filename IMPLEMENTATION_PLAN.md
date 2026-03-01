@@ -194,7 +194,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 - [x] Implement `_signal_prune()` in `automaton.sh` that enforces `max_signals` by removing the weakest signals when the limit is exceeded (WHY: unbounded signal growth would degrade performance and dilute attention — pruning keeps the signal space focused on the strongest observations) <!-- test: tests/test_signal_prune.sh -->
 
-- [ ] Implement query functions in `automaton.sh`: `_signal_get_strong()` (strength >= threshold), `_signal_get_by_type()` (filter by type), `_signal_get_active()` (strength > decay_floor), `_signal_get_unlinked()` (no related garden ideas) (WHY: the REFLECT phase queries these functions to identify patterns that need attention — unlinked strong signals are candidates for auto-seeding garden ideas) <!-- test: tests/test_signal_query.sh -->
+- [x] Implement query functions in `automaton.sh`: `_signal_get_strong()` (strength >= threshold), `_signal_get_by_type()` (filter by type), `_signal_get_active()` (strength > decay_floor), `_signal_get_unlinked()` (no related garden ideas) (WHY: the REFLECT phase queries these functions to identify patterns that need attention — unlinked strong signals are candidates for auto-seeding garden ideas) <!-- test: tests/test_signal_query.sh -->
 
 #### 42.3 Signal Integration
 
