@@ -190,7 +190,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 #### 42.2 Signal Lifecycle and Queries
 
-- [ ] Implement `_signal_decay_all()` in `automaton.sh` that reduces all signal strengths by their `decay_rate` and removes signals below `decay_floor` (WHY: decay ensures one-off observations fade naturally while persistent issues remain visible — this is the self-regulating cleanup mechanism) <!-- test: tests/test_signal_decay.sh -->
+- [x] Implement `_signal_decay_all()` in `automaton.sh` that reduces all signal strengths by their `decay_rate` and removes signals below `decay_floor` (WHY: decay ensures one-off observations fade naturally while persistent issues remain visible — this is the self-regulating cleanup mechanism) <!-- test: tests/test_signal_decay.sh -->
 
 - [ ] Implement `_signal_prune()` in `automaton.sh` that enforces `max_signals` by removing the weakest signals when the limit is exceeded (WHY: unbounded signal growth would degrade performance and dilute attention — pruning keeps the signal space focused on the strongest observations) <!-- test: tests/test_signal_prune.sh -->
 

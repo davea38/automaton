@@ -5236,6 +5236,35 @@ _signal_find_match() {
     echo "$best_id"
 }
 
+# Decays all signal strengths by their individual decay_rate.
+# Removes signals whose strength drops below decay_floor.
+# Called at the start of each evolution cycle (spec-42 §4).
+#
+# Returns: 0 on success, 1 if disabled or no signals file
+_signal_decay_all() {
+    if ! _signal_enabled; then return 1; fi
+
+    local signals_file="$AUTOMATON_DIR/signals.json"
+    [ -f "$signals_file" ] || return 1
+
+    local decay_floor="${STIGMERGY_DECAY_FLOOR:-0.05}"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    local tmp_file="${signals_file}.tmp"
+    jq --argjson floor "$decay_floor" \
+       --arg now "$now" \
+       '.signals = [.signals[] |
+            .strength = (.strength - .decay_rate) |
+            .last_decayed_at = $now
+        ] | .signals = [.signals[] | select(.strength >= $floor)] | .updated_at = $now' \
+       "$signals_file" > "$tmp_file" && mv "$tmp_file" "$signals_file"
+
+    local remaining
+    remaining=$(jq '.signals | length' "$signals_file")
+    log "SIGNAL" "Decay applied: $remaining signals remaining (floor=$decay_floor)"
+}
+
 # ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
