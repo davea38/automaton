@@ -8915,6 +8915,73 @@ _evolve_check_convergence() {
 }
 
 # ---------------------------------------------------------------------------
+# Evolution Per-Cycle Budget (spec-41 §9)
+# ---------------------------------------------------------------------------
+
+# Calculates the per-cycle budget as:
+#   min(EVOLVE_MAX_COST_PER_CYCLE, remaining_budget / estimated_remaining_cycles)
+# and enforces the budget_ceiling circuit breaker when there is insufficient
+# budget to run even one more cycle.
+#
+# Usage: cycle_budget=$(_evolve_check_budget <current_cycle> <estimated_remaining_cycles>)
+# Returns: 0 if budget is available (per-cycle budget on stdout), 1 if exhausted
+_evolve_check_budget() {
+    local current_cycle="${1:-1}"
+    local estimated_remaining="${2:-1}"
+    [ "$estimated_remaining" -lt 1 ] && estimated_remaining=1
+
+    local max_per_cycle="${EVOLVE_MAX_COST_PER_CYCLE:-5.00}"
+    local budget_file="$AUTOMATON_DIR/budget.json"
+
+    if [ ! -f "$budget_file" ]; then
+        log "EVOLVE" "No budget.json found — allowing cycle with max_cost_per_cycle=$max_per_cycle"
+        echo "$max_per_cycle"
+        return 0
+    fi
+
+    local mode remaining_usd
+    mode=$(jq -r '.mode // "api"' "$budget_file" 2>/dev/null || echo "api")
+
+    if [ "$mode" = "allowance" ]; then
+        # Allowance mode: estimate remaining budget from token headroom
+        # Convert token headroom to approximate USD using $3/1M input tokens
+        local effective_allowance tokens_used
+        effective_allowance=$(jq -r '.limits.effective_allowance // 0' "$budget_file" 2>/dev/null || echo 0)
+        tokens_used=$(jq -r '.tokens_used_this_week // 0' "$budget_file" 2>/dev/null || echo 0)
+        remaining_usd=$(awk -v eff="$effective_allowance" -v used="$tokens_used" \
+            'BEGIN { tokens_left = eff - used; if (tokens_left < 0) tokens_left = 0; printf "%.2f", tokens_left / 1000000 * 3 }')
+    else
+        # API mode: remaining = max_cost_usd - estimated_cost_usd
+        local max_cost_usd used_usd
+        max_cost_usd=$(jq -r '.limits.max_cost_usd // 50' "$budget_file" 2>/dev/null || echo 50)
+        used_usd=$(jq -r '.used.estimated_cost_usd // 0' "$budget_file" 2>/dev/null || echo 0)
+        remaining_usd=$(awk -v max="$max_cost_usd" -v used="$used_usd" \
+            'BEGIN { r = max - used; if (r < 0) r = 0; printf "%.2f", r }')
+    fi
+
+    # Calculate per-cycle budget: min(max_per_cycle, remaining / estimated_remaining)
+    local cycle_budget
+    cycle_budget=$(awk -v max="$max_per_cycle" -v rem="$remaining_usd" -v est="$estimated_remaining" \
+        'BEGIN { paced = rem / est; budget = (paced < max) ? paced : max; printf "%.2f", budget }')
+
+    # Minimum viable cycle cost threshold ($0.50)
+    local min_viable="0.50"
+    local is_exhausted
+    is_exhausted=$(awk -v cb="$cycle_budget" -v mv="$min_viable" \
+        'BEGIN { print (cb + 0 < mv + 0) ? "yes" : "no" }')
+
+    if [ "$is_exhausted" = "yes" ]; then
+        log "EVOLVE" "Budget exhausted: cycle_budget=\$$cycle_budget remaining=\$$remaining_usd (min viable=\$$min_viable)"
+        _safety_update_breaker "budget_ceiling"
+        return 1
+    fi
+
+    log "EVOLVE" "Cycle $current_cycle budget: \$$cycle_budget (remaining=\$$remaining_usd, max_per_cycle=\$$max_per_cycle)"
+    echo "$cycle_budget"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
