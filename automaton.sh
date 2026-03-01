@@ -8291,6 +8291,209 @@ _evolve_evaluate() {
 }
 
 # ---------------------------------------------------------------------------
+# Evolution: IMPLEMENT Phase (spec-41 §6)
+# ---------------------------------------------------------------------------
+
+# Implements the approved idea on a dedicated evolution branch using the
+# standard build pipeline with self-build safety constraints. Runs review
+# and constitutional compliance check on the resulting diff. If compliance
+# fails, abandons the branch and wilts the idea with a quality_concern signal.
+#
+# Reads evaluate.json from the cycle directory to determine which idea was
+# approved and what conditions were set. Writes implement.json with results.
+#
+# Usage: _evolve_implement "001"
+# Returns: 0 on success (including skipped), 1 on unrecoverable error
+_evolve_implement() {
+    local cycle_id="${1:?_evolve_implement requires cycle_id}"
+    local cycle_dir="$AUTOMATON_DIR/evolution/cycle-${cycle_id}"
+    mkdir -p "$cycle_dir"
+
+    log "EVOLVE" "IMPLEMENT phase starting (cycle=$cycle_id)"
+
+    # Read evaluate.json to determine approved idea and conditions
+    local eval_file="$cycle_dir/evaluate.json"
+    if [ ! -f "$eval_file" ]; then
+        log "EVOLVE" "IMPLEMENT: No evaluate.json found — skipping"
+        _write_implement_json "$cycle_dir" "$cycle_id" "" "" 0 0 0 0 "skipped" "skipped" "skipped" "skipped" 0
+        return 0
+    fi
+
+    local eval_result
+    eval_result=$(jq -r '.result // "unknown"' "$eval_file" 2>/dev/null || echo "unknown")
+    local idea_id
+    idea_id=$(jq -r '.evaluated // "none"' "$eval_file" 2>/dev/null || echo "none")
+    local conditions
+    conditions=$(jq -r '.conditions // "[]"' "$eval_file" 2>/dev/null || echo "[]")
+
+    # Skip if no idea was approved
+    if [ "$eval_result" != "approved" ] || [ "$idea_id" = "none" ]; then
+        log "EVOLVE" "IMPLEMENT: No approved idea (result=$eval_result) — skipping"
+        _write_implement_json "$cycle_dir" "$cycle_id" "$idea_id" "" 0 0 0 0 "skipped" "skipped" "skipped" "skipped" 0
+        return 0
+    fi
+
+    log "EVOLVE" "IMPLEMENT: Building idea=$idea_id on evolution branch"
+
+    # 1. Create a dedicated evolution branch
+    if ! _safety_branch_create "$cycle_id" "$idea_id"; then
+        log "EVOLVE" "IMPLEMENT: Failed to create evolution branch — aborting"
+        _write_implement_json "$cycle_dir" "$cycle_id" "$idea_id" "" 0 0 0 0 "failed" "skipped" "skipped" "failed" 0
+        return 1
+    fi
+
+    local branch
+    branch=$(_safety_branch_get_name "$cycle_id" "$idea_id")
+
+    # 2. Generate an implementation plan from the approved idea
+    local idea_file="$AUTOMATON_DIR/garden/${idea_id}.json"
+    local idea_title="" idea_description=""
+    if [ -f "$idea_file" ]; then
+        idea_title=$(jq -r '.title // "Untitled"' "$idea_file" 2>/dev/null || echo "Untitled")
+        idea_description=$(jq -r '.description // ""' "$idea_file" 2>/dev/null || echo "")
+    fi
+
+    # Write a minimal implementation plan on the evolution branch
+    local plan_content="# Evolution Implementation Plan\n\n"
+    plan_content+="## Cycle ${cycle_id} — ${idea_title}\n\n"
+    plan_content+="${idea_description}\n\n"
+    if [ "$conditions" != "[]" ] && [ -n "$conditions" ]; then
+        plan_content+="### Conditions from Quorum\n\n"
+        plan_content+="$conditions\n\n"
+    fi
+    plan_content+="## Tasks\n\n- [ ] Implement: ${idea_title}\n"
+    printf "%b" "$plan_content" > IMPLEMENTATION_PLAN.md
+    git add IMPLEMENTATION_PLAN.md 2>/dev/null || true
+    git commit -m "Evolution cycle $cycle_id: plan for $idea_id — $idea_title" --allow-empty 2>/dev/null || true
+
+    # 3. Run the build pipeline with self-build safety
+    local build_iterations=0
+    local max_build_iterations="${EVOLVE_MAX_BUILD_ITERATIONS:-3}"
+    local build_success="false"
+    local build_tokens=0
+
+    while [ "$build_iterations" -lt "$max_build_iterations" ]; do
+        build_iterations=$((build_iterations + 1))
+        log "EVOLVE" "IMPLEMENT: Build iteration $build_iterations/$max_build_iterations"
+
+        run_agent "PROMPT_build.md" "${EVOLUTION_BUILD_MODEL:-sonnet}"
+
+        if [ "$AGENT_EXIT_CODE" -eq 0 ]; then
+            build_success="true"
+            break
+        fi
+    done
+
+    # 4. Count changes on the evolution branch
+    local files_changed=0 lines_changed=0 tests_added=0
+    local diff_stat
+    diff_stat=$(git diff --stat "$WORKING_BRANCH"...HEAD 2>/dev/null || echo "")
+    if [ -n "$diff_stat" ]; then
+        files_changed=$(echo "$diff_stat" | tail -1 | grep -oP '\d+ files?' | grep -oP '\d+' || echo 0)
+        lines_changed=$(echo "$diff_stat" | tail -1 | grep -oP '\d+ insertion|deletion' | grep -oP '\d+' | paste -sd+ - | bc 2>/dev/null || echo 0)
+        tests_added=$(git diff "$WORKING_BRANCH"...HEAD --name-only 2>/dev/null | grep -c '^tests/' || echo 0)
+    fi
+
+    # 5. Run syntax check
+    local syntax_result="passed"
+    if ! bash -n automaton.sh 2>/dev/null; then
+        syntax_result="failed"
+    fi
+
+    # 6. Run sandbox testing
+    local sandbox_result="passed"
+    if ! _safety_sandbox_test "$branch" 2>/dev/null; then
+        sandbox_result="failed"
+    fi
+
+    # 7. Run review pipeline
+    local review_result="passed"
+    run_agent "PROMPT_review.md" "${EVOLUTION_REVIEW_MODEL:-opus}" 2>/dev/null || true
+
+    # 8. Run constitutional compliance check on the resulting diff
+    local constitution_result="passed"
+    local diff_file="$cycle_dir/implement_diff.tmp"
+    git diff "$WORKING_BRANCH"...HEAD > "$diff_file" 2>/dev/null || true
+
+    if [ -s "$diff_file" ]; then
+        constitution_result=$(_constitution_check "$diff_file" "$idea_id" "$cycle_id" 2>/dev/null || echo "warn")
+    fi
+    rm -f "$diff_file"
+
+    # 9. Handle failures: abandon branch and wilt idea
+    if [ "$syntax_result" = "failed" ] || [ "$constitution_result" = "fail" ] || [ "$sandbox_result" = "failed" ]; then
+        local fail_reason="compliance"
+        [ "$syntax_result" = "failed" ] && fail_reason="syntax check failed"
+        [ "$sandbox_result" = "failed" ] && fail_reason="sandbox testing failed"
+        [ "$constitution_result" = "fail" ] && fail_reason="constitutional compliance failed"
+
+        log "EVOLVE" "IMPLEMENT: Compliance failure ($fail_reason) — rolling back"
+
+        # _safety_rollback handles: abandon branch, wilt idea, emit quality_concern signal
+        if ! _safety_rollback "$cycle_id" "$idea_id" "$fail_reason" 2>/dev/null; then
+            # Fallback: emit quality_concern signal directly if rollback failed
+            _signal_emit "quality_concern" \
+                "Implementation of $idea_id failed" \
+                "Compliance failure: $fail_reason" \
+                "evolve" "$cycle_id" "" 2>/dev/null || true
+        fi
+
+        _write_implement_json "$cycle_dir" "$cycle_id" "$idea_id" "$branch" \
+            "$build_iterations" "$files_changed" "$lines_changed" "$tests_added" \
+            "$syntax_result" "$sandbox_result" "$constitution_result" "failed" "$build_tokens"
+        return 0
+    fi
+
+    # Success — stay on evolution branch for OBSERVE to decide merge
+    _write_implement_json "$cycle_dir" "$cycle_id" "$idea_id" "$branch" \
+        "$build_iterations" "$files_changed" "$lines_changed" "$tests_added" \
+        "$syntax_result" "$sandbox_result" "$constitution_result" "completed" "$build_tokens"
+
+    log "EVOLVE" "IMPLEMENT phase complete: idea=$idea_id branch=$branch files=$files_changed lines=$lines_changed syntax=$syntax_result constitution=$constitution_result"
+    return 0
+}
+
+# Helper: write implement.json with all required fields.
+_write_implement_json() {
+    local cycle_dir="$1" cycle_id="$2" idea_id="$3" branch="$4"
+    local iterations="$5" files_changed="$6" lines_changed="$7" tests_added="$8"
+    local syntax_check="$9" smoke_test="${10}" constitution_check="${11}"
+    local status="${12}" tokens_used="${13}"
+
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    jq -n \
+        --argjson cycle_id "${cycle_id:-0}" \
+        --arg timestamp "$now" \
+        --arg idea_id "${idea_id:-none}" \
+        --arg branch "${branch:-none}" \
+        --argjson iterations "${iterations:-0}" \
+        --argjson files_changed "${files_changed:-0}" \
+        --argjson lines_changed "${lines_changed:-0}" \
+        --argjson tests_added "${tests_added:-0}" \
+        --arg syntax_check "${syntax_check:-skipped}" \
+        --arg smoke_test "${smoke_test:-skipped}" \
+        --arg constitution_check "${constitution_check:-skipped}" \
+        --arg status "${status:-unknown}" \
+        --argjson tokens_used "${tokens_used:-0}" \
+        '{
+            cycle_id: $cycle_id,
+            timestamp: $timestamp,
+            idea_id: $idea_id,
+            branch: $branch,
+            iterations: $iterations,
+            files_changed: $files_changed,
+            lines_changed: $lines_changed,
+            tests_added: $tests_added,
+            syntax_check: $syntax_check,
+            smoke_test: $smoke_test,
+            constitution_check: $constitution_check,
+            status: $status,
+            tokens_used: $tokens_used
+        }' > "$cycle_dir/implement.json"
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
