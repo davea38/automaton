@@ -7,6 +7,12 @@ set -euo pipefail
 AUTOMATON_VERSION="0.1.0"
 AUTOMATON_DIR=".automaton"
 
+# Safety ceiling for unlimited build iterations. When max_iterations.build=0
+# (unlimited), the build phase can run indefinitely. This constant prevents
+# unbounded execution by triggering a review transition after this many
+# iterations, even if budget hasn't been exhausted.
+BUILD_SAFETY_CEILING=100
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -560,6 +566,154 @@ recover_state_from_persistent() {
     log "ORCHESTRATOR" "State recovered: phase=$current_phase iteration=$iteration ${task_info:+$task_info }${recent_commit:+latest_commit=$recent_commit}"
 }
 
+# Generates .automaton/init.sh bootstrap script if it doesn't already exist.
+# On fresh projects (first `initialize()` call), the bootstrap script must be
+# created so that `_run_bootstrap()` can assemble context manifests. Without
+# this, the bootstrap is configured but has no script to run, causing empty
+# manifests on fresh runs. (spec-37, gap fix)
+generate_bootstrap_script() {
+    local script_path="$EXEC_BOOTSTRAP_SCRIPT"
+
+    # Don't overwrite an existing bootstrap script (user may have customized it)
+    if [ -f "$script_path" ]; then
+        # Ensure it's executable
+        chmod +x "$script_path" 2>/dev/null || true
+        return 0
+    fi
+
+    if [ "$EXEC_BOOTSTRAP_ENABLED" != "true" ]; then
+        return 0
+    fi
+
+    # Ensure parent directory exists
+    local script_dir
+    script_dir=$(dirname "$script_path")
+    mkdir -p "$script_dir"
+
+    cat > "$script_path" <<'BOOTSTRAP_SCRIPT'
+#!/usr/bin/env bash
+# .automaton/init.sh — Session Bootstrap (spec-37)
+# Runs BEFORE each agent invocation. Outputs JSON manifest to stdout.
+# The manifest provides pre-assembled context so agents skip Phase 0 file reads.
+#
+# Usage: .automaton/init.sh [PROJECT_ROOT] [PHASE] [ITERATION]
+# Defaults: PROJECT_ROOT=., PHASE=build, ITERATION=1
+set -euo pipefail
+
+PROJECT_ROOT="${1:-.}"
+PHASE="${2:-build}"
+ITERATION="${3:-1}"
+AUTOMATON_DIR="$PROJECT_ROOT/.automaton"
+
+# Dependency check — jq and git are required
+check_dependencies() {
+    local missing=""
+    for cmd in jq git; do
+        command -v "$cmd" &>/dev/null || missing="$missing $cmd"
+    done
+    if [ -n "$missing" ]; then
+        echo "{\"error\": \"Missing dependencies:$missing\"}"
+        exit 1
+    fi
+}
+
+# Validate state.json if it exists
+validate_state() {
+    local state_file="$AUTOMATON_DIR/state.json"
+    if [ -f "$state_file" ]; then
+        jq empty "$state_file" 2>/dev/null || {
+            echo "{\"error\": \"state.json is invalid JSON\"}"
+            exit 1
+        }
+    fi
+}
+
+# Assemble the JSON manifest from project files and git state
+generate_context() {
+    local manifest="{}"
+
+    # --- Project state ---
+    manifest=$(echo "$manifest" | jq --arg phase "$PHASE" --argjson iter "$ITERATION" \
+        '. + {project_state: {phase: $phase, iteration: $iter}}')
+
+    # Task progress from IMPLEMENTATION_PLAN.md (or .automaton/backlog.md)
+    local plan_file="$PROJECT_ROOT/IMPLEMENTATION_PLAN.md"
+    if [ -f "$AUTOMATON_DIR/backlog.md" ]; then
+        plan_file="$AUTOMATON_DIR/backlog.md"
+    fi
+
+    if [ -f "$plan_file" ]; then
+        local next_task total_tasks done_tasks
+        next_task=$(grep -m1 '^\- \[ \]' "$plan_file" | sed 's/^- \[ \] //' || echo "")
+        total_tasks=$(grep -c '^\- \[' "$plan_file" 2>/dev/null || echo 0)
+        done_tasks=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null || echo 0)
+        manifest=$(echo "$manifest" | jq \
+            --arg next "$next_task" \
+            --argjson total "$total_tasks" \
+            --argjson done "$done_tasks" \
+            '.project_state += {next_task: $next, tasks_total: $total, tasks_done: $done}')
+    fi
+
+    # --- Recent changes (last 5 commits) ---
+    local recent_commits
+    recent_commits=$(git -C "$PROJECT_ROOT" log --oneline -5 2>/dev/null \
+        | jq -R -s 'split("\n") | map(select(. != ""))' || echo '[]')
+    manifest=$(echo "$manifest" | jq --argjson commits "$recent_commits" \
+        '. + {recent_changes: $commits}')
+
+    # --- Budget ---
+    if [ -f "$AUTOMATON_DIR/budget.json" ]; then
+        local budget_used budget_limit
+        budget_used=$(jq '.used.estimated_cost_usd // 0' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo 0)
+        budget_limit=$(jq '.limits.max_cost_usd // 50' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo 50)
+        manifest=$(echo "$manifest" | jq \
+            --argjson used "$budget_used" \
+            --argjson limit "$budget_limit" \
+            '. + {budget: {used_usd: $used, limit_usd: $limit, remaining_usd: ($limit - $used)}}')
+    fi
+
+    # --- Modified files since last commit ---
+    local modified_files
+    modified_files=$(git -C "$PROJECT_ROOT" diff --name-only HEAD~1 2>/dev/null \
+        | jq -R -s 'split("\n") | map(select(. != ""))' || echo '[]')
+    manifest=$(echo "$manifest" | jq --argjson files "$modified_files" \
+        '. + {modified_files: $files}')
+
+    # --- Learnings (high-confidence, active only) ---
+    if [ -f "$AUTOMATON_DIR/learnings.json" ]; then
+        local learnings
+        learnings=$(jq '[.entries[]? | select(.active == true and .confidence == "high") | .summary]' \
+            "$AUTOMATON_DIR/learnings.json" 2>/dev/null || echo '[]')
+        manifest=$(echo "$manifest" | jq --argjson learn "$learnings" \
+            '. + {learnings: $learn}')
+    fi
+
+    # --- Test status (from test_results.json) ---
+    if [ -f "$AUTOMATON_DIR/test_results.json" ]; then
+        local test_data
+        test_data=$(jq '{
+            passed: ([.[]? | select(.status == "passed")] | length),
+            failed: ([.[]? | select(.status == "failed")] | length),
+            failing_tests: [.[]? | select(.status == "failed") | .test]
+        }' "$AUTOMATON_DIR/test_results.json" 2>/dev/null || echo '{}')
+        if [ "$test_data" != "{}" ]; then
+            manifest=$(echo "$manifest" | jq --argjson tests "$test_data" \
+                '. + {test_status: $tests}')
+        fi
+    fi
+
+    echo "$manifest" | jq .
+}
+
+check_dependencies
+validate_state
+generate_context
+BOOTSTRAP_SCRIPT
+
+    chmod +x "$script_path"
+    log "ORCHESTRATOR" "Generated bootstrap script: $script_path"
+}
+
 # First-run initialization: create .automaton/ structure, write initial state,
 # initialize budget tracking, and create an empty session log.
 initialize() {
@@ -605,6 +759,7 @@ RATE
     test_failure_count=0
     build_sub_phase="implementation"
     scaffold_iterations_done=0
+    research_gate_failures=0
     started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     resumed_from="null"
     phase_history="[]"
@@ -629,6 +784,9 @@ RATE
     if [ "$AGENTS_USE_NATIVE_DEFINITIONS" = "true" ]; then
         migrate_learnings_to_agent_memory
     fi
+
+    # Generate bootstrap script if it doesn't exist (spec-37, gap #1)
+    generate_bootstrap_script
 
     # Create empty session.log (log() appends to this)
     : > "$AUTOMATON_DIR/session.log"
@@ -1510,11 +1668,43 @@ detect_auto_compaction() {
             if [ "$drop_pct" -ge 20 ]; then
                 LAST_AUTO_COMPACTION_DETECTED=true
                 log "ORCHESTRATOR" "WARNING: Auto-compaction detected in ${current_phase} iteration ${phase_iteration} (input_tokens dropped from ${prev_tokens} to ${current_tokens}, -${drop_pct}%). Uncommitted work may have been lost."
+                # --- Mitigation: protect uncommitted work and refresh context ---
+                mitigate_compaction
                 return 0
             fi
         fi
         prev_tokens="$current_tokens"
     done <<< "$token_values"
+}
+
+# Mitigates auto-compaction by committing uncommitted work, refreshing
+# progress.txt, and flagging the next iteration for reduced dynamic context.
+# Without mitigation, auto-compaction can silently lose uncommitted changes
+# and leave the agent in a confused state with stale context.
+mitigate_compaction() {
+    # 1. Force-commit any uncommitted work to prevent data loss
+    local uncommitted_files
+    uncommitted_files=$(git diff --name-only 2>/dev/null | wc -l)
+    local untracked_files
+    untracked_files=$(git ls-files --others --exclude-standard 2>/dev/null | wc -l)
+
+    if [ "$uncommitted_files" -gt 0 ] || [ "$untracked_files" -gt 0 ]; then
+        log "ORCHESTRATOR" "Compaction mitigation: committing $uncommitted_files modified + $untracked_files untracked files"
+        git add -A 2>/dev/null || true
+        git commit -m "auto-save: compaction detected in ${current_phase} iteration ${phase_iteration}" \
+            --allow-empty 2>/dev/null || true
+    fi
+
+    # 2. Regenerate progress.txt so next iteration has fresh state awareness
+    generate_progress_txt 2>/dev/null || true
+
+    # 3. Set flag to reduce dynamic context in the next iteration
+    # When this flag is set, inject_dynamic_context will omit verbose sections
+    # (iteration memory, full git diffs) to keep the prompt lean
+    COMPACTION_REDUCE_CONTEXT=true
+
+    # 4. Log the mitigation action
+    log "ORCHESTRATOR" "Compaction mitigation complete: committed work, refreshed progress.txt, reducing next iteration context"
 }
 
 # Returns estimated USD cost for a given model and token counts.
@@ -3585,6 +3775,70 @@ escalate() {
     exit 3
 }
 
+# Focused fix strategy: when the review→build loop has failed twice, instead
+# of immediately escalating, extract only the specific failing issues and create
+# a minimal, targeted task list for one more build cycle. This gives the system
+# one last chance to self-heal before requiring human intervention.
+#
+# Strategy:
+# 1. Extract failing test names and unchecked review tasks from the plan
+# 2. Create a focused task list with ONLY those specific fixes
+# 3. Clear iteration memory to give the builder fresh context
+# 4. Set max iterations for this focused build to 3 (tight scope)
+attempt_focused_fix() {
+    local plan_file="IMPLEMENTATION_PLAN.md"
+    if [ "${ARG_SELF:-false}" = "true" ] && [ -f "$AUTOMATON_DIR/backlog.md" ]; then
+        plan_file="$AUTOMATON_DIR/backlog.md"
+    fi
+
+    # Extract only unchecked tasks (these are the review-identified issues)
+    local unchecked_tasks
+    unchecked_tasks=$(grep '^\- \[ \]' "$plan_file" 2>/dev/null || true)
+
+    # Extract failing test names from test_results.json
+    local failing_tests=""
+    if [ -f "$AUTOMATON_DIR/test_results.json" ]; then
+        failing_tests=$(jq -r '.[]? | select(.status == "failed") | .test // empty' \
+            "$AUTOMATON_DIR/test_results.json" 2>/dev/null || true)
+    fi
+
+    # Create a focused fix section in the plan
+    {
+        echo ""
+        echo "## Focused Fix (Auto-Generated)"
+        echo ""
+        echo "The following issues were identified after 2 review cycles."
+        echo "This is a targeted fix attempt. Fix ONLY these specific issues:"
+        echo ""
+        if [ -n "$failing_tests" ]; then
+            echo "### Failing Tests"
+            echo "$failing_tests" | while IFS= read -r test; do
+                [ -z "$test" ] && continue
+                echo "- [ ] Fix failing test: $test"
+            done
+            echo ""
+        fi
+        if [ -n "$unchecked_tasks" ]; then
+            echo "### Remaining Review Issues"
+            echo "$unchecked_tasks"
+            echo ""
+        fi
+        echo "**IMPORTANT**: Do NOT refactor or improve unrelated code. Fix ONLY the items listed above."
+    } >> "$plan_file"
+
+    # Clear iteration memory to give fresh context
+    : > "$AUTOMATON_DIR/iteration_memory.md" 2>/dev/null || true
+
+    # Override max iterations for the focused build to keep it tight
+    EXEC_MAX_ITER_BUILD=3
+
+    log "ORCHESTRATOR" "Focused fix: created targeted task list with $(echo "$unchecked_tasks" | grep -c '\[ \]' 2>/dev/null || echo 0) review issues and $(echo "$failing_tests" | grep -c . 2>/dev/null || echo 0) failing tests. Max 3 build iterations."
+
+    # Commit the focused fix plan
+    git add "$plan_file" 2>/dev/null || true
+    git commit -m "automaton: focused fix attempt after 2 failed reviews" 2>/dev/null || true
+}
+
 # ---------------------------------------------------------------------------
 # Context Efficiency (spec-24)
 # ---------------------------------------------------------------------------
@@ -3968,37 +4222,53 @@ inject_dynamic_context() {
             echo ""
         fi
 
-        # Build-specific context for iterations after the first
+        # Build-specific context for iterations after the first.
+        # When COMPACTION_REDUCE_CONTEXT is set (post-compaction mitigation),
+        # emit only essential context (current focus) and skip verbose sections
+        # (git diffs, iteration memory, codebase overview) to keep the prompt lean.
         if [ "$current_phase" = "build" ] && [ "$phase_iteration" -gt 1 ]; then
             local plan_file="IMPLEMENTATION_PLAN.md"
             if [ "${ARG_SELF:-false}" = "true" ] && [ -f "$AUTOMATON_DIR/backlog.md" ]; then
                 plan_file="$AUTOMATON_DIR/backlog.md"
             fi
 
-            echo "## Recent Changes"
-            echo '```'
-            git diff --stat HEAD~3 2>/dev/null || echo "No recent changes."
-            echo '```'
-            echo ""
-
-            echo "## Current Focus"
-            if [ -f "$plan_file" ]; then
-                grep '\[ \]' "$plan_file" | head -5 || echo "All tasks complete."
-            fi
-            echo ""
-
-            if [ -f "$AUTOMATON_DIR/iteration_memory.md" ]; then
-                echo "## Recent Iteration History"
-                tail -5 "$AUTOMATON_DIR/iteration_memory.md"
+            if [ "${COMPACTION_REDUCE_CONTEXT:-false}" = "true" ]; then
+                echo "## Post-Compaction Recovery"
+                echo "Auto-compaction was detected. Context has been reduced. Read progress.txt for full state."
                 echo ""
-            fi
-
-            if [ "$SELF_BUILD_ENABLED" = "true" ] && [ -f "automaton.sh" ]; then
-                echo "## Codebase Overview (automaton.sh)"
+                echo "## Current Focus"
+                if [ -f "$plan_file" ]; then
+                    grep '\[ \]' "$plan_file" | head -3 || echo "All tasks complete."
+                fi
+                echo ""
+                # Clear the flag after one reduced-context iteration
+                COMPACTION_REDUCE_CONTEXT=false
+            else
+                echo "## Recent Changes"
                 echo '```'
-                grep -n '^[a-z_]*()' automaton.sh | head -40 || true
+                git diff --stat HEAD~3 2>/dev/null || echo "No recent changes."
                 echo '```'
                 echo ""
+
+                echo "## Current Focus"
+                if [ -f "$plan_file" ]; then
+                    grep '\[ \]' "$plan_file" | head -5 || echo "All tasks complete."
+                fi
+                echo ""
+
+                if [ -f "$AUTOMATON_DIR/iteration_memory.md" ]; then
+                    echo "## Recent Iteration History"
+                    tail -5 "$AUTOMATON_DIR/iteration_memory.md"
+                    echo ""
+                fi
+
+                if [ "$SELF_BUILD_ENABLED" = "true" ] && [ -f "automaton.sh" ]; then
+                    echo "## Codebase Overview (automaton.sh)"
+                    echo '```'
+                    grep -n '^[a-z_]*()' automaton.sh | head -40 || true
+                    echo '```'
+                    echo ""
+                fi
             fi
         fi
 
@@ -5208,12 +5478,20 @@ configure_wave_hooks() {
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": ".claude/hooks/builder-on-stop.sh",
+        "timeout": 30,
+        "statusMessage": "Finalizing builder results..."
+      }
     ]
   }
 }
 HOOKS_EOF
 
-    log "CONDUCTOR" "Configured file ownership hook in $settings_local"
+    log "CONDUCTOR" "Configured file ownership and builder stop hooks in $settings_local"
 }
 
 # Removes dynamic hooks from .claude/settings.local.json after a wave completes.
@@ -7611,7 +7889,9 @@ get_phase_max_iterations() {
 
 # Checks whether the agent output contains the COMPLETE signal.
 agent_signaled_complete() {
-    echo "$AGENT_RESULT" | grep -q 'COMPLETE</promise>'
+    # Check for both legacy (<promise>COMPLETE</promise>) and spec-29
+    # (<result status="complete">) completion signals for backward compatibility
+    echo "$AGENT_RESULT" | grep -qE 'COMPLETE</promise>|<result status="complete">'
 }
 
 # Emits a one-line inter-iteration status per spec-01 format.
@@ -7732,6 +8012,10 @@ print_banner() {
 # Set by post_iteration to communicate why a forced phase transition occurred.
 # Values: "" (normal), "budget" (phase budget exceeded), "stall" (re-plan needed)
 TRANSITION_REASON=""
+
+# Set by mitigate_compaction() when auto-compaction is detected. When true,
+# inject_dynamic_context() omits verbose sections to keep the prompt lean.
+COMPACTION_REDUCE_CONTEXT=false
 
 # Post-iteration pipeline: runs after every agent invocation. Extracts tokens,
 # updates budget, checks limits, detects stalls/corruption, writes state/history,
@@ -7986,6 +8270,18 @@ run_orchestration() {
                 break
             fi
 
+            # Safety ceiling for unlimited build phases (gap #4).
+            # When max_iter=0, the build loop is unbounded. This prevents
+            # runaway execution by forcing a transition to review after
+            # BUILD_SAFETY_CEILING iterations.
+            if [ "$max_iter" -eq 0 ] && [ "$current_phase" = "build" ] \
+                    && [ "$phase_iteration" -gt "$BUILD_SAFETY_CEILING" ]; then
+                log "ORCHESTRATOR" "WARNING: Build safety ceiling reached ($BUILD_SAFETY_CEILING iterations). Forcing transition to review."
+                phase_iteration=$((phase_iteration - 1))
+                iteration=$((iteration - 1))
+                break
+            fi
+
             # Phase timeout check
             if ! check_phase_timeout; then
                 break
@@ -8083,12 +8379,22 @@ run_orchestration() {
         # --- Gate checks and phase transitions ---
         case "$current_phase" in
             research)
-                # Gate 2: research completeness. On fail: warn, proceed to plan (spec-03)
+                # Gate 2: research completeness (hardened).
+                # On fail: retry research if within max iterations, then warn and proceed.
+                # Counts remaining TBDs so the log message is actionable.
                 if gate_check "research_completeness"; then
                     transition_to_phase "plan"
                 else
-                    log "ORCHESTRATOR" "Research gate failed after max iterations. Proceeding to plan."
-                    transition_to_phase "plan"
+                    research_gate_failures=$((${research_gate_failures:-0} + 1))
+                    local remaining_tbds
+                    remaining_tbds=$(grep -ri 'TBD\|TODO' specs/ 2>/dev/null | wc -l)
+                    if [ "$research_gate_failures" -lt 2 ] && [ "$phase_iteration" -lt "$max_iter" ]; then
+                        log "ORCHESTRATOR" "Research gate failed ($remaining_tbds TBDs remaining). Retrying research (attempt $((research_gate_failures + 1)))."
+                        # Don't transition — stay in research for another iteration
+                    else
+                        log "ORCHESTRATOR" "WARNING: Research gate failed with $remaining_tbds TBDs remaining. Max retries exhausted. Proceeding to plan with unresolved ambiguity."
+                        transition_to_phase "plan"
+                    fi
                 fi
                 ;;
 
@@ -8115,17 +8421,27 @@ run_orchestration() {
                 ;;
 
             review)
-                # Gate 5: review pass. On fail: back to build. After 2 failures: escalate (spec-06)
+                # Gate 5: review pass. On fail: back to build.
+                # After 2 failures: attempt focused fix. After 3: terminal escalate.
                 if gate_check "review_pass"; then
                     transition_to_phase "COMPLETE"
                 else
                     review_attempts=$((review_attempts + 1))
-                    if [ "$review_attempts" -ge 2 ]; then
-                        escalate "Review failed after $review_attempts attempts."
+                    if [ "$review_attempts" -ge 3 ]; then
+                        # Terminal escalation after focused fix also failed
+                        escalate "Review failed after $review_attempts attempts (including focused fix). Human intervention required."
+                    elif [ "$review_attempts" -eq 2 ]; then
+                        # Focused fix strategy: extract only failing issues and create
+                        # a minimal targeted task list for one more build cycle
+                        log "ORCHESTRATOR" "Review failed twice. Attempting focused fix strategy (attempt 3/3)."
+                        attempt_focused_fix
+                        stall_count=0
+                        transition_to_phase "build"
+                    else
+                        log "ORCHESTRATOR" "Review failed ($review_attempts/3). Returning to build."
+                        stall_count=0
+                        transition_to_phase "build"
                     fi
-                    log "ORCHESTRATOR" "Review failed ($review_attempts/2). Returning to build."
-                    stall_count=0
-                    transition_to_phase "build"
                 fi
                 ;;
         esac
