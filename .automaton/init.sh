@@ -126,6 +126,22 @@ generate_context() {
         fi
     fi
 
+    # --- Active signals summary (from signals.json, spec-42 §3) ---
+    local signals_file="$AUTOMATON_DIR/signals.json"
+    if [ -f "$signals_file" ]; then
+        local signals_data
+        signals_data=$(jq '{
+            total: (.signals | length),
+            strong: ([.signals[] | select(.strength >= 0.5)] | length),
+            strongest: ([.signals | sort_by(-.strength) | .[0] // null] | .[0] | if . then {id: .id, title: .title, strength: .strength} else null end),
+            unlinked_count: ([.signals[] | select((.related_ideas | length) == 0)] | length)
+        }' "$signals_file" 2>/dev/null || echo '{}')
+        if [ "$signals_data" != "{}" ]; then
+            manifest=$(echo "$manifest" | jq --argjson as "$signals_data" \
+                '. + {active_signals: $as}')
+        fi
+    fi
+
     echo "$manifest" | jq .
 }
 
