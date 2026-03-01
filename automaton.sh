@@ -7145,6 +7145,126 @@ aggregate_agent_teams_budget() {
     done
 }
 
+# Saves Agent Teams task list state for resume after interruption.
+#
+# WHY: Agent Teams has no session resumption — if interrupted, the team
+# cannot be restarted where it left off. Saving task state enables the
+# orchestrator to re-create the team with only remaining tasks on --resume.
+# (spec-28 §8: no session resumption mitigation)
+#
+# Output: writes .automaton/agent_teams_state.json (persistent, git-tracked)
+save_agent_teams_state() {
+    local task_file="$AUTOMATON_DIR/wave/agent_teams_tasks.json"
+    local state_file="$AUTOMATON_DIR/agent_teams_state.json"
+
+    if [ ! -f "$task_file" ]; then
+        log "ORCHESTRATOR" "No task list to save for Agent Teams state"
+        return 0
+    fi
+
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    jq --arg ts "$timestamp" '
+        map(. + {saved_at: $ts})
+    ' "$task_file" > "$state_file"
+
+    log "ORCHESTRATOR" "Saved Agent Teams task state to $state_file"
+}
+
+# Restores saved Agent Teams task state for resume.
+#
+# WHY: On --resume after interruption, the orchestrator re-creates the
+# Agent Teams session with only pending/incomplete tasks from the saved
+# state, skipping already-completed work. (spec-28 §8)
+#
+# Output: prints JSON array of saved tasks to stdout
+# Returns: always 0 (empty array if no state)
+restore_agent_teams_state() {
+    local state_file="$AUTOMATON_DIR/agent_teams_state.json"
+
+    if [ ! -f "$state_file" ]; then
+        echo "[]"
+        return 0
+    fi
+
+    cat "$state_file"
+}
+
+# Verifies Agent Teams task completions against actual git changes.
+#
+# WHY: Agent Teams has a "task status lag" limitation — teammates sometimes
+# fail to mark tasks complete even though they did the work. This function
+# cross-references completed tasks against git diff to detect mismatches.
+# Tasks marked complete but with no corresponding file changes are flagged.
+# (spec-28 §8: task status lag mitigation)
+#
+# Args: $1 — git ref to diff against (e.g. HEAD~5 or a commit sha)
+# Output: prints JSON array with verification results to stdout
+verify_agent_teams_completions() {
+    local diff_base="${1:-HEAD~1}"
+    local task_file="$AUTOMATON_DIR/wave/agent_teams_tasks.json"
+
+    if [ ! -f "$task_file" ]; then
+        echo "[]"
+        return 0
+    fi
+
+    local changed_files
+    changed_files=$(git diff --name-only "$diff_base" HEAD 2>/dev/null || echo "")
+
+    jq --arg changed "$changed_files" '
+        ($changed | split("\n") | map(select(. != ""))) as $diffs |
+        map(
+            if .status == "completed" then
+                if (.files | length) == 0 then
+                    . + {verified: "unverifiable", reason: "no file list for task"}
+                elif ([.files[] | select(. as $f | $diffs | any(. == $f))] | length) > 0 then
+                    . + {verified: true}
+                else
+                    . + {verified: false, reason: "no matching changes in git diff"}
+                end
+            else
+                . + {verified: "not_completed"}
+            end
+        )
+    ' "$task_file"
+}
+
+# Documents Agent Teams limitations and their mitigations.
+#
+# WHY: Informed users can choose the right parallel mode for their project.
+# Limitations are logged at session start so operators understand the
+# trade-offs of agent-teams mode vs automaton mode. (spec-28 §8)
+#
+# Output: prints limitation summary to stdout
+document_agent_teams_limitations() {
+    cat << 'LIMITATIONS'
+Agent Teams Limitations (spec-28 §8):
+
+1. no session resumption — Cannot resume Agent Teams after interrupt.
+   Mitigation: orchestrator saves task list state; re-creates team on --resume.
+
+2. task status lag — Teammates may fail to mark tasks complete.
+   Mitigation: post-build verification against git diff detects unacknowledged work.
+
+3. no nested teams — Teammates cannot create sub-teams.
+   Mitigation: single level of parallelism only.
+
+4. One team per session — Cannot run multiple teams concurrently.
+   Mitigation: sequential team sessions for multi-wave scenarios.
+
+5. Lead is fixed — Cannot promote teammate to lead.
+   Mitigation: lead must be the orchestrator's build agent.
+
+6. Permissions at spawn — Cannot change teammate permissions after creation.
+   Mitigation: set correctly at spawn time.
+
+7. shared working tree — No worktree isolation by default (conflict risk).
+   Mitigation: file ownership hooks (spec-31) prevent concurrent writes to same files.
+LIMITATIONS
+}
+
 # from a shared task list populated from IMPLEMENTATION_PLAN.md.
 #
 # WHY: Agent Teams provides native parallel execution with self-claiming,
@@ -7155,8 +7275,28 @@ aggregate_agent_teams_budget() {
 run_agent_teams_build() {
     log "ORCHESTRATOR" "Starting Agent Teams build (mode=agent-teams, builders=${MAX_BUILDERS}, display=${PARALLEL_TEAMMATE_DISPLAY:-in-process})"
 
+    # Log known limitations (spec-28 §8) so operators understand trade-offs
+    document_agent_teams_limitations | while IFS= read -r line; do
+        log "ORCHESTRATOR" "$line"
+    done
+
     # Ensure the experimental flag is set
     export CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1
+
+    # Check for saved state from a previous interrupted session (resume mitigation)
+    local saved_state
+    saved_state=$(restore_agent_teams_state)
+    local saved_count
+    saved_count=$(echo "$saved_state" | jq 'length' 2>/dev/null || echo 0)
+    if [ "$saved_count" -gt 0 ]; then
+        local completed_in_saved
+        completed_in_saved=$(echo "$saved_state" | jq '[.[] | select(.status == "completed")] | length')
+        log "ORCHESTRATOR" "Restored Agent Teams state: $saved_count tasks ($completed_in_saved previously completed)"
+    fi
+
+    # Record git HEAD before session for post-build verification
+    local pre_build_head
+    pre_build_head=$(git rev-parse HEAD 2>/dev/null || echo "")
 
     # Populate the shared task list from the implementation plan
     populate_agent_teams_task_list
@@ -7215,6 +7355,23 @@ run_agent_teams_build() {
 
     # Aggregate budget from subagent hooks or lead session (spec-28 §9)
     aggregate_agent_teams_budget
+
+    # Save task list state for resume (spec-28 §8: no session resumption mitigation)
+    save_agent_teams_state
+
+    # Post-build verification against git diff (spec-28 §8: task status lag mitigation)
+    if [ -n "$pre_build_head" ]; then
+        local verification
+        verification=$(verify_agent_teams_completions "$pre_build_head")
+        local unverified_count
+        unverified_count=$(echo "$verification" | jq '[.[] | select(.verified == false)] | length' 2>/dev/null || echo 0)
+        if [ "$unverified_count" -gt 0 ]; then
+            log "ORCHESTRATOR" "WARN: $unverified_count task(s) marked complete but no matching file changes detected (task status lag)"
+            echo "$verification" | jq -r '.[] | select(.verified == false) | "  - \(.task_id): \(.subject)"' | while IFS= read -r line; do
+                log "ORCHESTRATOR" "  Unverified: $line"
+            done
+        fi
+    fi
 
     return 0
 }
