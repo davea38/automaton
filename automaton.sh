@@ -7165,6 +7165,7 @@ ARG_SELF=false
 ARG_CONTINUE=false
 ARG_STATS=false
 ARG_BUDGET_CHECK=false
+ARG_HEALTH=false
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -7212,6 +7213,10 @@ while [ $# -gt 0 ]; do
             ARG_BUDGET_CHECK=true
             shift
             ;;
+        --health)
+            ARG_HEALTH=true
+            shift
+            ;;
         --help|-h)
             cat <<'USAGE'
 Usage: automaton.sh [OPTIONS]
@@ -7228,6 +7233,7 @@ Options:
   --self --continue Auto-pick highest-priority backlog item and run (spec-26)
   --stats           Display run history and performance trends (spec-26)
   --budget-check    Show weekly allowance status without starting a run (spec-35)
+  --health          Show system health dashboard and exit (spec-43)
   --help, -h        Show this help message
 
 Exit codes:
@@ -10817,6 +10823,12 @@ run_orchestration() {
 # --- Budget check mode (spec-35) ---
 if [ "$ARG_BUDGET_CHECK" = "true" ]; then
     display_budget_check
+fi
+
+# --- Health dashboard mode (spec-43) ---
+if [ "$ARG_HEALTH" = "true" ]; then
+    _metrics_display_health
+    exit 0
 fi
 
 # --- Stats mode (spec-26) ---
