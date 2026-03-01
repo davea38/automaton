@@ -292,7 +292,7 @@ These specs add the safety constraints and governance framework that the evoluti
 
 - [x] Implement `_constitution_get_summary()` in `automaton.sh` that generates the summary object (articles count, version, key_constraints list) for the bootstrap manifest (WHY: evolution agents need constitution awareness in their prompt context to self-regulate their proposals) <!-- test: tests/test_constitution_create.sh -->
 
-- [ ] Add `constitution_summary` field to the bootstrap manifest in `.automaton/init.sh` (WHY: injecting the summary into agent prompts is cheaper than having each agent read the full constitution file) <!-- test: tests/test_constitution_bootstrap.sh -->
+- [x] Add `constitution_summary` field to the bootstrap manifest in `.automaton/init.sh` (WHY: injecting the summary into agent prompts is cheaper than having each agent read the full constitution file) <!-- test: tests/test_constitution_bootstrap.sh -->
 
 ### Spec 45 — Safety and Reversibility
 
