@@ -288,7 +288,7 @@ These specs add the safety constraints and governance framework that the evoluti
 
 - [x] Implement `_constitution_amend()` in `automaton.sh` that applies an approved amendment to `constitution.md`, records before/after text in `constitution-history.json` with amendment_id, article, type, description, vote_id, proposed_by, and approved_at fields (WHY: amendments must be tracked with full audit trail so any governance change can be traced back to its vote and proposer) <!-- test: tests/test_constitution_amend.sh -->
 
-- [ ] Create `.claude/agents/evolve-constitution-checker.md` agent definition for deep compliance analysis when automated checks return `warn` (receives diff + constitution text, produces per-article compliance report) (WHY: some violations are subtle — a change might technically pass automated checks but violate the spirit of an article; the checker agent provides nuanced analysis for edge cases) <!-- test: tests/test_constitution_checker_agent.sh -->
+- [x] Create `.claude/agents/evolve-constitution-checker.md` agent definition for deep compliance analysis when automated checks return `warn` (receives diff + constitution text, produces per-article compliance report) (WHY: some violations are subtle — a change might technically pass automated checks but violate the spirit of an article; the checker agent provides nuanced analysis for edge cases) <!-- test: tests/test_constitution_checker_agent.sh -->
 
 - [x] Implement `_constitution_get_summary()` in `automaton.sh` that generates the summary object (articles count, version, key_constraints list) for the bootstrap manifest (WHY: evolution agents need constitution awareness in their prompt context to self-regulate their proposals) <!-- test: tests/test_constitution_create.sh -->
 
