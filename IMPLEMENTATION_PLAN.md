@@ -318,7 +318,7 @@ These specs add the safety constraints and governance framework that the evoluti
 
 - [x] Register `evolution-safety-guard.sh` in `.claude/settings.json` hooks configuration (WHY: the hook must be registered in settings to be invoked by Claude Code before commits during evolution) <!-- test: none -->
 
-- [ ] Create `.claude/skills/rollback-executor.md` skill for guided manual rollback of a specific evolution cycle (WHY: when automatic rollback is insufficient — e.g., a merged change that was later found to be problematic — the human needs a guided process to cleanly undo a specific cycle's changes) <!-- test: tests/test_safety_rollback_skill.sh -->
+- [x] Create `.claude/skills/rollback-executor.md` skill for guided manual rollback of a specific evolution cycle (WHY: when automatic rollback is insufficient — e.g., a merged change that was later found to be problematic — the human needs a guided process to cleanly undo a specific cycle's changes) <!-- test: tests/test_safety_rollback_skill.sh -->
 
 - [x] Add `.automaton/evolution/` and `.automaton/evolution/circuit-breakers.json` to `.gitignore` as ephemeral state (WHY: per-cycle artifacts and circuit breaker state are ephemeral — they reset each evolution run; only the results persisted via garden, votes, and metrics matter across runs) <!-- test: none -->
 
