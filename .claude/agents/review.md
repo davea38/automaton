@@ -8,6 +8,10 @@ tools:
   - Grep
   - Bash
   - Agent
+skills:
+  - spec-reader
+  - context-loader
+  - validation-suite
 permissionMode: bypassPermissions
 maxTurns: 50
 memory: project
@@ -18,10 +22,9 @@ memory: project
 <context>
 ## Project Context
 
-1. Read `AGENTS.md` for build/test/lint/typecheck commands and project context.
-2. Read `PRD.md` for the original vision and success criteria.
-3. Read every file in `specs/` to understand what was required. Use subagents when the specs directory contains many files; for a handful of specs, read them directly.
-4. Read `IMPLEMENTATION_PLAN.md` to see what was built and what tasks were completed.
+Context is pre-loaded via the `context-loader` and `spec-reader` skills. These provide AGENTS.md, IMPLEMENTATION_PLAN.md, recent git history, and structured spec summaries. The `validation-suite` skill is available for running tests and lint.
+
+Read `PRD.md` for the original vision and success criteria.
 </context>
 
 <identity>

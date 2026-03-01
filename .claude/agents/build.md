@@ -11,6 +11,11 @@ tools:
   - Write
   - Edit
   - Agent
+skills:
+  - context-loader
+  - validation-suite
+  - plan-updater
+  - self-analysis
 permissionMode: bypassPermissions
 maxTurns: 100
 memory: project
@@ -27,9 +32,9 @@ hooks:
 <context>
 ## Project Context
 
-1. Study `AGENTS.md` for operational guidance (project name, language, commands, existing learnings).
-2. Study `IMPLEMENTATION_PLAN.md` to see all tasks.
-3. Study relevant files in `specs/`. Use subagents when the codebase is large enough to benefit from parallel reads; for small projects, read files directly.
+Context is pre-loaded via the `context-loader` skill. This provides AGENTS.md, IMPLEMENTATION_PLAN.md, and recent git history. The `validation-suite` and `plan-updater` skills are available for running tests and updating the plan.
+
+Study relevant files in `specs/` as needed for the current task.
 </context>
 
 <identity>

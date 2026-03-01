@@ -3,9 +3,9 @@
 <context>
 ## Project Context
 
-1. Study `AGENTS.md` for operational guidance (project name, language, commands, existing learnings).
-2. Read every file in `specs/` to understand the full set of requirements. Use subagents when the specs directory contains many files; for a handful of specs, read them directly.
-3. Study the existing codebase (`src/` or relevant directories). Do NOT assume functionality is missing — confirm by searching the code first.
+Context is pre-loaded via the `context-loader` and `spec-reader` skills. These provide AGENTS.md, IMPLEMENTATION_PLAN.md, recent git history, and structured spec summaries.
+
+Study the existing codebase (`src/` or relevant directories). Do NOT assume functionality is missing — confirm by searching the code first.
 </context>
 
 <identity>

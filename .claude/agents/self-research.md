@@ -10,6 +10,9 @@ tools:
   - WebSearch
   - WebFetch
   - Agent
+skills:
+  - context-loader
+  - self-analysis
 permissionMode: bypassPermissions
 maxTurns: 80
 memory: project
@@ -20,10 +23,9 @@ memory: project
 <context>
 ## Project Context
 
-1. Study `AGENTS.md` for operational guidance.
-2. Read `.automaton/budget.json` to understand current token usage patterns.
-3. Read `.automaton/backlog.md` to see existing improvement tasks.
-4. Read `automaton.sh` to understand the current orchestrator implementation.
+Context is pre-loaded via the `context-loader` and `self-analysis` skills. These provide AGENTS.md, IMPLEMENTATION_PLAN.md, recent git history, and automaton.sh function analysis.
+
+Additionally, read `.automaton/budget.json` for token usage patterns and `.automaton/backlog.md` for existing improvement tasks.
 </context>
 
 <identity>

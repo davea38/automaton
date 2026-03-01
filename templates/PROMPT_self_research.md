@@ -6,10 +6,9 @@ You are in SELF-BUILD RESEARCH mode. You will analyze automaton's own performanc
 
 ## Phase 0 - Load Context
 
-1. Study `AGENTS.md` for operational guidance.
-2. Read `.automaton/budget.json` to understand current token usage patterns.
-3. Read `.automaton/backlog.md` to see existing improvement tasks.
-4. Read `automaton.sh` to understand the current orchestrator implementation.
+Context is pre-loaded via the `context-loader` and `self-analysis` skills. These provide AGENTS.md, IMPLEMENTATION_PLAN.md, recent git history, and automaton.sh function analysis.
+
+Additionally, read `.automaton/budget.json` for token usage patterns and `.automaton/backlog.md` for existing improvement tasks.
 
 ## Phase 1 - Performance Analysis
 
