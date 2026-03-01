@@ -6755,6 +6755,139 @@ _metrics_display_health() {
 }
 
 # ---------------------------------------------------------------------------
+# Human Interface — Display Functions (spec-44)
+# ---------------------------------------------------------------------------
+
+# Renders a formatted table of all non-wilted, non-harvested garden ideas
+# sorted by stage (bloom first) then priority descending. Shows counts,
+# bloom candidates, and guidance hints.
+#
+# Usage: _display_garden
+_display_garden() {
+    local garden_dir="$AUTOMATON_DIR/garden"
+
+    if [ ! -d "$garden_dir" ]; then
+        echo "No garden found. Use --plant \"idea\" to plant the first seed."
+        return 0
+    fi
+
+    # Collect all idea files and extract relevant fields in a single pass
+    local idea_files
+    idea_files=$(find "$garden_dir" -name 'idea-*.json' -type f 2>/dev/null | sort)
+
+    if [ -z "$idea_files" ]; then
+        echo "AUTOMATON GARDEN — 0 ideas"
+        echo ""
+        echo "The garden is empty. Use --plant \"idea\" to plant the first seed."
+        return 0
+    fi
+
+    # Build a JSON array of non-wilted, non-harvested ideas with display fields
+    local ideas_json="[]"
+    local seed_count=0 sprout_count=0 bloom_count=0 total_active=0
+    local now_epoch
+    now_epoch=$(date +%s)
+
+    for f in $idea_files; do
+        [ -f "$f" ] || continue
+        local stage
+        stage=$(jq -r '.stage' "$f")
+
+        # Skip wilted and harvested ideas
+        [ "$stage" = "wilt" ] && continue
+        [ "$stage" = "harvest" ] && continue
+
+        total_active=$((total_active + 1))
+        case "$stage" in
+            seed)   seed_count=$((seed_count + 1)) ;;
+            sprout) sprout_count=$((sprout_count + 1)) ;;
+            bloom)  bloom_count=$((bloom_count + 1)) ;;
+        esac
+
+        # Extract fields for display
+        local id title priority created_at
+        id=$(jq -r '.id' "$f")
+        title=$(jq -r '.title' "$f")
+        priority=$(jq -r '.priority // 0' "$f")
+        created_at=$(jq -r '.stage_history[0].entered_at // .updated_at' "$f")
+
+        # Calculate age in days
+        local age_days="?"
+        if [ -n "$created_at" ] && [ "$created_at" != "null" ]; then
+            local created_epoch
+            created_epoch=$(date -d "$created_at" +%s 2>/dev/null || echo "")
+            if [ -n "$created_epoch" ]; then
+                age_days=$(( (now_epoch - created_epoch) / 86400 ))
+            fi
+        fi
+
+        # Stage sort order: bloom=0, sprout=1, seed=2
+        local sort_order=2
+        case "$stage" in
+            bloom)  sort_order=0 ;;
+            sprout) sort_order=1 ;;
+            seed)   sort_order=2 ;;
+        esac
+
+        ideas_json=$(echo "$ideas_json" | jq \
+            --arg id "$id" \
+            --arg stage "$stage" \
+            --argjson priority "$priority" \
+            --arg title "$title" \
+            --arg age "${age_days}d" \
+            --argjson sort_order "$sort_order" \
+            '. + [{"id": $id, "stage": $stage, "priority": $priority, "title": $title, "age": $age, "sort_order": $sort_order}]')
+    done
+
+    if [ "$total_active" -eq 0 ]; then
+        echo "AUTOMATON GARDEN — 0 ideas"
+        echo ""
+        echo "The garden is empty. Use --plant \"idea\" to plant the first seed."
+        return 0
+    fi
+
+    # Sort by stage order (bloom first) then priority descending
+    ideas_json=$(echo "$ideas_json" | jq 'sort_by(.sort_order, -.priority)')
+
+    # Print header
+    local stage_summary=""
+    [ "$seed_count" -gt 0 ] && stage_summary="${seed_count} seed"
+    [ "$sprout_count" -gt 0 ] && { [ -n "$stage_summary" ] && stage_summary="$stage_summary, "; stage_summary="${stage_summary}${sprout_count} sprout"; }
+    [ "$bloom_count" -gt 0 ] && { [ -n "$stage_summary" ] && stage_summary="$stage_summary, "; stage_summary="${stage_summary}${bloom_count} bloom"; }
+
+    echo "AUTOMATON GARDEN — ${total_active} ideas (${stage_summary})"
+    echo ""
+
+    # Print table header
+    printf " %-10s %-8s %4s  %-40s %s\n" "ID" "STAGE" "PRI" "TITLE" "AGE"
+
+    # Print each idea row
+    local row_count
+    row_count=$(echo "$ideas_json" | jq 'length')
+    local i=0
+    while [ "$i" -lt "$row_count" ]; do
+        local row_id row_stage row_pri row_title row_age
+        row_id=$(echo "$ideas_json" | jq -r ".[$i].id")
+        row_stage=$(echo "$ideas_json" | jq -r ".[$i].stage")
+        row_pri=$(echo "$ideas_json" | jq -r ".[$i].priority")
+        row_title=$(echo "$ideas_json" | jq -r ".[$i].title")
+        row_age=$(echo "$ideas_json" | jq -r ".[$i].age")
+
+        # Truncate title to 40 chars
+        if [ "${#row_title}" -gt 40 ]; then
+            row_title="${row_title:0:37}..."
+        fi
+
+        printf " %-10s %-8s %4s  %-40s %s\n" "$row_id" "$row_stage" "$row_pri" "$row_title" "$row_age"
+        i=$((i + 1))
+    done
+
+    echo ""
+    echo "Bloom candidates ready for quorum: ${bloom_count}"
+    echo "Use --garden-detail ID for full details. Use --plant \"idea\" to add new seeds."
+}
+
+# ---------------------------------------------------------------------------
 # Constitutional Principles (spec-40)
 # ---------------------------------------------------------------------------
 

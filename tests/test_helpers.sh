@@ -40,7 +40,7 @@ assert_file_exists() {
 
 assert_contains() {
     local haystack="$1" needle="$2" msg="${3:-contains check}"
-    if ! echo "$haystack" | grep -qF "$needle"; then
+    if ! echo "$haystack" | grep -qF -- "$needle"; then
         echo "FAIL: $msg (output does not contain '$needle')" >&2
         ((_TEST_FAIL_COUNT++))
         return 1
