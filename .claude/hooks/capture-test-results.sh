@@ -14,8 +14,8 @@ set -euo pipefail
 # Read hook input from stdin
 input=$(cat)
 
-# Extract the command that was executed
-command=$(echo "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
+# Extract the command that was executed (herestring avoids pipe + subshell)
+command=$(jq -r '.tool_input.command // empty' <<< "$input" 2>/dev/null)
 
 # If no command found, exit (nothing to capture)
 if [ -z "$command" ]; then
@@ -56,7 +56,7 @@ fi
 # --- Extract result data ---
 
 # Try exitCode (camelCase) first, then exit_code (snake_case)
-exit_code=$(echo "$input" | jq -r '.tool_result.exitCode // .tool_result.exit_code // empty' 2>/dev/null)
+exit_code=$(jq -r '.tool_result.exitCode // .tool_result.exit_code // empty' <<< "$input" 2>/dev/null)
 exit_code="${exit_code:--1}"
 
 passed=false
@@ -109,16 +109,24 @@ mkdir -p "$(dirname "$results_file")"
 
 if [ -f "$results_file" ]; then
     existing=$(jq '.' "$results_file" 2>/dev/null || echo '[]')
-    if echo "$existing" | jq -e 'type == "array"' >/dev/null 2>&1; then
-        # Already a flat array — append
-        updated=$(echo "$existing" | jq --argjson entry "$new_entry" '. + [$entry]')
-    elif echo "$existing" | jq -e '.results | type == "array"' >/dev/null 2>&1; then
-        # Legacy {version, results} format — extract results and convert to flat array
-        updated=$(echo "$existing" | jq --argjson entry "$new_entry" '.results + [$entry]')
-    else
-        # Malformed — start fresh
-        updated="[$new_entry]"
+    if ! jq -e 'type == "array"' <<< "$existing" >/dev/null 2>&1; then
+        if jq -e '.results | type == "array"' <<< "$existing" >/dev/null 2>&1; then
+            # Legacy {version, results} format — extract results and convert to flat array
+            existing=$(jq '.results' <<< "$existing")
+        else
+            # Malformed — start fresh
+            existing='[]'
+        fi
     fi
+    # Idempotency guard: skip if last entry has same command, iteration, and phase
+    # This prevents duplicate entries when the hook is called multiple times with same input
+    is_duplicate=$(jq --arg cmd "$command" --argjson iter "$iteration" --arg ph "$phase" \
+        '(. | length > 0) and (.[-1] | .command == $cmd and .iteration == $iter and .phase == $ph)' \
+        <<< "$existing" 2>/dev/null || echo "false")
+    if [ "$is_duplicate" = "true" ]; then
+        exit 0
+    fi
+    updated=$(jq --argjson entry "$new_entry" '. + [$entry]' <<< "$existing")
 else
     updated="[$new_entry]"
 fi

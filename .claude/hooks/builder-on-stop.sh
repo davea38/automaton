@@ -55,15 +55,23 @@ if [ -f "$assignments_file" ]; then
     task_line=$(echo "$assignment" | jq -r '.task_line // 0')
 fi
 
-# ---- Extract token usage from stdin session data ----
+# ---- Extract token usage from stdin session data (single jq call) ----
 # Stop hooks receive session-level data including token usage
-input_tokens=$(echo "$input" | jq -r '.usage.input_tokens // .token_usage.input_tokens // 0' 2>/dev/null || echo 0)
-output_tokens=$(echo "$input" | jq -r '.usage.output_tokens // .token_usage.output_tokens // 0' 2>/dev/null || echo 0)
-cache_create=$(echo "$input" | jq -r '.usage.cache_creation_input_tokens // .token_usage.cache_creation_input_tokens // 0' 2>/dev/null || echo 0)
-cache_read=$(echo "$input" | jq -r '.usage.cache_read_input_tokens // .token_usage.cache_read_input_tokens // 0' 2>/dev/null || echo 0)
+IFS=$'\t' read -r input_tokens output_tokens cache_create cache_read < <(
+    jq -r '[
+        (.usage.input_tokens // .token_usage.input_tokens // 0),
+        (.usage.output_tokens // .token_usage.output_tokens // 0),
+        (.usage.cache_creation_input_tokens // .token_usage.cache_creation_input_tokens // 0),
+        (.usage.cache_read_input_tokens // .token_usage.cache_read_input_tokens // 0)
+    ] | @tsv' <<< "$input" 2>/dev/null || echo "0	0	0	0"
+)
+input_tokens="${input_tokens:-0}"
+output_tokens="${output_tokens:-0}"
+cache_create="${cache_create:-0}"
+cache_read="${cache_read:-0}"
 
 # Try to extract from transcript_path if direct usage not available
-transcript_path=$(echo "$input" | jq -r '.transcript_path // empty' 2>/dev/null || true)
+transcript_path=$(jq -r '.transcript_path // empty' <<< "$input" 2>/dev/null || true)
 if [ "$input_tokens" = "0" ] && [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
     # Extract from the last result message in the transcript
     usage_line=$(grep '"type":"result"' "$transcript_path" 2>/dev/null | tail -1 || true)
@@ -76,10 +84,10 @@ if [ "$input_tokens" = "0" ] && [ -n "$transcript_path" ] && [ -f "$transcript_p
 fi
 
 # ---- Extract exit code and determine status ----
-exit_code=$(echo "$input" | jq -r '.exit_code // 0' 2>/dev/null || echo 0)
+exit_code=$(jq -r '.exit_code // 0' <<< "$input" 2>/dev/null || echo 0)
 
 # Determine agent output for status detection
-agent_output=$(echo "$input" | jq -r '.output // .result // ""' 2>/dev/null || true)
+agent_output=$(jq -r '.output // .result // ""' <<< "$input" 2>/dev/null || true)
 
 status="success"
 if [ "$exit_code" != "0" ]; then
@@ -94,7 +102,7 @@ fi
 
 # ---- Timestamps ----
 completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-started_at=$(echo "$input" | jq -r '.started_at // empty' 2>/dev/null || true)
+started_at=$(jq -r '.started_at // empty' <<< "$input" 2>/dev/null || true)
 started_at="${started_at:-$completed_at}"
 
 # Calculate duration

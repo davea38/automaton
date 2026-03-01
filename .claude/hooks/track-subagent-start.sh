@@ -18,9 +18,9 @@ set -euo pipefail
 # ---- Read hook input from stdin ----
 input=$(cat)
 
-# ---- Extract agent info ----
-agent_name=$(echo "$input" | jq -r '.agent_name // .name // "unknown"' 2>/dev/null || echo "unknown")
-session_id=$(echo "$input" | jq -r '.session_id // .id // empty' 2>/dev/null || true)
+# ---- Extract agent info (herestrings avoid pipe + subshell) ----
+agent_name=$(jq -r '.agent_name // .name // "unknown"' <<< "$input" 2>/dev/null || echo "unknown")
+session_id=$(jq -r '.session_id // .id // empty' <<< "$input" 2>/dev/null || true)
 
 # Generate a session ID if none provided
 if [ -z "$session_id" ]; then
@@ -66,13 +66,19 @@ new_entry=$(jq -n \
         status: "running"
     }')
 
-# ---- Append to subagent_usage.json ----
+# ---- Append to subagent_usage.json (with idempotency guard) ----
 if [ -f "$usage_file" ]; then
     existing=$(jq '.' "$usage_file" 2>/dev/null || echo '[]')
-    if ! echo "$existing" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    if ! jq -e 'type == "array"' <<< "$existing" >/dev/null 2>&1; then
         existing='[]'
     fi
-    updated=$(echo "$existing" | jq --argjson entry "$new_entry" '. + [$entry]')
+    # Idempotency: skip if an entry with this session_id already exists
+    already_exists=$(jq --arg sid "$session_id" \
+        'any(.[]; .session_id == $sid)' <<< "$existing" 2>/dev/null || echo "false")
+    if [ "$already_exists" = "true" ]; then
+        exit 0
+    fi
+    updated=$(jq --argjson entry "$new_entry" '. + [$entry]' <<< "$existing")
 else
     updated="[$new_entry]"
 fi

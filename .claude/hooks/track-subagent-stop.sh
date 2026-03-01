@@ -19,9 +19,9 @@ set -euo pipefail
 # ---- Read hook input from stdin ----
 input=$(cat)
 
-# ---- Extract agent info and session ID ----
-agent_name=$(echo "$input" | jq -r '.agent_name // .name // "unknown"' 2>/dev/null || echo "unknown")
-session_id=$(echo "$input" | jq -r '.session_id // .id // empty' 2>/dev/null || true)
+# ---- Extract agent info and session ID (herestrings avoid pipe + subshell) ----
+agent_name=$(jq -r '.agent_name // .name // "unknown"' <<< "$input" 2>/dev/null || echo "unknown")
+session_id=$(jq -r '.session_id // .id // empty' <<< "$input" 2>/dev/null || true)
 
 # ---- Determine paths ----
 project_root="${AUTOMATON_PROJECT_ROOT:-${CLAUDE_PROJECT_DIR:-$(pwd)}}"
@@ -32,14 +32,22 @@ if [ ! -f "$usage_file" ]; then
     exit 0
 fi
 
-# ---- Extract token usage ----
-input_tokens=$(echo "$input" | jq -r '.usage.input_tokens // .token_usage.input_tokens // 0' 2>/dev/null || echo 0)
-output_tokens=$(echo "$input" | jq -r '.usage.output_tokens // .token_usage.output_tokens // 0' 2>/dev/null || echo 0)
-cache_create=$(echo "$input" | jq -r '.usage.cache_creation_input_tokens // .token_usage.cache_creation_input_tokens // 0' 2>/dev/null || echo 0)
-cache_read=$(echo "$input" | jq -r '.usage.cache_read_input_tokens // .token_usage.cache_read_input_tokens // 0' 2>/dev/null || echo 0)
+# ---- Extract token usage (single jq call, tab-separated output) ----
+IFS=$'\t' read -r input_tokens output_tokens cache_create cache_read < <(
+    jq -r '[
+        (.usage.input_tokens // .token_usage.input_tokens // 0),
+        (.usage.output_tokens // .token_usage.output_tokens // 0),
+        (.usage.cache_creation_input_tokens // .token_usage.cache_creation_input_tokens // 0),
+        (.usage.cache_read_input_tokens // .token_usage.cache_read_input_tokens // 0)
+    ] | @tsv' <<< "$input" 2>/dev/null || echo "0	0	0	0"
+)
+input_tokens="${input_tokens:-0}"
+output_tokens="${output_tokens:-0}"
+cache_create="${cache_create:-0}"
+cache_read="${cache_read:-0}"
 
 # Try transcript_path fallback if direct usage not available
-transcript_path=$(echo "$input" | jq -r '.transcript_path // empty' 2>/dev/null || true)
+transcript_path=$(jq -r '.transcript_path // empty' <<< "$input" 2>/dev/null || true)
 if [ "$input_tokens" = "0" ] && [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
     usage_line=$(grep '"type":"result"' "$transcript_path" 2>/dev/null | tail -1 || true)
     if [ -n "$usage_line" ]; then
@@ -51,7 +59,7 @@ if [ "$input_tokens" = "0" ] && [ -n "$transcript_path" ] && [ -f "$transcript_p
 fi
 
 # ---- Extract exit code ----
-exit_code=$(echo "$input" | jq -r '.exit_code // 0' 2>/dev/null || echo 0)
+exit_code=$(jq -r '.exit_code // 0' <<< "$input" 2>/dev/null || echo 0)
 
 status="completed"
 if [ "$exit_code" != "0" ]; then
@@ -76,13 +84,13 @@ tokens_obj=$(jq -n \
 # ---- Update matching entry in subagent_usage.json ----
 # Match by session_id if available, otherwise match by agent_name + status "running" (last one)
 existing=$(jq '.' "$usage_file" 2>/dev/null || echo '[]')
-if ! echo "$existing" | jq -e 'type == "array"' >/dev/null 2>&1; then
+if ! jq -e 'type == "array"' <<< "$existing" >/dev/null 2>&1; then
     existing='[]'
 fi
 
 if [ -n "$session_id" ]; then
     # Update the entry matching this session_id
-    updated=$(echo "$existing" | jq \
+    updated=$(jq \
         --arg sid "$session_id" \
         --arg stopped_at "$stopped_at" \
         --argjson tokens "$tokens_obj" \
@@ -93,10 +101,10 @@ if [ -n "$session_id" ]; then
             .tokens = $tokens |
             .status = $status |
             .exit_code = $exit_code
-        else . end]')
+        else . end]' <<< "$existing")
 else
     # Fallback: update the last "running" entry matching this agent name
-    updated=$(echo "$existing" | jq \
+    updated=$(jq \
         --arg agent "$agent_name" \
         --arg stopped_at "$stopped_at" \
         --argjson tokens "$tokens_obj" \
@@ -110,7 +118,7 @@ else
                 .status = $status |
                 .exit_code = $exit_code
             else . end]
-        else . end')
+        else . end' <<< "$existing")
 fi
 
 # Write atomically using temp file

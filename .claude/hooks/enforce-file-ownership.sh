@@ -11,11 +11,11 @@
 
 set -euo pipefail
 
-# Read the hook input from stdin
+# Read the hook input from stdin — single read, reuse via herestring
 input=$(cat)
 
-# Extract the target file path from tool_input
-target_file=$(echo "$input" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
+# Extract the target file path from tool_input (herestring avoids pipe + subshell)
+target_file=$(jq -r '.tool_input.file_path // empty' <<< "$input" 2>/dev/null)
 
 # If no file path found, allow (not a file-writing operation we can check)
 if [ -z "$target_file" ]; then
@@ -86,7 +86,9 @@ while IFS= read -r owned_file; do
     fi
 
     # Allow test files for owned files (e.g., tests/test_foo.sh for foo.sh)
-    base=$(basename "$owned_file" | sed 's/\.[^.]*$//')
+    # Use bash parameter expansion instead of spawning sed per iteration
+    base="${owned_file##*/}"   # basename via parameter expansion
+    base="${base%.*}"          # strip extension via parameter expansion
     if [[ "$relative_target" == tests/test_"$base"* ]] || [[ "$relative_target" == tests/"$base"* ]]; then
         exit 0
     fi

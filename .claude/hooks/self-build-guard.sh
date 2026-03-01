@@ -20,11 +20,11 @@ ORCHESTRATOR_FILES=(
 )
 # PROMPT_*.md matched by pattern below
 
-# Read the hook input from stdin
+# Read the hook input from stdin — single read, reuse via herestring
 input=$(cat)
 
-# Extract the target file path from tool_input
-target_file=$(echo "$input" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
+# Extract the target file path from tool_input (herestring avoids pipe + subshell)
+target_file=$(jq -r '.tool_input.file_path // empty' <<< "$input" 2>/dev/null)
 
 # If no file path found, allow (not a file-writing operation we can check)
 if [ -z "$target_file" ]; then
@@ -88,7 +88,8 @@ if [ ! -f "$config_file" ]; then
     exit 2
 fi
 
-self_build_enabled=$(jq -r '.self_build.enabled // false' "$config_file" 2>/dev/null)
+# Use streaming filter (-e) for fast extraction from config
+self_build_enabled=$(jq -r '.self_build.enabled // false' "$config_file" 2>/dev/null || echo "false")
 
 # If self-build is disabled, block all writes to orchestrator files
 if [ "$self_build_enabled" != "true" ]; then
@@ -115,44 +116,25 @@ if [ -z "$current_task" ] || [ "$current_task" = "None" ]; then
 fi
 
 # Check if the current task explicitly mentions the target file or related keywords
-target_basename=$(basename "$relative_target")
+# Use bash parameter expansion instead of basename command
+target_basename="${relative_target##*/}"
 target_name_no_ext="${target_basename%.*}"
 
-# Allow if the task description mentions the file directly
-if echo "$current_task" | grep -qi "$target_basename"; then
-    exit 0
-fi
+# Build a combined grep pattern to check in a single process spawn
+# This replaces 8 separate grep calls with one, cutting subprocess overhead significantly
+patterns="$target_basename|$target_name_no_ext|orchestrat|self.build|self-build"
 
-# Allow if the task mentions the file name without extension (e.g., "automaton" for automaton.sh)
-if echo "$current_task" | grep -qi "$target_name_no_ext"; then
-    exit 0
-fi
-
-# For PROMPT_*.md files, allow if task mentions "prompt" or the specific prompt name
+# Add file-specific patterns
 if [[ "$relative_target" =~ ^PROMPT_(.*)\.md$ ]]; then
     prompt_name="${BASH_REMATCH[1]}"
-    if echo "$current_task" | grep -qi "prompt"; then
-        exit 0
-    fi
-    if echo "$current_task" | grep -qi "$prompt_name"; then
-        exit 0
-    fi
+    patterns="$patterns|prompt|$prompt_name"
 fi
-
-# For bin/cli.js, allow if task mentions "cli" or "scaffolder"
 if [ "$relative_target" = "bin/cli.js" ]; then
-    if echo "$current_task" | grep -qi "cli\|scaffol"; then
-        exit 0
-    fi
+    patterns="$patterns|cli|scaffol"
 fi
 
-# Allow if task mentions "orchestrator" generally (applies to all orchestrator files)
-if echo "$current_task" | grep -qi "orchestrat"; then
-    exit 0
-fi
-
-# Allow if task mentions "self-build" or "self_build" (explicit self-modification task)
-if echo "$current_task" | grep -qi "self.build\|self-build"; then
+# Single grep with combined pattern (case-insensitive, extended regex)
+if grep -qiE "$patterns" <<< "$current_task"; then
     exit 0
 fi
 

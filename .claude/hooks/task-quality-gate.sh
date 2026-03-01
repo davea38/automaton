@@ -15,9 +15,11 @@ set -euo pipefail
 # ---- Read hook input from stdin ----
 input=$(cat)
 
-task_id=$(echo "$input" | jq -r '.task_id // empty' 2>/dev/null)
-task_subject=$(echo "$input" | jq -r '.task_subject // empty' 2>/dev/null)
-task_description=$(echo "$input" | jq -r '.task_description // empty' 2>/dev/null)
+# Extract all fields in a single jq call (tab-separated)
+IFS=$'\t' read -r task_id task_subject task_description < <(
+    jq -r '[(.task_id // ""), (.task_subject // ""), (.task_description // "")] | @tsv' \
+        <<< "$input" 2>/dev/null || echo ""
+)
 
 # If no task info available, accept gracefully
 if [ -z "$task_id" ] && [ -z "$task_subject" ]; then
