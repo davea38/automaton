@@ -11,6 +11,17 @@
             "statusMessage": "Validating self-modification..."
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/evolution-safety-guard.sh",
+            "timeout": 5,
+            "statusMessage": "Checking evolution safety..."
+          }
+        ]
       }
     ],
     "PostToolUse": [
