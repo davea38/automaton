@@ -5752,7 +5752,17 @@ _quorum_check_budget() {
 # Outputs: vote record path to stdout if a vote was held
 _quorum_evaluate_bloom() {
     if [ "${QUORUM_ENABLED:-true}" != "true" ]; then
-        log "QUORUM" "Quorum disabled — skipping bloom evaluation"
+        log "EVOLUTION" "Quorum disabled — bloom ideas auto-approved without voting"
+        # Auto-approve all bloom candidates without voting (spec-39 §10)
+        local disabled_candidates
+        disabled_candidates=$(_garden_get_bloom_candidates 2>/dev/null) || true
+        if [ -n "$disabled_candidates" ]; then
+            while IFS= read -r auto_id; do
+                [ -n "$auto_id" ] || continue
+                log "QUORUM" "Auto-approving $auto_id (quorum disabled)"
+                _garden_advance_stage "$auto_id" "harvest" "Auto-approved (quorum disabled)" "true"
+            done <<< "$disabled_candidates"
+        fi
         return 0
     fi
 
