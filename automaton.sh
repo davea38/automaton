@@ -7103,6 +7103,130 @@ _display_signals() {
     echo "Strong signals (>= 0.5): ${strong_count}"
 }
 
+# Renders a vote record with per-voter breakdown (vote, confidence, risk,
+# reasoning), tally result, merged conditions, and cost. Accepts either a
+# vote ID (e.g. "vote-005") or an idea ID (e.g. "idea-003" or bare "3").
+#
+# Usage: _display_vote <id>
+_display_vote() {
+    local input_id="$1"
+    local votes_dir="$AUTOMATON_DIR/votes"
+    local vote_file=""
+
+    # Try direct vote ID lookup first
+    if [[ "$input_id" == vote-* ]]; then
+        vote_file="$votes_dir/${input_id}.json"
+    elif [ -f "$votes_dir/${input_id}.json" ]; then
+        vote_file="$votes_dir/${input_id}.json"
+    fi
+
+    # If not found as vote ID, try as idea ID
+    if [ -z "$vote_file" ] || [ ! -f "$vote_file" ]; then
+        local idea_id="$input_id"
+        # Normalize bare number to idea-NNN format
+        if [[ "$idea_id" =~ ^[0-9]+$ ]]; then
+            idea_id=$(printf "idea-%03d" "$idea_id")
+        fi
+
+        # Look up vote_id from the garden idea file
+        local idea_file="$AUTOMATON_DIR/garden/${idea_id}.json"
+        if [ -f "$idea_file" ]; then
+            local linked_vote_id
+            linked_vote_id=$(jq -r '.vote_id // empty' "$idea_file" 2>/dev/null || echo "")
+            if [ -n "$linked_vote_id" ] && [ "$linked_vote_id" != "null" ]; then
+                vote_file="$votes_dir/${linked_vote_id}.json"
+            fi
+        fi
+
+        # If still not found, scan vote files for matching idea_id
+        if [ -z "$vote_file" ] || [ ! -f "$vote_file" ]; then
+            local f
+            for f in "$votes_dir"/vote-*.json; do
+                [ -f "$f" ] || continue
+                local vid
+                vid=$(jq -r '.idea_id // ""' "$f" 2>/dev/null)
+                if [ "$vid" = "$idea_id" ]; then
+                    vote_file="$f"
+                    break
+                fi
+            done
+        fi
+    fi
+
+    if [ -z "$vote_file" ] || [ ! -f "$vote_file" ]; then
+        echo "Vote '$input_id' not found. Use --garden to see ideas with vote references."
+        return 1
+    fi
+
+    # Read vote record fields
+    local vote_id idea_id vote_type result threshold
+    local approve_count reject_count abstain_count
+    vote_id=$(jq -r '.vote_id' "$vote_file")
+    idea_id=$(jq -r '.idea_id' "$vote_file")
+    vote_type=$(jq -r '.type // "unknown"' "$vote_file")
+    result=$(jq -r '.tally.result // "unknown"' "$vote_file")
+    threshold=$(jq -r '.tally.threshold // 0' "$vote_file")
+    approve_count=$(jq -r '.tally.approve // 0' "$vote_file")
+    reject_count=$(jq -r '.tally.reject // 0' "$vote_file")
+    abstain_count=$(jq -r '.tally.abstain // 0' "$vote_file")
+
+    # Get idea title from proposal or garden
+    local idea_title=""
+    idea_title=$(jq -r '.proposal.idea.title // empty' "$vote_file" 2>/dev/null || echo "")
+    if [ -z "$idea_title" ] || [ "$idea_title" = "null" ]; then
+        local idea_garden_file="$AUTOMATON_DIR/garden/${idea_id}.json"
+        if [ -f "$idea_garden_file" ]; then
+            idea_title=$(jq -r '.title // "Unknown"' "$idea_garden_file")
+        else
+            idea_title="Unknown"
+        fi
+    fi
+
+    local total_voters=$(( approve_count + reject_count + abstain_count ))
+    local result_upper
+    result_upper=$(echo "$result" | tr '[:lower:]' '[:upper:]')
+
+    # Header
+    echo "VOTE: ${vote_id} — Evaluating ${idea_id} \"${idea_title}\""
+    echo "Type: ${vote_type}  |  Threshold: ${threshold}/${total_voters}  |  Result: ${result_upper}"
+    echo ""
+
+    # Per-voter breakdown table
+    printf " %-14s %-8s %4s  %-6s  %s\n" "VOTER" "VOTE" "CONF" "RISK" "REASONING"
+
+    # Iterate over voter names in the votes object
+    local voter_names
+    voter_names=$(jq -r '.votes | keys[]' "$vote_file" 2>/dev/null)
+
+    for voter in $voter_names; do
+        local v_vote v_conf v_risk v_reasoning
+        v_vote=$(jq -r ".votes[\"$voter\"].vote // \"abstain\"" "$vote_file")
+        v_conf=$(jq -r ".votes[\"$voter\"].confidence // 0" "$vote_file")
+        v_risk=$(jq -r ".votes[\"$voter\"].risk_assessment // \"medium\"" "$vote_file")
+        v_reasoning=$(jq -r ".votes[\"$voter\"].reasoning // \"\"" "$vote_file")
+
+        # Truncate reasoning to fit display
+        if [ "${#v_reasoning}" -gt 50 ]; then
+            v_reasoning="${v_reasoning:0:47}..."
+        fi
+
+        printf " %-14s %-8s %4s  %-6s  %s\n" "$voter" "$v_vote" "$v_conf" "$v_risk" "$v_reasoning"
+    done
+    echo ""
+
+    # Tally line
+    echo "Tally: ${approve_count} approve, ${reject_count} reject, ${abstain_count} abstain → ${result_upper} (${approve_count}/${total_voters} >= ${threshold}/${total_voters})"
+
+    # Conditions (only if non-empty)
+    local conditions_count
+    conditions_count=$(jq '.tally.conditions_merged | length' "$vote_file" 2>/dev/null || echo "0")
+    if [ "$conditions_count" -gt 0 ]; then
+        local conditions_str
+        conditions_str=$(jq -r '.tally.conditions_merged | join(", ")' "$vote_file")
+        echo "Conditions: ${conditions_str}"
+    fi
+}
+
 # ---------------------------------------------------------------------------
 # Constitutional Principles (spec-40)
 # ---------------------------------------------------------------------------
