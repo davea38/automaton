@@ -607,6 +607,20 @@ initialize_budget() {
         effective_allowance=$(awk -v total="$BUDGET_WEEKLY_ALLOWANCE" -v reserve="$BUDGET_RESERVE_PERCENTAGE" \
             'BEGIN { printf "%d", total * (1 - reserve/100) }')
 
+        # Calculate initial daily budget for pacing (spec-35)
+        local today today_epoch end_epoch days_left initial_daily_budget
+        today=$(date +%Y-%m-%d)
+        today_epoch=$(date -d "$today" +%s 2>/dev/null || date -jf "%Y-%m-%d" "$today" +%s 2>/dev/null || echo 0)
+        end_epoch=$(date -d "$week_end" +%s 2>/dev/null || date -jf "%Y-%m-%d" "$week_end" +%s 2>/dev/null || echo 0)
+        if [ "$today_epoch" -gt 0 ] && [ "$end_epoch" -gt 0 ]; then
+            days_left=$(( (end_epoch - today_epoch) / 86400 + 1 ))
+        else
+            days_left=1
+        fi
+        [ "$days_left" -lt 1 ] && days_left=1
+        initial_daily_budget=$(awk -v eff="$effective_allowance" -v days="$days_left" \
+            'BEGIN { printf "%d", eff / days }')
+
         jq -n \
             --arg mode "allowance" \
             --argjson weekly_allowance "$BUDGET_WEEKLY_ALLOWANCE" \
@@ -615,6 +629,7 @@ initialize_budget() {
             --arg week_end "$week_end" \
             --argjson reserve "$BUDGET_RESERVE_PERCENTAGE" \
             --argjson per_iteration "$BUDGET_PER_ITERATION" \
+            --argjson daily_budget "$initial_daily_budget" \
             '{
                 mode: $mode,
                 limits: {
@@ -622,6 +637,7 @@ initialize_budget() {
                     effective_allowance: $effective_allowance,
                     reserve_percentage: $reserve,
                     per_iteration: $per_iteration,
+                    daily_budget: $daily_budget,
                     phase_proportions: {
                         research: 0.05,
                         plan: 0.10,
@@ -777,6 +793,81 @@ _allowance_check_rollover() {
         mv "$tmp" "$budget_file"
 
         log "ORCHESTRATOR" "New allowance week: $new_week_start to $new_week_end ($effective_allowance effective tokens)"
+    fi
+}
+
+# Calculates daily budget for allowance pacing (spec-35).
+# Returns the number of tokens available per day based on remaining allowance
+# and days until the weekly reset. Minimum 1 day to avoid division by zero.
+# Prints the daily budget to stdout.
+_calculate_daily_budget() {
+    local budget_file="$AUTOMATON_DIR/budget.json"
+
+    # Get remaining tokens from budget.json if available, else calculate from config
+    local remaining
+    if [ -f "$budget_file" ] && [ "$(jq -r '.mode // ""' "$budget_file")" = "allowance" ]; then
+        remaining=$(jq '.tokens_remaining // 0' "$budget_file")
+    else
+        remaining=$(awk -v total="$BUDGET_WEEKLY_ALLOWANCE" -v reserve="$BUDGET_RESERVE_PERCENTAGE" \
+            'BEGIN { printf "%d", total * (1 - reserve/100) }')
+    fi
+
+    # Calculate days until reset (minimum 1)
+    local week_end today days_left
+    if [ -f "$budget_file" ]; then
+        week_end=$(jq -r '.week_end // ""' "$budget_file")
+    fi
+    if [ -z "${week_end:-}" ]; then
+        local ws
+        ws=$(_allowance_week_start)
+        week_end=$(_allowance_week_end "$ws")
+    fi
+    today=$(date +%Y-%m-%d)
+
+    # Calculate difference in days
+    local today_epoch end_epoch
+    today_epoch=$(date -d "$today" +%s 2>/dev/null || date -jf "%Y-%m-%d" "$today" +%s 2>/dev/null || echo 0)
+    end_epoch=$(date -d "$week_end" +%s 2>/dev/null || date -jf "%Y-%m-%d" "$week_end" +%s 2>/dev/null || echo 0)
+
+    if [ "$today_epoch" -gt 0 ] && [ "$end_epoch" -gt 0 ]; then
+        days_left=$(( (end_epoch - today_epoch) / 86400 + 1 ))
+    else
+        days_left=1
+    fi
+    [ "$days_left" -lt 1 ] && days_left=1
+
+    # daily_budget = remaining / days_left
+    awk -v rem="$remaining" -v days="$days_left" \
+        'BEGIN { printf "%d", rem / days }'
+}
+
+# Checks daily budget at run startup and warns if it's below 500K tokens.
+# Called from run_orchestration() after budget initialization.
+_check_daily_budget_pacing() {
+    if [ "$BUDGET_MODE" != "allowance" ]; then
+        return 0
+    fi
+
+    local daily_budget
+    daily_budget=$(_calculate_daily_budget)
+
+    # Store daily budget in budget.json for enforcement
+    local budget_file="$AUTOMATON_DIR/budget.json"
+    if [ -f "$budget_file" ]; then
+        local tmp="$AUTOMATON_DIR/budget.json.tmp"
+        jq --argjson db "$daily_budget" \
+            '.limits.daily_budget = $db' "$budget_file" > "$tmp"
+        mv "$tmp" "$budget_file"
+    fi
+
+    if [ "$daily_budget" -lt 500000 ]; then
+        local week_end
+        week_end=$(jq -r '.week_end // "unknown"' "$budget_file" 2>/dev/null || echo "unknown")
+        local days_left remaining
+        remaining=$(jq '.tokens_remaining // 0' "$budget_file" 2>/dev/null || echo 0)
+        log "ORCHESTRATOR" "WARNING: Daily budget is ${daily_budget} tokens (allowance resets after ${week_end}). Run may be cut short."
+    else
+        log "ORCHESTRATOR" "Daily budget pacing: ${daily_budget} tokens/day"
     fi
 }
 
@@ -1064,6 +1155,27 @@ check_budget() {
         # Pre-iteration warning: less than one iteration's worth of tokens left
         if [ "$tokens_remaining" -lt "$BUDGET_PER_ITERATION" ]; then
             log "ORCHESTRATOR" "WARNING: Only ${tokens_remaining} tokens remaining in weekly allowance (need ~${BUDGET_PER_ITERATION} per iteration)"
+        fi
+
+        # Daily budget pacing (spec-35): enforce daily_budget as run-level ceiling
+        local daily_budget run_tokens
+        daily_budget=$(jq '.limits.daily_budget // 0' "$budget_file")
+        if [ "$daily_budget" -gt 0 ]; then
+            run_tokens=$(jq '(.used.total_input + .used.total_output)' "$budget_file")
+            if [ "$run_tokens" -ge "$daily_budget" ]; then
+                log "ORCHESTRATOR" "Daily budget pacing limit reached (${run_tokens}/${daily_budget} tokens). Saving state. Run --resume tomorrow or after adjusting budget."
+                write_state
+                exit 2
+            fi
+            # Warning at 80% of daily budget
+            local warn_threshold
+            warn_threshold=$(awk -v db="$daily_budget" 'BEGIN { printf "%d", db * 0.8 }')
+            if [ "$run_tokens" -ge "$warn_threshold" ]; then
+                local pct
+                pct=$(awk -v used="$run_tokens" -v total="$daily_budget" \
+                    'BEGIN { printf "%.0f", (used / total) * 100 }')
+                log "ORCHESTRATOR" "WARNING: Run at ${pct}% of daily budget (${run_tokens}/${daily_budget} tokens)"
+            fi
         fi
 
         # Phase proportioning (soft limits): check if current phase exceeded its share
@@ -2090,13 +2202,17 @@ _self_continue_recommendation() {
 
     # Check remaining allowance
     if [ "$BUDGET_MODE" = "allowance" ] && [ -f "$AUTOMATON_DIR/budget.json" ]; then
-        local remaining effective pct
+        local remaining effective pct daily_pace
         remaining=$(jq '.tokens_remaining // 0' "$AUTOMATON_DIR/budget.json")
         effective=$(jq '.limits.effective_allowance // 1' "$AUTOMATON_DIR/budget.json")
         pct=$(awk -v r="$remaining" -v e="$effective" 'BEGIN { printf "%d", (r/e)*100 }')
+        daily_pace=$(_calculate_daily_budget)
         echo "Remaining weekly allowance: $remaining tokens ($pct%)"
+        echo "Daily pace: $daily_pace tokens/day"
 
-        if [ "$pct" -gt 30 ]; then
+        if [ "$daily_pace" -lt 500000 ]; then
+            echo "Recommendation: Low daily budget (${daily_pace} tokens). Consider waiting for reset."
+        elif [ "$pct" -gt 30 ]; then
             echo "Recommendation: Safe to run - $pct% of remaining allowance"
         elif [ "$pct" -gt 10 ]; then
             echo "Recommendation: Proceed with caution - only $pct% remaining"
@@ -2738,10 +2854,11 @@ generate_context_summary() {
         echo "## Budget Status"
         if [ -f "$AUTOMATON_DIR/budget.json" ]; then
             if [ "$BUDGET_MODE" = "allowance" ]; then
-                local used remaining
+                local used remaining daily_pace
                 used=$(jq '.tokens_used_this_week' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
                 remaining=$(jq '.tokens_remaining' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
-                echo "Mode: allowance | Used this week: $used | Remaining: $remaining"
+                daily_pace=$(jq '.limits.daily_budget // 0' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
+                echo "Mode: allowance | Used this week: $used | Remaining: $remaining | Daily pace: $daily_pace"
             else
                 local cost
                 cost=$(jq '.used.estimated_cost_usd' "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
@@ -6064,6 +6181,9 @@ run_orchestration() {
             log "ORCHESTRATOR" "Skipping research (--skip-research)"
         fi
     fi
+
+    # --- Daily budget pacing check (spec-35) ---
+    _check_daily_budget_pacing
 
     # --- Display startup banner ---
     print_banner "$current_phase"
