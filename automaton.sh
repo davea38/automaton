@@ -1900,6 +1900,106 @@ write_run_summary() {
         }' > "$summary_file"
 
     log "ORCHESTRATOR" "Run summary written to $summary_file"
+
+    # Accumulate into persistent budget history (spec-34)
+    update_budget_history "$run_id" "$input_tokens" "$output_tokens" \
+        "$cache_create" "$cache_read" "$cost_usd"
+}
+
+# Accumulates per-run token and cost data into .automaton/budget-history.json.
+# Appends a run entry and updates/creates the weekly total for the current week.
+# WHY: budget.json is ephemeral and reset each run; budget-history.json persists
+# across runs for cost analysis and weekly allowance tracking.
+# Args: run_id input_tokens output_tokens cache_create cache_read cost_usd
+update_budget_history() {
+    local run_id="$1" input_tokens="$2" output_tokens="$3"
+    local cache_create="$4" cache_read="$5" cost_usd="$6"
+
+    local history_file="$AUTOMATON_DIR/budget-history.json"
+    local tmp="$AUTOMATON_DIR/budget-history.json.tmp"
+
+    # Initialize file if missing or empty
+    if [ ! -f "$history_file" ] || [ ! -s "$history_file" ]; then
+        echo '{"runs":[],"weekly_totals":[]}' > "$history_file"
+    fi
+
+    local total_tokens=$((input_tokens + output_tokens))
+
+    # Calculate cache hit ratio: cache_read / (cache_read + input + cache_create)
+    local cache_hit_ratio="0.00"
+    local cache_denominator=$((cache_read + input_tokens + cache_create))
+    if [ "$cache_denominator" -gt 0 ]; then
+        cache_hit_ratio=$(awk -v cr="$cache_read" -v denom="$cache_denominator" \
+            'BEGIN { printf "%.2f", cr / denom }')
+    fi
+
+    # Build per-phase breakdown from budget.json history
+    local phases_json="{}"
+    local budget_file="$AUTOMATON_DIR/budget.json"
+    if [ -f "$budget_file" ]; then
+        phases_json=$(jq -c '
+            .history // [] | group_by(.phase) |
+            map({
+                key: .[0].phase,
+                value: {
+                    tokens: ([.[].input_tokens] | add) + ([.[].output_tokens] | add),
+                    iterations: length
+                }
+            }) | from_entries
+        ' "$budget_file" 2>/dev/null || echo "{}")
+    fi
+
+    # Determine current week boundaries
+    local week_start week_end
+    if [ "$BUDGET_MODE" = "allowance" ]; then
+        week_start=$(_allowance_week_start)
+        week_end=$(_allowance_week_end "$week_start")
+    else
+        # For API mode, use ISO week (Monday-based)
+        week_start=$(date -d "last monday" +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d)
+        week_end=$(date -d "$week_start + 6 days" +%Y-%m-%d 2>/dev/null || date +%Y-%m-%d)
+    fi
+
+    # Append run entry and update weekly total atomically
+    jq \
+        --arg run_id "$run_id" \
+        --arg mode "${BUDGET_MODE:-api}" \
+        --argjson tokens_used "$total_tokens" \
+        --argjson cost "$cost_usd" \
+        --arg cache_hit_ratio "$cache_hit_ratio" \
+        --argjson phases "$phases_json" \
+        --arg week_start "$week_start" \
+        --arg week_end "$week_end" \
+        '
+        # Append run entry
+        .runs += [{
+            run_id: $run_id,
+            mode: $mode,
+            tokens_used: $tokens_used,
+            estimated_cost_usd: ($cost | tonumber),
+            cache_hit_ratio: ($cache_hit_ratio | tonumber),
+            phases: $phases
+        }] |
+
+        # Update or create weekly total
+        if (.weekly_totals | map(.week_start) | index($week_start)) then
+            .weekly_totals |= map(
+                if .week_start == $week_start then
+                    .tokens_used += $tokens_used |
+                    .runs += 1
+                else . end
+            )
+        else
+            .weekly_totals += [{
+                week_start: $week_start,
+                week_end: $week_end,
+                tokens_used: $tokens_used,
+                runs: 1
+            }]
+        end
+    ' "$history_file" > "$tmp" && mv "$tmp" "$history_file"
+
+    log "ORCHESTRATOR" "Budget history updated: ${total_tokens} tokens, \$${cost_usd} cost"
 }
 
 # ---------------------------------------------------------------------------
