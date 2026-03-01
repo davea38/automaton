@@ -1607,6 +1607,117 @@ count_active_learnings() {
     jq '.entries | map(select(.active == true)) | length' "$learnings_file"
 }
 
+# Generates AGENTS.md from learnings.json and project metadata (spec-34).
+# Called at phase transitions so AGENTS.md is a generated view rather than
+# a manually-appended file. Preserves project metadata (name, language,
+# framework, commands) from the existing AGENTS.md and replaces the learnings
+# section with structured data from learnings.json.
+# Enforces the 60-line AGENTS.md limit by truncating learnings if needed.
+generate_agents_md() {
+    local agents_file="AGENTS.md"
+    local learnings_file="$AUTOMATON_DIR/learnings.json"
+
+    # Extract project metadata from existing AGENTS.md before overwriting
+    local project_name="" language="" framework=""
+    local cmd_build="" cmd_test="" cmd_lint=""
+
+    if [ -f "$agents_file" ]; then
+        project_name=$(grep -m1 '^- Project:' "$agents_file" | cut -d: -f2- | sed 's/^ *//' || true)
+        language=$(grep -m1 '^- Language:' "$agents_file" | cut -d: -f2- | sed 's/^ *//' || true)
+        framework=$(grep -m1 '^- Framework:' "$agents_file" | cut -d: -f2- | sed 's/^ *//' || true)
+        cmd_build=$(grep -m1 '^- Build:' "$agents_file" | cut -d: -f2- | sed 's/^ *//' || true)
+        cmd_test=$(grep -m1 '^- Test:' "$agents_file" | cut -d: -f2- | sed 's/^ *//' || true)
+        cmd_lint=$(grep -m1 '^- Lint:' "$agents_file" | cut -d: -f2- | sed 's/^ *//' || true)
+    fi
+
+    # Fall back to directory name if project name not set or still placeholder
+    if [ -z "$project_name" ] || [ "$project_name" = "your-project" ]; then
+        project_name=$(basename "$(pwd)")
+    fi
+
+    # Count completed runs from run-summaries/ (may not exist yet)
+    local run_count=0
+    if [ -d "$AUTOMATON_DIR/run-summaries" ]; then
+        run_count=$(find "$AUTOMATON_DIR/run-summaries" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)
+        run_count=$(echo "$run_count" | tr -d ' ')
+    fi
+
+    # Build learnings lines from learnings.json (active, high confidence first)
+    local learnings_lines=""
+    if [ -f "$learnings_file" ]; then
+        learnings_lines=$(jq -r '
+            .entries
+            | map(select(.active == true))
+            | sort_by(if .confidence == "high" then 0
+                      elif .confidence == "medium" then 1
+                      else 2 end)
+            | .[]
+            | "- " + .summary
+        ' "$learnings_file" 2>/dev/null | head -40 || true)
+    fi
+
+    # Build recent activity from run-summaries/ (last 3 runs)
+    local activity_lines=""
+    if [ -d "$AUTOMATON_DIR/run-summaries" ]; then
+        # shellcheck disable=SC2012
+        activity_lines=$(ls -t "$AUTOMATON_DIR/run-summaries/"*.json 2>/dev/null \
+            | head -3 \
+            | while IFS= read -r f; do
+                jq -r '"- " + .run_id + ": " +
+                    (.phases_completed | join(" → ")) +
+                    " (" + (.tasks_completed | tostring) + " tasks)"' "$f" 2>/dev/null || true
+            done || true)
+    fi
+
+    # Assemble AGENTS.md into a temp file
+    {
+        echo "# Operational Guide"
+        echo ""
+        echo "## Project"
+        echo ""
+        echo "- Project: $project_name"
+        [ -n "$language" ] && echo "- Language: $language"
+        [ -n "$framework" ] && echo "- Framework: $framework"
+        [ -n "${current_phase:-}" ] && echo "- Current Phase: $current_phase"
+        [ "$run_count" -gt 0 ] && echo "- Total Runs: $run_count"
+        echo ""
+        echo "## Commands"
+        echo ""
+        echo "- Build: ${cmd_build:-(not configured)}"
+        echo "- Test: ${cmd_test:-(not configured)}"
+        echo "- Lint: ${cmd_lint:-(not configured)}"
+        echo ""
+        echo "## Learnings"
+        echo ""
+        if [ -n "$learnings_lines" ]; then
+            echo "$learnings_lines"
+        else
+            echo "(none yet — learnings accumulate in .automaton/learnings.json)"
+        fi
+        if [ -n "$activity_lines" ]; then
+            echo ""
+            echo "## Recent Activity"
+            echo ""
+            echo "$activity_lines"
+        fi
+    } > "${agents_file}.tmp"
+
+    # Enforce 60-line limit
+    local line_count
+    line_count=$(wc -l < "${agents_file}.tmp")
+    line_count=$(echo "$line_count" | tr -d ' ')
+
+    if [ "$line_count" -gt 60 ]; then
+        head -59 "${agents_file}.tmp" > "${agents_file}.tmp2"
+        echo "(truncated — full data in .automaton/learnings.json)" >> "${agents_file}.tmp2"
+        mv "${agents_file}.tmp2" "$agents_file"
+    else
+        mv "${agents_file}.tmp" "$agents_file"
+    fi
+
+    log "ORCHESTRATOR" "AGENTS.md regenerated from learnings.json (${line_count} lines)"
+}
+
 # ---------------------------------------------------------------------------
 # Self-Targeting Mode (spec-25)
 # ---------------------------------------------------------------------------
@@ -5138,6 +5249,9 @@ transition_to_phase() {
 
     # Generate context summary at phase transition (spec-24)
     generate_context_summary
+
+    # Regenerate AGENTS.md from learnings.json + project metadata (spec-34)
+    generate_agents_md
 
     phase_history=$(echo "$phase_history" | jq -c \
         --arg p "$current_phase" --arg t "$now" \
