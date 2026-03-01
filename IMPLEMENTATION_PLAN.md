@@ -152,7 +152,7 @@ These two specs have no dependencies on other new specs. They provide the data s
 
 - [x] Implement `_garden_advance_stage()` in `automaton.sh` that transitions an idea to the next lifecycle stage (seed->sprout->bloom->harvest), validates threshold requirements (sprout_threshold evidence items for seed->sprout, bloom_threshold + bloom_priority_threshold for sprout->bloom), records stage_history entry, and supports a `force` parameter for human promotion (WHY: stage transitions enforce the maturation model — ideas must accumulate evidence before being evaluated) <!-- test: tests/test_garden_advance.sh -->
 
-- [ ] Implement `_garden_wilt()` in `automaton.sh` that moves an idea to the wilt stage with a reason, records the stage_history entry, and updates the index (WHY: wilting is how the garden prunes rejected, expired, or rolled-back ideas while preserving their record for audit) <!-- test: tests/test_garden_wilt.sh -->
+- [x] Implement `_garden_wilt()` in `automaton.sh` that moves an idea to the wilt stage with a reason, records the stage_history entry, and updates the index (WHY: wilting is how the garden prunes rejected, expired, or rolled-back ideas while preserving their record for audit) <!-- test: tests/test_garden_wilt.sh -->
 
 #### 38.2 Garden Computation and Maintenance
 
