@@ -82,3 +82,15 @@ Evaluate all findings from Phases 1-3.
 104. If a spec requirement is ambiguous and the implementation is a reasonable interpretation, give it the benefit of the doubt.
 105. Do NOT modify `CLAUDE.md` or `AGENTS.md`. Review only.
 106. When all checks pass and all spec requirements are covered, output <promise>COMPLETE</promise>.
+
+<use_parallel_tool_calls>
+If you intend to call multiple tools and there are no dependencies between the calls, make all independent tool calls in parallel in a single message.
+</use_parallel_tool_calls>
+
+<!-- DYNAMIC CONTEXT BELOW — injected by orchestrator -->
+
+<dynamic_context>
+## Current State
+
+<!-- Orchestrator injects: iteration number, budget remaining, project state -->
+</dynamic_context>

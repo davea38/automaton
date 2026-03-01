@@ -98,3 +98,15 @@ Specs are written. Run ./automaton.sh to begin autonomous execution.
 106. Do NOT modify `CLAUDE.md`. It already points to AGENTS.md.
 107. Keep the conversation human-friendly. You are interviewing, not interrogating. Use natural language, acknowledge good ideas, and explain why you're pushing for specifics.
 108. When in doubt about scope, ask. It is better to have a smaller, well-specified project than a large, vague one.
+
+<use_parallel_tool_calls>
+If you intend to call multiple tools and there are no dependencies between the calls, make all independent tool calls in parallel in a single message.
+</use_parallel_tool_calls>
+
+<!-- DYNAMIC CONTEXT BELOW — injected by orchestrator -->
+
+<dynamic_context>
+## Current State
+
+<!-- Orchestrator injects: iteration number, budget remaining, project state -->
+</dynamic_context>

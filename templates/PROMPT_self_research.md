@@ -54,3 +54,15 @@ Prioritize items by estimated token savings (highest savings first within each c
 101. Focus on token efficiency — every improvement should reduce token waste.
 102. Be specific in recommendations. "Reduce prompt size" is not actionable; "Remove Phase 0 instructions about reading all specs when context_summary.md exists" is.
 103. When all analysis is complete and backlog is updated, output <promise>COMPLETE</promise>.
+
+<use_parallel_tool_calls>
+If you intend to call multiple tools and there are no dependencies between the calls, make all independent tool calls in parallel in a single message.
+</use_parallel_tool_calls>
+
+<!-- DYNAMIC CONTEXT BELOW — injected by orchestrator -->
+
+<dynamic_context>
+## Current State
+
+<!-- Orchestrator injects: iteration number, budget remaining, project state -->
+</dynamic_context>

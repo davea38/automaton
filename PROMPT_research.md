@@ -97,6 +97,10 @@ Specs enriched: [list]
 ```
 </output_format>
 
+<use_parallel_tool_calls>
+If you intend to call multiple tools and there are no dependencies between the calls, make all independent tool calls in parallel in a single message.
+</use_parallel_tool_calls>
+
 <!-- DYNAMIC CONTEXT BELOW — injected by orchestrator -->
 
 <dynamic_context>
