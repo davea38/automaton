@@ -34,3 +34,5 @@
 # .automaton/signals.json         # Stigmergic signals (accumulated across runs)
 # .automaton/votes/               # Quorum vote records (audit trail, spec-39)
 # .automaton/evolution-metrics.json  # Growth metrics snapshots and baselines (spec-43)
+# .automaton/constitution.md         # Constitutional principles (spec-40)
+# .automaton/constitution-history.json  # Amendment audit trail (spec-40)

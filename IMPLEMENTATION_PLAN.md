@@ -274,9 +274,9 @@ These specs add the safety constraints and governance framework that the evoluti
 
 #### 40.1 Constitution Creation
 
-- [ ] Implement `_constitution_create_default()` in `automaton.sh` that writes `.automaton/constitution.md` with the 8 default articles (Safety First, Human Sovereignty, Measurable Progress, Transparency, Budget Discipline, Incremental Growth, Test Coverage, Amendment Protocol) and their protection levels, and initializes `.automaton/constitution-history.json` with empty amendments array (WHY: the constitution is the governance foundation — it must exist with all 8 articles before any evolution cycle can run its compliance check) <!-- test: tests/test_constitution_create.sh -->
+- [x] Implement `_constitution_create_default()` in `automaton.sh` that writes `.automaton/constitution.md` with the 8 default articles (Safety First, Human Sovereignty, Measurable Progress, Transparency, Budget Discipline, Incremental Growth, Test Coverage, Amendment Protocol) and their protection levels, and initializes `.automaton/constitution-history.json` with empty amendments array (WHY: the constitution is the governance foundation — it must exist with all 8 articles before any evolution cycle can run its compliance check) <!-- test: tests/test_constitution_create.sh -->
 
-- [ ] Update `.gitignore` to add `.automaton/constitution.md` and `.automaton/constitution-history.json` as persistent git-tracked state (WHY: the constitution and its amendment history are the most important persistent state — losing them would remove all governance constraints from the evolution loop) <!-- test: none -->
+- [x] Update `.gitignore` to add `.automaton/constitution.md` and `.automaton/constitution-history.json` as persistent git-tracked state (WHY: the constitution and its amendment history are the most important persistent state — losing them would remove all governance constraints from the evolution loop) <!-- test: none -->
 
 #### 40.2 Constitutional Compliance
 
@@ -290,7 +290,7 @@ These specs add the safety constraints and governance framework that the evoluti
 
 - [ ] Create `.claude/agents/evolve-constitution-checker.md` agent definition for deep compliance analysis when automated checks return `warn` (receives diff + constitution text, produces per-article compliance report) (WHY: some violations are subtle — a change might technically pass automated checks but violate the spirit of an article; the checker agent provides nuanced analysis for edge cases) <!-- test: tests/test_constitution_checker_agent.sh -->
 
-- [ ] Implement `_constitution_get_summary()` in `automaton.sh` that generates the summary object (articles count, version, key_constraints list) for the bootstrap manifest (WHY: evolution agents need constitution awareness in their prompt context to self-regulate their proposals) <!-- test: tests/test_constitution_create.sh -->
+- [x] Implement `_constitution_get_summary()` in `automaton.sh` that generates the summary object (articles count, version, key_constraints list) for the bootstrap manifest (WHY: evolution agents need constitution awareness in their prompt context to self-regulate their proposals) <!-- test: tests/test_constitution_create.sh -->
 
 - [ ] Add `constitution_summary` field to the bootstrap manifest in `.automaton/init.sh` (WHY: injecting the summary into agent prompts is cheaper than having each agent read the full constitution file) <!-- test: tests/test_constitution_bootstrap.sh -->
 
