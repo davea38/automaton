@@ -222,7 +222,7 @@ These specs build on the garden and signals to add collective decision-making an
 
 - [x] Update `.gitignore` to add `.automaton/votes/` as persistent git-tracked state (WHY: vote records form the audit trail of every autonomous decision — they must persist for transparency and debugging) <!-- test: none -->
 
-- [ ] Implement `_quorum_invoke_voter()` in `automaton.sh` that invokes a single voter agent with the proposal JSON using `claude --agent` with Sonnet model, `--no-tools`, and `--max-tokens` limit, and parses the JSON vote response (handling invalid output as abstain) (WHY: lightweight read-only Sonnet invocations keep quorum costs predictable while each voter's perspective ensures balanced evaluation) <!-- test: tests/test_quorum_invoke.sh -->
+- [x] Implement `_quorum_invoke_voter()` in `automaton.sh` that invokes a single voter agent with the proposal JSON using `claude --agent` with Sonnet model, `--no-tools`, and `--max-tokens` limit, and parses the JSON vote response (handling invalid output as abstain) (WHY: lightweight read-only Sonnet invocations keep quorum costs predictable while each voter's perspective ensures balanced evaluation) <!-- test: tests/test_quorum_invoke.sh -->
 
 - [ ] Implement `_quorum_tally()` in `automaton.sh` that counts approve/reject/abstain votes, reduces denominator for abstentions, compares against the threshold for the decision type, merges conditions from approving voters, and returns the result (WHY: the tally algorithm is the core governance mechanism — abstention handling and threshold comparison determine whether ideas advance) <!-- test: tests/test_quorum_tally.sh -->
 

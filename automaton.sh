@@ -5468,6 +5468,121 @@ _signal_garden_link() {
 }
 
 # ---------------------------------------------------------------------------
+# Agent Quorum (spec-39)
+# ---------------------------------------------------------------------------
+
+# Parse raw voter output into a validated JSON vote object.
+# Invalid or unparseable output is treated as an abstain vote with
+# "Vote parsing failed" as the reasoning (spec-39 §4).
+#
+# Args: raw_output voter_name
+# Outputs: valid JSON vote object to stdout
+_quorum_parse_vote() {
+    local raw_output="$1"
+    local voter_name="${2:-unknown}"
+
+    # Try to extract JSON from the raw output — the voter may emit
+    # explanation text before/after the JSON object.
+    local json_candidate
+    json_candidate=$(echo "$raw_output" | sed -n '/{/,/}/p' | head -50)
+
+    # Validate it's parseable JSON with required fields
+    if [ -n "$json_candidate" ] && echo "$json_candidate" | jq -e '.vote' >/dev/null 2>&1; then
+        local vote confidence reasoning risk_assessment conditions
+        vote=$(echo "$json_candidate" | jq -r '.vote // "abstain"')
+        confidence=$(echo "$json_candidate" | jq -r '.confidence // 0.5')
+        reasoning=$(echo "$json_candidate" | jq -r '.reasoning // "No reasoning provided"')
+        risk_assessment=$(echo "$json_candidate" | jq -r '.risk_assessment // "medium"')
+        conditions=$(echo "$json_candidate" | jq -c '.conditions // []')
+
+        # Validate vote value
+        case "$vote" in
+            approve|reject|abstain) ;;
+            *) vote="abstain"; reasoning="Invalid vote value: $vote" ;;
+        esac
+
+        jq -n \
+            --arg vote "$vote" \
+            --arg confidence "$confidence" \
+            --arg reasoning "$reasoning" \
+            --arg risk "$risk_assessment" \
+            --argjson conditions "$conditions" \
+            '{
+                vote: $vote,
+                confidence: ($confidence | tonumber),
+                reasoning: $reasoning,
+                conditions: $conditions,
+                risk_assessment: $risk
+            }'
+    else
+        # Invalid output — return abstain (spec-39 §4)
+        log "QUORUM" "WARN: voter=$voter_name produced invalid output, recording as abstain"
+        jq -n \
+            --arg voter "$voter_name" \
+            '{
+                vote: "abstain",
+                confidence: 0.0,
+                reasoning: "Vote parsing failed",
+                conditions: [],
+                risk_assessment: "medium"
+            }'
+    fi
+}
+
+# Invoke a single voter agent with a proposal and return the parsed vote.
+# Uses the Claude CLI with the voter's agent definition file, Sonnet model,
+# --print for text output, and --max-tokens limit. The voter is read-only
+# (no tools) and produces a JSON vote.
+#
+# Args: voter_name proposal_json
+# Outputs: parsed JSON vote object to stdout
+# Returns: 0 on success (even if vote is abstain due to parse failure)
+_quorum_invoke_voter() {
+    local voter_name="${1:?_quorum_invoke_voter requires voter_name}"
+    local proposal_json="${2:?_quorum_invoke_voter requires proposal_json}"
+
+    local agent_file=".claude/agents/voter-${voter_name}.md"
+    local model="${QUORUM_MODEL:-sonnet}"
+    local max_tokens="${QUORUM_MAX_TOKENS_PER_VOTER:-500}"
+
+    if [ ! -f "$agent_file" ]; then
+        log "QUORUM" "ERROR: voter agent file not found: $agent_file"
+        _quorum_parse_vote "" "$voter_name"
+        return 0
+    fi
+
+    log "QUORUM" "Invoking voter: name=$voter_name model=$model max-tokens=$max_tokens"
+
+    local raw_output=""
+    local exit_code=0
+
+    # Invoke claude CLI with:
+    #   --agent: voter agent definition (contains perspective + output format)
+    #   --model: cost-efficient model (default sonnet)
+    #   --max-tokens: limit output length
+    #   --print: simple text output (not stream-json)
+    #   Proposal is piped via stdin
+    local prompt
+    printf -v prompt 'Evaluate this proposal:\n\n%s' "$proposal_json"
+    raw_output=$(printf '%s' "$prompt" | claude --agent "$agent_file" \
+        --model "$model" \
+        --max-tokens "$max_tokens" \
+        --print 2>&1) || exit_code=$?
+
+    if [ "$exit_code" -ne 0 ]; then
+        log "QUORUM" "WARN: voter=$voter_name exited with code $exit_code"
+    fi
+
+    log "QUORUM" "Voter $voter_name responded (${#raw_output} bytes)"
+
+    # Parse and validate the vote output — expects JSON with "vote" field.
+    # Invalid output is treated as abstain (spec-39 §4).
+    local parsed_vote
+    parsed_vote=$(_quorum_parse_vote "$raw_output" "$voter_name")
+    echo "$parsed_vote"
+}
+
+# ---------------------------------------------------------------------------
 # Quality Gates
 # ---------------------------------------------------------------------------
 
