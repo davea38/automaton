@@ -7431,6 +7431,65 @@ _cli_prune() {
     echo "Reason: ${reason}"
 }
 
+# Force-promotes a garden idea to bloom stage, bypassing normal thresholds.
+# Implements Article II human sovereignty — the human can override maturation.
+# Called by --promote ID CLI command.
+#
+# Args: idea_id
+# Returns: 0 on success, 1 on failure
+_cli_promote() {
+    local idea_id="${1:?_cli_promote requires an idea ID}"
+
+    if [ "${GARDEN_ENABLED:-true}" != "true" ]; then
+        echo "Error: Garden is not enabled. Set garden.enabled=true in automaton.config.json." >&2
+        return 1
+    fi
+
+    local garden_dir="$AUTOMATON_DIR/garden"
+    local idea_file="$garden_dir/${idea_id}.json"
+
+    if [ ! -f "$idea_file" ]; then
+        echo "Error: Idea $idea_id not found." >&2
+        return 1
+    fi
+
+    # Read current state
+    local title current_stage
+    title=$(jq -r '.title' "$idea_file")
+    current_stage=$(jq -r '.stage' "$idea_file")
+
+    # Prevent promoting already-bloom, harvested, or wilted ideas
+    case "$current_stage" in
+        bloom)
+            echo "Idea $idea_id is already at bloom stage."
+            return 0
+            ;;
+        harvest)
+            echo "Error: Idea $idea_id is already harvested and cannot be promoted." >&2
+            return 1
+            ;;
+        wilt)
+            echo "Error: Idea $idea_id is wilted. Use --override to re-promote rejected ideas." >&2
+            return 1
+            ;;
+    esac
+
+    # Force-advance to bloom, bypassing thresholds
+    _garden_advance_stage "$idea_id" "bloom" "Human promotion (bypassed thresholds)" "true"
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to promote idea $idea_id." >&2
+        return 1
+    fi
+
+    # Recompute priorities so the change is reflected
+    _garden_recompute_priorities 2>/dev/null || true
+
+    # Display result
+    echo "Promoted ${idea_id}: \"${title}\" → bloom"
+    echo "Bypassed threshold check (human promotion). Ready for quorum evaluation."
+}
+
 # ---------------------------------------------------------------------------
 # Constitutional Principles (spec-40)
 # ---------------------------------------------------------------------------

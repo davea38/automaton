@@ -400,7 +400,7 @@ This spec adds the human-facing commands that wrap all evolution subsystems in a
 
 - [x] Implement `_cli_prune()` in `automaton.sh` that calls `_garden_wilt()` with the provided reason and displays confirmation (WHY: pruning is a destructive action — clear confirmation with the idea title and reason prevents accidental deletions) <!-- test: tests/test_cli_prune.sh -->
 
-- [ ] Implement `_cli_promote()` in `automaton.sh` that calls `_garden_advance_stage()` with `force=true` to bypass thresholds and displays the new stage (WHY: human promotion is the mechanism for Article II sovereignty — the human can override the normal maturation process when they know an idea is ready) <!-- test: tests/test_cli_promote.sh -->
+- [x] Implement `_cli_promote()` in `automaton.sh` that calls `_garden_advance_stage()` with `force=true` to bypass thresholds and displays the new stage (WHY: human promotion is the mechanism for Article II sovereignty — the human can override the normal maturation process when they know an idea is ready) <!-- test: tests/test_cli_promote.sh -->
 
 - [ ] Implement `_cli_amend()` in `automaton.sh` that guides the human through the amendment process: select article, show current text, accept proposed change, create a garden idea tagged `constitutional`, and display next steps (WHY: constitutional amendments need a guided workflow because they affect governance — the human must see the current text and understand the quorum requirement before proceeding) <!-- test: tests/test_cli_amend.sh -->
 
