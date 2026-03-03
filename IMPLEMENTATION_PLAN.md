@@ -532,11 +532,11 @@ These specs add optional pipeline stages — adversarial critique, blind review,
 
 ### Spec 54 — Blind Validation Pattern
 
-- [ ] Implement `run_blind_validation()` in `automaton.sh` (~40-60 lines) that extracts acceptance criteria from the spec file, reads `.automaton/test-results.log`, captures `git diff` (truncated to `blind_validation.max_diff_lines`), and invokes a separate `claude` CLI call with only those three inputs — no IMPLEMENTATION_PLAN.md, no commit messages, no prior review feedback (WHY: a reviewer who sees the builder's reasoning develops confirmation bias; blind validation forces evaluation against what was asked, not what was intended) <!-- test: tests/test_blind_validation.sh -->
+- [x] Implement `run_blind_validation()` in `automaton.sh` (~40-60 lines) that extracts acceptance criteria from the spec file, reads `.automaton/test-results.log`, captures `git diff` (truncated to `blind_validation.max_diff_lines`), and invokes a separate `claude` CLI call with only those three inputs — no IMPLEMENTATION_PLAN.md, no commit messages, no prior review feedback (WHY: a reviewer who sees the builder's reasoning develops confirmation bias; blind validation forces evaluation against what was asked, not what was intended) <!-- test: tests/test_blind_validation.sh -->
 
-- [ ] Parse the structured verdict (`VERDICT: PASS|FAIL`, `CRITERIA_MET`, `CRITERIA_MISSED`, `ISSUES`), write to `.automaton/blind-validation.md`, and integrate into review phase outcome — a FAIL overrides a passing contextual review (WHY: if the blind validator says criteria are missed, the contextual reviewer was likely biased; the blind result is the stronger signal) <!-- test: tests/test_blind_validation.sh -->
+- [x] Parse the structured verdict (`VERDICT: PASS|FAIL`, `CRITERIA_MET`, `CRITERIA_MISSED`, `ISSUES`), write to `.automaton/blind-validation.md`, and integrate into review phase outcome — a FAIL overrides a passing contextual review (WHY: if the blind validator says criteria are missed, the contextual reviewer was likely biased; the blind result is the stronger signal) <!-- test: tests/test_blind_validation.sh -->
 
-- [ ] Add `flags.blind_validation` (default false) and `blind_validation.max_diff_lines` (default 500) to `automaton.config.json` (WHY: flag-gated because blind validation adds one Claude call per review cycle; max_diff_lines bounds token cost for large changes) <!-- test: none -->
+- [x] Add `flags.blind_validation` (default false) and `blind_validation.max_diff_lines` (default 500) to `automaton.config.json` (WHY: flag-gated because blind validation adds one Claude call per review cycle; max_diff_lines bounds token cost for large changes) <!-- test: none -->
 
 ### Spec 53 — Steelman Self-Critique
 
