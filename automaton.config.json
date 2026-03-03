@@ -161,6 +161,12 @@
     "block_on_error": true,
     "max_token_estimate": 80000
   },
+  "notifications": {
+    "webhook_url": "",
+    "events": ["run_started", "phase_completed", "run_completed", "run_failed", "escalation"],
+    "command": "",
+    "timeout_seconds": 5
+  },
   "safety": {
     "max_total_lines": 15000,
     "max_total_functions": 300,

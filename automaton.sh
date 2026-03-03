@@ -200,6 +200,12 @@ load_config() {
         SAFETY_PRESERVE_FAILED_BRANCHES=$(jq -r '.safety.preserve_failed_branches // true' "$config_file")
         SAFETY_PREFLIGHT_ENABLED=$(jq -r '.safety.preflight_enabled // true' "$config_file")
         SAFETY_SANDBOX_TESTING_ENABLED=$(jq -r '.safety.sandbox_testing_enabled // true' "$config_file")
+
+        # -- notifications (spec-52) --
+        NOTIFY_WEBHOOK_URL=$(jq -r '.notifications.webhook_url // ""' "$config_file")
+        NOTIFY_COMMAND=$(jq -r '.notifications.command // ""' "$config_file")
+        NOTIFY_EVENTS=$(jq -r '.notifications.events // [] | join(",")' "$config_file")
+        NOTIFY_TIMEOUT=$(jq -r '.notifications.timeout_seconds // 5' "$config_file")
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -371,6 +377,12 @@ load_config() {
         SAFETY_PRESERVE_FAILED_BRANCHES="true"
         SAFETY_PREFLIGHT_ENABLED="true"
         SAFETY_SANDBOX_TESTING_ENABLED="true"
+
+        # -- notifications (spec-52) --
+        NOTIFY_WEBHOOK_URL=""
+        NOTIFY_COMMAND=""
+        NOTIFY_EVENTS=""
+        NOTIFY_TIMEOUT=5
     fi
 }
 
@@ -2542,6 +2554,7 @@ check_budget() {
         # Rule 3: Total token hard stop
         if [ "$cumulative_tokens" -gt "$BUDGET_MAX_TOKENS" ]; then
             log "ORCHESTRATOR" "Total token budget exhausted (${cumulative_tokens}/${BUDGET_MAX_TOKENS}). Run --resume after adjusting budget."
+            send_notification "run_failed" "${current_phase:-unknown}" "failure" "Token budget exhausted (${cumulative_tokens}/${BUDGET_MAX_TOKENS})"
             write_state
             exit 2
         fi
@@ -2552,6 +2565,7 @@ check_budget() {
             'BEGIN { print (cost > limit) ? "yes" : "no" }')
         if [ "$cost_exceeded" = "yes" ]; then
             log "ORCHESTRATOR" "Cost budget exhausted (\$${total_cost}/\$${BUDGET_MAX_USD}). Run --resume after adjusting budget."
+            send_notification "run_failed" "${current_phase:-unknown}" "failure" "Cost budget exhausted (\$${total_cost}/\$${BUDGET_MAX_USD})"
             write_state
             exit 2
         fi
@@ -4302,6 +4316,10 @@ display_stats() {
 escalate() {
     local description="$1"
     log "ORCHESTRATOR" "ESCALATION: $description"
+
+    # Notify: escalation and run_failed (spec-52)
+    send_notification "escalation" "${current_phase:-unknown}" "failure" "Escalation: $description"
+    send_notification "run_failed" "${current_phase:-unknown}" "failure" "$description"
 
     # Mark the escalation in the plan file for human visibility
     local plan_file="IMPLEMENTATION_PLAN.md"
@@ -11047,6 +11065,70 @@ truncate_output() {
     tail -n "$OUTPUT_TAIL_LINES" "$input_file"
 }
 
+# ---------------------------------------------------------------------------
+# Notification Callbacks (spec-52)
+# ---------------------------------------------------------------------------
+
+# Sends fire-and-forget notifications via webhook POST and/or shell command.
+# Both delivery methods run in background subshells and never block execution.
+#
+# Usage: send_notification "$event" "$phase" "$status" "$message"
+#   event:   one of run_started, phase_completed, run_completed, run_failed, escalation
+#   phase:   current phase name or "all"
+#   status:  success, failure, or info
+#   message: human-readable summary
+send_notification() {
+    local event="$1" phase="$2" status="$3" message="$4"
+
+    # Early return if both notification channels are disabled
+    if [ -z "${NOTIFY_WEBHOOK_URL:-}" ] && [ -z "${NOTIFY_COMMAND:-}" ]; then
+        return 0
+    fi
+
+    # Event filtering: skip if event is not in the configured events list
+    if [ -n "${NOTIFY_EVENTS:-}" ]; then
+        if ! echo ",$NOTIFY_EVENTS," | grep -qF ",$event,"; then
+            return 0
+        fi
+    fi
+
+    local project
+    project=$(basename "${PROJECT_ROOT:-.}")
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Webhook delivery (fire-and-forget background subshell)
+    if [ -n "${NOTIFY_WEBHOOK_URL:-}" ]; then
+        local payload
+        payload=$(jq -n \
+            --arg event "$event" \
+            --arg project "$project" \
+            --arg phase "$phase" \
+            --arg status "$status" \
+            --arg message "$message" \
+            --arg timestamp "$timestamp" \
+            '{event: $event, project: $project, phase: $phase, status: $status, message: $message, timestamp: $timestamp}')
+        local webhook_host
+        webhook_host=$(echo "$NOTIFY_WEBHOOK_URL" | sed 's|https\?://||' | cut -d/ -f1 | cut -d@ -f2)
+        log "ORCHESTRATOR" "[NOTIFY] POST $event to $webhook_host"
+        (curl -s -m "${NOTIFY_TIMEOUT:-5}" -X POST \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            "$NOTIFY_WEBHOOK_URL" >/dev/null 2>&1 &)
+    fi
+
+    # Command execution (fire-and-forget background subshell)
+    if [ -n "${NOTIFY_COMMAND:-}" ]; then
+        log "ORCHESTRATOR" "[NOTIFY] CMD $event"
+        (AUTOMATON_EVENT="$event" \
+         AUTOMATON_PROJECT="$project" \
+         AUTOMATON_PHASE="$phase" \
+         AUTOMATON_STATUS="$status" \
+         AUTOMATON_MESSAGE="$message" \
+         eval "$NOTIFY_COMMAND" >/dev/null 2>&1 &)
+    fi
+}
+
 # === QA Validation Pass (spec-46) ===
 # Runs three checks per iteration: test execution, spec criteria, regression scan.
 # Returns structured JSON with classified failures.
@@ -15700,6 +15782,9 @@ transition_to_phase() {
     # Regenerate AGENTS.md from learnings.json + project metadata (spec-34)
     generate_agents_md
 
+    # Notify: phase completed (spec-52)
+    send_notification "phase_completed" "$current_phase" "success" "${current_phase} phase completed"
+
     phase_history=$(echo "$phase_history" | jq -c \
         --arg p "$current_phase" --arg t "$now" \
         '. + [{"phase": $p, "completed_at": $t}]')
@@ -15783,6 +15868,9 @@ run_orchestration() {
     run_started_at="$started_at"
     PHASE_START_TIME=$(date +%s)
     log "ORCHESTRATOR" "Starting: phase=$current_phase"
+
+    # Notify: run started (spec-52)
+    send_notification "run_started" "$current_phase" "info" "Run started (phase=$current_phase)"
 
     # Start tmux session for parallel builds (spec-15)
     if [ "$PARALLEL_ENABLED" = "true" ]; then
@@ -16079,6 +16167,10 @@ run_orchestration() {
     archive_run_journal
 
     log "ORCHESTRATOR" "Run complete."
+
+    # Notify: run completed (spec-52)
+    send_notification "run_completed" "all" "success" "Run completed successfully"
+
     exit 0
 }
 

@@ -546,11 +546,11 @@ These specs add optional pipeline stages — adversarial critique, blind review,
 
 ### Spec 52 — Notification Callbacks
 
-- [ ] Implement `send_notification()` in `automaton.sh` (~60-80 lines) with webhook POST via background `curl` and command execution via background subshell with `AUTOMATON_EVENT`/`AUTOMATON_PROJECT`/`AUTOMATON_PHASE`/`AUTOMATON_STATUS`/`AUTOMATON_MESSAGE` env vars — both fire-and-forget, never blocking (WHY: users walk away during long runs with no way to know when they finish or fail; fire-and-forget delivery ensures notifications never delay execution) <!-- test: tests/test_notifications.sh -->
+- [x] Implement `send_notification()` in `automaton.sh` (~60-80 lines) with webhook POST via background `curl` and command execution via background subshell with `AUTOMATON_EVENT`/`AUTOMATON_PROJECT`/`AUTOMATON_PHASE`/`AUTOMATON_STATUS`/`AUTOMATON_MESSAGE` env vars — both fire-and-forget, never blocking (WHY: users walk away during long runs with no way to know when they finish or fail; fire-and-forget delivery ensures notifications never delay execution) <!-- test: tests/test_notifications.sh -->
 
-- [ ] Add 5 call sites for `send_notification()`: `run_started` (after init), `phase_completed` (after each phase), `run_completed` (after final phase), `run_failed` (on error/budget exhaustion), `escalation` (when human intervention needed) (WHY: five event types cover the full lifecycle — users can filter to only the events they care about) <!-- test: tests/test_notifications.sh -->
+- [x] Add 5 call sites for `send_notification()`: `run_started` (after init), `phase_completed` (after each phase), `run_completed` (after final phase), `run_failed` (on error/budget exhaustion), `escalation` (when human intervention needed) (WHY: five event types cover the full lifecycle — users can filter to only the events they care about) <!-- test: tests/test_notifications.sh -->
 
-- [ ] Add `notifications` config section to `automaton.config.json`: `webhook_url` (default ""), `events` (default all five), `command` (default ""), `timeout_seconds` (default 5) — both empty means zero notification overhead (WHY: opt-in by default; empty config produces zero overhead; webhook URLs are truncated to hostname in logs to avoid leaking auth tokens) <!-- test: none -->
+- [x] Add `notifications` config section to `automaton.config.json`: `webhook_url` (default ""), `events` (default all five), `command` (default ""), `timeout_seconds` (default 5) — both empty means zero notification overhead (WHY: opt-in by default; empty config produces zero overhead; webhook URLs are truncated to hostname in logs to avoid leaking auth tokens) <!-- test: none -->
 
 ---
 

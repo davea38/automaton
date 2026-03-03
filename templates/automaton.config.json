@@ -96,6 +96,12 @@
   "agents": {
     "use_native_definitions": false
   },
+  "notifications": {
+    "webhook_url": "",
+    "events": ["run_started", "phase_completed", "run_completed", "run_failed", "escalation"],
+    "command": "",
+    "timeout_seconds": 5
+  },
   "garden": {
     "enabled": true,
     "seed_ttl_days": 14,
