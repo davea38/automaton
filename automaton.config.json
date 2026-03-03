@@ -180,5 +180,10 @@
   "work_log": {
     "enabled": true,
     "log_level": "normal"
+  },
+  "debt_tracking": {
+    "enabled": true,
+    "threshold": 20,
+    "markers": ["TODO", "FIXME", "HACK", "DEBT", "WORKAROUND", "TEMPORARY"]
   }
 }

@@ -210,6 +210,11 @@ load_config() {
         # -- work_log (spec-55) --
         WORK_LOG_ENABLED=$(jq -r '.work_log.enabled // true' "$config_file")
         WORK_LOG_LEVEL=$(jq -r '.work_log.log_level // "normal"' "$config_file")
+
+        # -- debt_tracking (spec-56) --
+        DEBT_TRACKING_ENABLED=$(jq -r '.debt_tracking.enabled // true' "$config_file")
+        DEBT_TRACKING_THRESHOLD=$(jq -r '.debt_tracking.threshold // 20' "$config_file")
+        DEBT_TRACKING_MARKERS=$(jq -r '.debt_tracking.markers // ["TODO","FIXME","HACK","DEBT","WORKAROUND","TEMPORARY"] | join(" ")' "$config_file")
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -391,6 +396,11 @@ load_config() {
         # -- work_log (spec-55) --
         WORK_LOG_ENABLED="true"
         WORK_LOG_LEVEL="normal"
+
+        # -- debt_tracking (spec-56) --
+        DEBT_TRACKING_ENABLED="true"
+        DEBT_TRACKING_THRESHOLD=20
+        DEBT_TRACKING_MARKERS="TODO FIXME HACK DEBT WORKAROUND TEMPORARY"
     fi
 }
 
@@ -11193,6 +11203,122 @@ emit_event() {
     printf '{"ts":"%s","event":"%s","phase":"%s","iteration":%s,"elapsed_s":%s,"details":%s}\n' \
         "$ts" "$event" "${current_phase:-orchestrator}" \
         "${iteration:-0}" "$elapsed_s" "$details" >> "${WORK_LOG:-/dev/null}"
+}
+
+# === Typed Technical Debt Tracking (spec-56) ===
+# Scans files changed since a given commit for debt markers (TODO, FIXME, etc.),
+# classifies each finding by type, and appends to .automaton/debt-ledger.jsonl.
+
+# Classifies a debt marker line into one of 5 types based on keyword context.
+# Args: $1 = marker line text
+# Returns: one of error_handling, hardcoded, performance, test_coverage, cleanup
+_classify_debt_type() {
+    local text="$1"
+    local lower
+    lower=$(echo "$text" | tr '[:upper:]' '[:lower:]')
+    if echo "$lower" | grep -qE 'error|catch|exception|fail|retry'; then
+        echo "error_handling"
+    elif echo "$lower" | grep -qE 'hardcode|magic|config|constant|literal'; then
+        echo "hardcoded"
+    elif echo "$lower" | grep -qE 'slow|o\(n|performance|optimize|cache'; then
+        echo "performance"
+    elif echo "$lower" | grep -qE 'test|coverage|assert|spec|verify'; then
+        echo "test_coverage"
+    else
+        echo "cleanup"
+    fi
+}
+
+# Scans files changed since $1 (commit SHA) for debt markers.
+# Appends findings as JSONL to .automaton/debt-ledger.jsonl.
+# Reads globals: DEBT_TRACKING_ENABLED, DEBT_TRACKING_MARKERS, phase_iteration, AUTOMATON_DIR
+_scan_technical_debt() {
+    [ "${DEBT_TRACKING_ENABLED:-false}" = "true" ] || return 0
+    local start_sha="${1:-HEAD~1}"
+    local ledger="$AUTOMATON_DIR/debt-ledger.jsonl"
+    local ts
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Get files changed since start_sha
+    local changed_files
+    changed_files=$(git diff --name-only "$start_sha" HEAD 2>/dev/null) || return 0
+    [ -n "$changed_files" ] || return 0
+
+    # Build grep pattern from markers
+    local pattern=""
+    for marker in $DEBT_TRACKING_MARKERS; do
+        [ -n "$pattern" ] && pattern="$pattern|"
+        pattern="${pattern}${marker}"
+    done
+
+    while IFS= read -r file; do
+        [ -f "$file" ] || continue
+        # Grep for debt markers with line numbers
+        grep -n -E "($pattern)" "$file" 2>/dev/null | while IFS=: read -r lineno line_text; do
+            # Determine which marker matched
+            local matched_marker="UNKNOWN"
+            for m in $DEBT_TRACKING_MARKERS; do
+                if echo "$line_text" | grep -q "$m"; then
+                    matched_marker="$m"
+                    break
+                fi
+            done
+            local debt_type
+            debt_type=$(_classify_debt_type "$line_text")
+            # Append JSONL entry
+            jq -nc \
+                --arg type "$debt_type" \
+                --arg file "$file" \
+                --argjson line "$lineno" \
+                --arg marker "$matched_marker" \
+                --arg marker_text "$line_text" \
+                --argjson iteration "${phase_iteration:-0}" \
+                --arg timestamp "$ts" \
+                '{type:$type,file:$file,line:$line,marker:$marker,marker_text:$marker_text,iteration:$iteration,timestamp:$timestamp}' \
+                >> "$ledger"
+        done
+    done <<< "$changed_files"
+}
+
+# Generates .automaton/debt-summary.md from the debt ledger.
+# Reads globals: DEBT_TRACKING_ENABLED, DEBT_TRACKING_THRESHOLD, AUTOMATON_DIR
+_generate_debt_summary() {
+    [ "${DEBT_TRACKING_ENABLED:-false}" = "true" ] || return 0
+    local ledger="$AUTOMATON_DIR/debt-ledger.jsonl"
+    local summary="$AUTOMATON_DIR/debt-summary.md"
+    [ -f "$ledger" ] || return 0
+
+    local total
+    total=$(wc -l < "$ledger")
+    [ "$total" -gt 0 ] 2>/dev/null || return 0
+
+    local run_ts
+    run_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    {
+        echo "# Technical Debt Summary"
+        echo "Run: $run_ts | Total: $total items"
+        echo ""
+        echo "## By Type"
+        echo "| Type | Count |"
+        echo "|------|-------|"
+        jq -rs 'group_by(.type) | map({type: .[0].type, count: length}) | sort_by(-.count)[] | "| \(.type) | \(.count) |"' "$ledger"
+        echo ""
+        echo "## Top Files"
+        echo "| File | Items |"
+        echo "|------|-------|"
+        jq -rs 'group_by(.file) | map({file: .[0].file, count: length}) | sort_by(-.count)[:10][] | "| \(.file) | \(.count) |"' "$ledger"
+    } > "$summary"
+
+    # Emit threshold warning
+    if [ "${DEBT_TRACKING_THRESHOLD:-0}" -gt 0 ] && [ "$total" -gt "${DEBT_TRACKING_THRESHOLD:-20}" ]; then
+        log "ORCHESTRATOR" "WARNING: Technical debt ($total items) exceeds threshold (${DEBT_TRACKING_THRESHOLD}). Review $summary"
+    fi
+
+    # Return summary line for run output
+    local type_breakdown
+    type_breakdown=$(jq -rs 'group_by(.type) | map("\(.[0].type):\(length)") | join(" ")' "$ledger")
+    echo "Technical debt: $total items ($type_breakdown)"
 }
 
 # === QA Validation Pass (spec-46) ===

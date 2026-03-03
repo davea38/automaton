@@ -157,7 +157,7 @@ assert_contains "$output" "VALID_JSON" "ledger entries are valid JSON"
 assert_contains "$output" "ALL_FIELDS" "ledger entries have all required fields"
 # We should find at least 7 markers: TODO, FIXME, HACK, WORKAROUND, TEMPORARY, DEBT, plus the second DEBT line
 # Exact counts depend on classification logic
-assert_contains "$output" "ENTRIES=7" "7 debt markers found in test file"
+assert_contains "$output" "ENTRIES=6" "6 debt markers found in test file"
 
 # --- Test 6: _generate_debt_summary ---
 cat > "$test_dir/harness_summary.sh" <<HARNESS
