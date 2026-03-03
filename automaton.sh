@@ -90,6 +90,9 @@ load_config() {
         FLAG_BLIND_VALIDATION=$(jq -r '.flags.blind_validation // false' "$config_file")
         BLIND_VALIDATION_MAX_DIFF_LINES=$(jq -r '.blind_validation.max_diff_lines // 500' "$config_file")
 
+        # -- steelman critique (spec-53) --
+        FLAG_STEELMAN_CRITIQUE=$(jq -r '.flags.steelman_critique // false' "$config_file")
+
         # -- critique (spec-47) --
         CRITIQUE_AUTO_PREFLIGHT=$(jq -r '.critique.auto_preflight // false' "$config_file")
         CRITIQUE_BLOCK_ON_ERROR=$(jq -r '.critique.block_on_error // true' "$config_file")
@@ -277,6 +280,7 @@ load_config() {
         FLAG_SKIP_REVIEW="false"
         FLAG_BLIND_VALIDATION="false"
         BLIND_VALIDATION_MAX_DIFF_LINES=500
+        FLAG_STEELMAN_CRITIQUE="false"
 
         # -- parallel --
         PARALLEL_ENABLED="false"
@@ -11920,6 +11924,87 @@ RESULT
     fi
 }
 
+# Steelman self-critique (spec-53): a single adversarial Claude call after
+# planning that argues against the chosen approach. Writes STEELMAN.md to the
+# project root. Non-blocking — a failed call logs a warning and returns 0.
+run_steelman_critique() {
+    local plan_file="${PROJECT_ROOT:-.}/IMPLEMENTATION_PLAN.md"
+
+    if [ ! -f "$plan_file" ]; then
+        echo "Error: IMPLEMENTATION_PLAN.md not found. Cannot run steelman critique." >&2
+        return 1
+    fi
+
+    log "STEELMAN" "Running steelman self-critique"
+
+    # --- Gather input: plan + specs + config ---
+    local payload=""
+    payload+="--- IMPLEMENTATION_PLAN.md ---"$'\n'
+    payload+="$(cat "$plan_file")"$'\n\n'
+
+    local spec_file
+    for spec_file in "${PROJECT_ROOT:-.}"/specs/spec-*.md; do
+        [ -f "$spec_file" ] || continue
+        payload+="--- $(basename "$spec_file") ---"$'\n'
+        payload+="$(cat "$spec_file")"$'\n\n'
+    done
+
+    if [ -f "${PROJECT_ROOT:-.}/automaton.config.json" ]; then
+        payload+="--- automaton.config.json ---"$'\n'
+        payload+="$(cat "${PROJECT_ROOT:-.}/automaton.config.json")"$'\n\n'
+    fi
+
+    # --- Build adversarial prompt ---
+    local prompt_file
+    prompt_file=$(mktemp)
+    cat > "$prompt_file" <<'PROMPT'
+You are a skeptical technical reviewer. Your job is to argue AGAINST the implementation plan below. Do NOT rewrite the plan or produce code. Instead, produce a critique document with exactly these 5 sections:
+
+## Risks and Failure Modes
+What can go wrong at runtime, at scale, or under edge cases the plan does not address.
+
+## Rejected Alternatives
+Approaches the plan implicitly chose not to take, with brief arguments for why they might have been better.
+
+## Questionable Assumptions
+Premises the plan depends on that may not hold.
+
+## Fragile Dependencies
+External tools, APIs, or conventions the plan relies on that could change or break.
+
+## Complexity Hotspots
+Specific areas of the plan most likely to produce bugs during implementation.
+
+Be concrete and specific. Reference plan tasks and spec numbers where applicable.
+
+Here is the plan and supporting context to critique:
+
+PROMPT
+    echo "$payload" >> "$prompt_file"
+
+    # --- Single Claude call ---
+    local claude_output=""
+    claude_output=$(claude -p --output-format text --max-tokens 8000 < "$prompt_file" 2>/dev/null) || true
+    rm -f "$prompt_file"
+
+    if [ -z "$claude_output" ]; then
+        log "STEELMAN" "WARNING: Claude call failed or returned empty. Skipping STEELMAN.md."
+        echo "Warning: Steelman critique failed (network error or empty response). Continuing." >&2
+        return 0
+    fi
+
+    # --- Write STEELMAN.md to project root ---
+    cat > "${PROJECT_ROOT:-.}/STEELMAN.md" <<HEADER
+<!-- Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ") -->
+
+${claude_output}
+HEADER
+
+    log "STEELMAN" "Steelman critique written to STEELMAN.md"
+    echo "Steelman critique: ${PROJECT_ROOT:-.}/STEELMAN.md"
+    return 0
+}
+
 # Centralized agent invocation. Pipes the given prompt file into `claude -p`
 # with stream-json output, the specified model, and configured flags.
 # When agents.use_native_definitions is true (spec-27), invokes
@@ -12093,6 +12178,7 @@ ARG_VALIDATE_CONFIG=false
 ARG_DOCTOR=false
 ARG_CRITIQUE_SPECS=false
 ARG_SKIP_CRITIQUE=false
+ARG_STEELMAN=false
 
 _show_help() {
     cat <<'HELPTEXT'
@@ -12114,6 +12200,7 @@ Standard Mode:
   --doctor              Check environment, tools, and project health (spec-48)
   --critique-specs      Run spec critique, produce report, and exit (spec-47)
   --skip-critique       Skip pre-flight spec critique even when auto_preflight is on
+  --steelman            Run adversarial plan critique, produce STEELMAN.md, and exit (spec-53)
   --help, -h            Show this help message
 
 Evolution Mode:
@@ -12303,6 +12390,10 @@ while [ $# -gt 0 ]; do
             ARG_SKIP_CRITIQUE=true
             shift
             ;;
+        --steelman)
+            ARG_STEELMAN=true
+            shift
+            ;;
         --help|-h)
             _show_help
             exit 0
@@ -12366,6 +12457,13 @@ validate_config
 # Runs after config load so CRITIQUE_* vars are available. Standalone mode exits.
 if [ "$ARG_CRITIQUE_SPECS" = "true" ]; then
     phase_critique "${PROJECT_ROOT:-.}/specs"
+    exit $?
+fi
+
+# --- Standalone steelman critique (spec-53) ---
+# Runs after config load. Standalone mode exits with 0 on success, 1 if no plan.
+if [ "$ARG_STEELMAN" = "true" ]; then
+    run_steelman_critique
     exit $?
 fi
 
@@ -15875,6 +15973,11 @@ run_orchestration() {
             plan)
                 # Gate 3: plan validity. On fail: escalate (spec-04)
                 if gate_check "plan_validity"; then
+                    # Steelman critique (spec-53): non-blocking adversarial analysis after planning
+                    if [ "${FLAG_STEELMAN_CRITIQUE:-false}" = "true" ]; then
+                        log "ORCHESTRATOR" "Running steelman critique (spec-53)"
+                        run_steelman_critique || true
+                    fi
                     transition_to_phase "build"
                 else
                     escalate "Plan phase failed to produce a valid implementation plan."
