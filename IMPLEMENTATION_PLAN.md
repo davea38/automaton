@@ -468,9 +468,9 @@ These specs catch problems early — bad config, missing tools, lost error conte
 
 #### 49.1 Truncation Function
 
-- [ ] Implement `truncate_output()` in `automaton.sh` that captures full output to a temp file, counts lines, and applies head+tail truncation with a `... [N lines truncated] ...` marker when output exceeds `execution.output_max_lines` (WHY: current head-only truncation discards error messages and stack traces at the end of output, causing agents to miss the most actionable failure information and retry blindly) <!-- test: tests/test_output_truncation.sh -->
+- [x] Implement `truncate_output()` in `automaton.sh` that captures full output to a temp file, counts lines, and applies head+tail truncation with a `... [N lines truncated] ...` marker when output exceeds `execution.output_max_lines` (WHY: current head-only truncation discards error messages and stack traces at the end of output, causing agents to miss the most actionable failure information and retry blindly) <!-- test: tests/test_output_truncation.sh -->
 
-- [ ] Add full output archival: copy untruncated output to `.automaton/logs/output_${phase}_${iteration}_$(date +%s).log` before truncation (WHY: truncation is a display optimization — full output must be preserved for post-mortem debugging so no information is permanently lost) <!-- test: tests/test_output_truncation.sh -->
+- [x] Add full output archival: copy untruncated output to `.automaton/logs/output_${phase}_${iteration}_$(date +%s).log` before truncation (WHY: truncation is a display optimization — full output must be preserved for post-mortem debugging so no information is permanently lost) <!-- test: tests/test_output_truncation.sh -->
 
 #### 49.2 Configuration and Integration
 

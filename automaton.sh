@@ -75,6 +75,11 @@ load_config() {
         EXEC_BOOTSTRAP_SCRIPT=$(jq -r '.execution.bootstrap_script // ".automaton/init.sh"' "$config_file")
         EXEC_BOOTSTRAP_TIMEOUT_MS=$(jq -r '.execution.bootstrap_timeout_ms // 2000' "$config_file")
 
+        # -- output truncation (spec-49) --
+        OUTPUT_MAX_LINES=$(jq -r '.execution.output_max_lines // 200' "$config_file")
+        OUTPUT_HEAD_LINES=$(jq -r '.execution.output_head_lines // 50' "$config_file")
+        OUTPUT_TAIL_LINES=$(jq -r '.execution.output_tail_lines // 150' "$config_file")
+
         # -- git --
         GIT_AUTO_PUSH=$(jq -r '.git.auto_push // true' "$config_file")
         GIT_AUTO_COMMIT=$(jq -r '.git.auto_commit // true' "$config_file")
@@ -434,6 +439,18 @@ RANGECHECKS
     done
     if echo "$per_iter $smallest_phase" | awk '{exit !($1 > $2)}'; then
         CONFIG_ERRORS+=("CONFIG ERROR: budget.per_iteration ($per_iter) exceeds smallest budget.per_phase value ($smallest_phase)")
+    fi
+
+    # --- Output truncation: head + tail must equal max (spec-49) ---
+    local out_max out_head out_tail
+    out_max=$(jq -r '.execution.output_max_lines // empty' "$config_file" 2>/dev/null)
+    out_head=$(jq -r '.execution.output_head_lines // empty' "$config_file" 2>/dev/null)
+    out_tail=$(jq -r '.execution.output_tail_lines // empty' "$config_file" 2>/dev/null)
+    if [ -n "$out_max" ] && [ -n "$out_head" ] && [ -n "$out_tail" ]; then
+        local sum=$((out_head + out_tail))
+        if [ "$sum" -ne "$out_max" ]; then
+            CONFIG_ERRORS+=("CONFIG ERROR: execution.output_head_lines ($out_head) + execution.output_tail_lines ($out_tail) = $sum, must equal execution.output_max_lines ($out_max)")
+        fi
     fi
 
     # --- Warnings (stderr, non-blocking) ---
@@ -10927,6 +10944,44 @@ _build_dynamic_context_stdin() {
     echo "$dynamic_content"
 }
 
+# ---------------------------------------------------------------------------
+# Output Truncation (spec-49)
+# ---------------------------------------------------------------------------
+# Applies head+tail truncation to long output, preserving both the start
+# context and error messages at the end. Archives full output for debugging.
+#
+# Usage: truncate_output <input_file> [phase] [iteration]
+#   Prints truncated (or unmodified) output to stdout.
+#   When output exceeds OUTPUT_MAX_LINES, archives the full file to
+#   .automaton/logs/ before truncating.
+truncate_output() {
+    local input_file="$1"
+    local phase="${2:-}"
+    local iteration="${3:-}"
+
+    local total_lines
+    total_lines=$(wc -l < "$input_file" 2>/dev/null || echo 0)
+    total_lines=$((total_lines + 0))  # ensure numeric
+
+    # Below or at threshold: pass through unmodified, no archive
+    if [ "$total_lines" -le "$OUTPUT_MAX_LINES" ]; then
+        cat "$input_file"
+        return 0
+    fi
+
+    # Archive full output before truncating
+    local logs_dir="${AUTOMATON_DIR}/logs"
+    mkdir -p "$logs_dir"
+    local archive_name="output_${phase}_${iteration}_$(date +%s).log"
+    cp "$input_file" "$logs_dir/$archive_name"
+
+    # Head + tail with truncation marker
+    local truncated_count=$((total_lines - OUTPUT_HEAD_LINES - OUTPUT_TAIL_LINES))
+    head -n "$OUTPUT_HEAD_LINES" "$input_file"
+    echo "... [$truncated_count lines truncated] ..."
+    tail -n "$OUTPUT_TAIL_LINES" "$input_file"
+}
+
 # Centralized agent invocation. Pipes the given prompt file into `claude -p`
 # with stream-json output, the specified model, and configured flags.
 # When agents.use_native_definitions is true (spec-27), invokes
@@ -10998,7 +11053,13 @@ run_agent() {
         AGENT_RESULT=""
         AGENT_EXIT_CODE=0
 
-        AGENT_RESULT=$(echo "$dynamic_context" | claude "${cmd_args[@]}" 2>&1) || AGENT_EXIT_CODE=$?
+        local _tmp_output
+        _tmp_output=$(mktemp)
+        echo "$dynamic_context" | claude "${cmd_args[@]}" > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
+        local _phase_hint="${prompt_file##*/PROMPT_}"
+        _phase_hint="${_phase_hint%.md}"
+        AGENT_RESULT=$(truncate_output "$_tmp_output" "$_phase_hint" "${CURRENT_ITERATION:-0}")
+        rm -f "$_tmp_output"
 
         log "ORCHESTRATOR" "Agent finished: exit_code=$AGENT_EXIT_CODE"
         return 0
@@ -11046,7 +11107,13 @@ run_agent() {
     # Capture stdout (stream-json) and stderr (errors, verbose logs) together.
     # extract_tokens() greps for "type":"result" lines so stderr noise is harmless.
     # Error classifiers (is_rate_limit, is_network_error) need stderr to detect failures.
-    AGENT_RESULT=$(cat "$effective_prompt" | claude "${cmd_args[@]}" 2>&1) || AGENT_EXIT_CODE=$?
+    local _tmp_output
+    _tmp_output=$(mktemp)
+    cat "$effective_prompt" | claude "${cmd_args[@]}" > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
+    local _phase_hint="${prompt_file##*/PROMPT_}"
+    _phase_hint="${_phase_hint%.md}"
+    AGENT_RESULT=$(truncate_output "$_tmp_output" "$_phase_hint" "${CURRENT_ITERATION:-0}")
+    rm -f "$_tmp_output"
 
     log "ORCHESTRATOR" "Agent finished: exit_code=$AGENT_EXIT_CODE"
 
