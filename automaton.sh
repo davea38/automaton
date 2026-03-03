@@ -86,6 +86,11 @@ load_config() {
         QA_BLIND_VALIDATION=$(jq -r '.execution.qa_blind_validation // false' "$config_file")
         QA_MODEL=$(jq -r '.execution.qa_model // "sonnet"' "$config_file")
 
+        # -- critique (spec-47) --
+        CRITIQUE_AUTO_PREFLIGHT=$(jq -r '.critique.auto_preflight // false' "$config_file")
+        CRITIQUE_BLOCK_ON_ERROR=$(jq -r '.critique.block_on_error // true' "$config_file")
+        CRITIQUE_MAX_TOKEN_ESTIMATE=$(jq -r '.critique.max_token_estimate // 80000' "$config_file")
+
         # -- git --
         GIT_AUTO_PUSH=$(jq -r '.git.auto_push // true' "$config_file")
         GIT_AUTO_COMMIT=$(jq -r '.git.auto_commit // true' "$config_file")
@@ -245,6 +250,11 @@ load_config() {
         QA_MAX_ITERATIONS=5
         QA_BLIND_VALIDATION="false"
         QA_MODEL="sonnet"
+
+        # -- critique (spec-47) --
+        CRITIQUE_AUTO_PREFLIGHT="false"
+        CRITIQUE_BLOCK_ON_ERROR="true"
+        CRITIQUE_MAX_TOKEN_ESTIMATE=80000
 
         # -- output truncation (spec-49) --
         OUTPUT_MAX_LINES=200
@@ -11575,6 +11585,223 @@ _qa_run_loop() {
         }'
 }
 
+# --- Spec 47: Pre-Flight Spec Critique ---
+
+# Collects all spec files from the given directory, sorted by spec number.
+# Concatenates them with filename headers. Outputs the combined content to stdout.
+# Truncates if total estimated tokens exceed CRITIQUE_MAX_TOKEN_ESTIMATE.
+_critique_collect_specs() {
+    local specs_dir="$1"
+    local max_tokens="${CRITIQUE_MAX_TOKEN_ESTIMATE:-80000}"
+    local max_chars=$((max_tokens * 4))  # 4 chars per token heuristic
+
+    local spec_files=()
+    while IFS= read -r f; do
+        spec_files+=("$f")
+    done < <(find "$specs_dir" -name 'spec-*.md' -type f 2>/dev/null | sort -t'-' -k2 -n)
+
+    if [ ${#spec_files[@]} -eq 0 ]; then
+        echo ""
+        return 0
+    fi
+
+    local combined=""
+    local total_chars=0
+    local included=0
+    local truncated=false
+
+    for spec_file in "${spec_files[@]}"; do
+        local basename
+        basename=$(basename "$spec_file")
+        local content
+        content=$(cat "$spec_file" 2>/dev/null || echo "")
+        local header="--- ${basename} ---"
+        local entry="${header}"$'\n'"${content}"$'\n\n'
+        local entry_chars=${#entry}
+
+        if [ $((total_chars + entry_chars)) -gt "$max_chars" ]; then
+            truncated=true
+            log "CRITIQUE" "WARNING: Spec payload truncated at $included specs (~$((total_chars / 4)) tokens). Remaining specs excluded to stay within ${max_tokens}-token ceiling."
+            break
+        fi
+
+        combined="${combined}${entry}"
+        total_chars=$((total_chars + entry_chars))
+        included=$((included + 1))
+    done
+
+    if [ "$truncated" = "true" ] && [ "$included" -lt "${#spec_files[@]}" ]; then
+        combined="${combined}--- TRUNCATED: $((${#spec_files[@]} - included)) spec(s) excluded (token ceiling: ${max_tokens}) ---"$'\n'
+    fi
+
+    echo "$combined"
+}
+
+# Generates .automaton/SPEC_CRITIQUE.md from structured JSON critique output.
+# Reads JSON with "findings" array, counts severities, writes formatted report.
+_critique_generate_report() {
+    local json_output="$1"
+    local specs_analyzed="$2"
+    local report_file="${AUTOMATON_DIR:-.automaton}/SPEC_CRITIQUE.md"
+
+    local error_count warning_count info_count
+    error_count=$(echo "$json_output" | jq '[.findings[] | select(.severity == "ERROR")] | length' 2>/dev/null || echo 0)
+    warning_count=$(echo "$json_output" | jq '[.findings[] | select(.severity == "WARNING")] | length' 2>/dev/null || echo 0)
+    info_count=$(echo "$json_output" | jq '[.findings[] | select(.severity == "INFO")] | length' 2>/dev/null || echo 0)
+
+    {
+        echo "# Spec Critique Report"
+        echo "Generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+        echo "Specs analyzed: ${specs_analyzed}"
+        echo ""
+        echo "## Summary"
+        echo "- Errors: ${error_count}"
+        echo "- Warnings: ${warning_count}"
+        echo "- Info: ${info_count}"
+        echo ""
+        echo "## Findings"
+        echo ""
+
+        local findings_count
+        findings_count=$(echo "$json_output" | jq '.findings | length' 2>/dev/null || echo 0)
+
+        if [ "$findings_count" -eq 0 ]; then
+            echo "No issues found."
+        else
+            local i=0
+            while [ "$i" -lt "$findings_count" ]; do
+                local severity spec dimension description suggestion
+                severity=$(echo "$json_output" | jq -r ".findings[$i].severity" 2>/dev/null || echo "INFO")
+                spec=$(echo "$json_output" | jq -r ".findings[$i].spec" 2>/dev/null || echo "unknown")
+                dimension=$(echo "$json_output" | jq -r ".findings[$i].dimension" 2>/dev/null || echo "general")
+                description=$(echo "$json_output" | jq -r ".findings[$i].description" 2>/dev/null || echo "")
+                suggestion=$(echo "$json_output" | jq -r ".findings[$i].suggestion // empty" 2>/dev/null || echo "")
+
+                local dimension_label
+                case "$dimension" in
+                    ambiguity) dimension_label="Ambiguous requirement" ;;
+                    missing_criteria) dimension_label="Missing acceptance criteria" ;;
+                    contradiction) dimension_label="Potential contradiction" ;;
+                    missing_dependency) dimension_label="Missing dependency" ;;
+                    untestable) dimension_label="Untestable criteria" ;;
+                    scope_gap) dimension_label="Scope gap" ;;
+                    *) dimension_label="$dimension" ;;
+                esac
+
+                echo "### [${severity}] ${spec}: ${dimension_label}"
+                echo "${description}"
+                if [ -n "$suggestion" ]; then
+                    echo "Suggestion: ${suggestion}"
+                fi
+                echo ""
+
+                i=$((i + 1))
+            done
+        fi
+    } > "$report_file"
+
+    echo "$error_count"
+}
+
+# Main critique function. Gathers specs, makes a single claude -p call,
+# generates SPEC_CRITIQUE.md, and returns exit code based on severity.
+# Returns: 0 if no errors (warnings/info only), 1 if errors found.
+phase_critique() {
+    local specs_dir="${1:-${PROJECT_ROOT:-.}/specs}"
+
+    mkdir -p "${AUTOMATON_DIR:-.automaton}"
+
+    # Collect and concatenate spec files
+    local spec_payload
+    spec_payload=$(_critique_collect_specs "$specs_dir")
+
+    if [ -z "$spec_payload" ]; then
+        log "CRITIQUE" "No spec files found in ${specs_dir}. Skipping critique."
+        echo "No spec files found in ${specs_dir}." >&2
+        return 0
+    fi
+
+    # Count specs analyzed
+    local specs_analyzed
+    specs_analyzed=$(echo "$spec_payload" | grep -c '^--- spec-' || echo 0)
+
+    log "CRITIQUE" "Analyzing $specs_analyzed spec files"
+
+    # Build the critique prompt (written to temp file to avoid heredoc extraction issues)
+    local prompt_file
+    prompt_file=$(mktemp)
+    printf '%s\n' \
+        "You are a spec quality reviewer. Analyze the following specification files and identify issues across these 6 dimensions:" \
+        "" \
+        "1. **Ambiguous requirements**: Vague language (\"fast\", \"user-friendly\", \"scalable\") without measurable criteria." \
+        "2. **Missing acceptance criteria**: Requirements that lack a testable condition." \
+        "3. **Inter-spec contradictions**: Two specs that define conflicting behavior for the same area." \
+        "4. **Missing dependency declarations**: A spec references functionality from another spec without declaring the dependency." \
+        "5. **Untestable criteria**: Acceptance criteria that cannot be verified programmatically or by inspection." \
+        "6. **Scope gaps**: Features implied by context that no spec covers." \
+        "" \
+        "Output ONLY valid JSON with this exact structure (no markdown fences, no explanation):" \
+        '{"findings": [{"severity": "ERROR|WARNING|INFO", "spec": "spec-NN", "dimension": "ambiguity|missing_criteria|contradiction|missing_dependency|untestable|scope_gap", "description": "Clear description of the issue", "suggestion": "Actionable fix suggestion"}]}' \
+        "" \
+        "Severity guide:" \
+        "- ERROR: Likely to cause build failure or review rejection" \
+        "- WARNING: May cause rework but build can proceed" \
+        "- INFO: Stylistic or minor observation" \
+        "" \
+        "Here are the spec files to analyze:" \
+        "" > "$prompt_file"
+
+    # Append spec payload
+    echo "$spec_payload" >> "$prompt_file"
+
+    # Make a single claude -p call
+    local claude_output
+    claude_output=$(claude -p --output-format text --max-tokens 50000 < "$prompt_file" 2>/dev/null) || true
+    rm -f "$prompt_file"
+
+    # Extract JSON from the response (handle potential markdown fences)
+    local json_output
+    json_output=$(echo "$claude_output" | sed -n '/^{/,/^}/p')
+    if [ -z "$json_output" ]; then
+        # Try extracting from markdown code fences
+        json_output=$(echo "$claude_output" | sed -n '/```json/,/```/p' | sed '1d;$d')
+    fi
+    if [ -z "$json_output" ]; then
+        # Try the whole output as JSON
+        json_output="$claude_output"
+    fi
+
+    # Validate JSON
+    if ! echo "$json_output" | jq empty 2>/dev/null; then
+        log "CRITIQUE" "WARNING: Claude returned invalid JSON. Writing raw output."
+        json_output='{"findings": []}'
+    fi
+
+    # Ensure findings array exists
+    if ! echo "$json_output" | jq -e '.findings' >/dev/null 2>&1; then
+        json_output='{"findings": []}'
+    fi
+
+    # Generate the report
+    local error_count
+    error_count=$(_critique_generate_report "$json_output" "$specs_analyzed")
+
+    local report_file="${AUTOMATON_DIR:-.automaton}/SPEC_CRITIQUE.md"
+    local total_findings
+    total_findings=$(echo "$json_output" | jq '.findings | length' 2>/dev/null || echo 0)
+
+    log "CRITIQUE" "Critique complete: $total_findings findings ($error_count errors). Report: $report_file"
+
+    # Print summary to stdout
+    echo "Spec critique: ${total_findings} findings (${error_count} errors)"
+    echo "Report: ${report_file}"
+
+    if [ "$error_count" -gt 0 ]; then
+        return 1
+    fi
+    return 0
+}
+
 # Centralized agent invocation. Pipes the given prompt file into `claude -p`
 # with stream-json output, the specified model, and configured flags.
 # When agents.use_native_definitions is true (spec-27), invokes
@@ -11746,6 +11973,8 @@ ARG_PAUSE_EVOLUTION=false
 ARG_SIGNALS=false
 ARG_VALIDATE_CONFIG=false
 ARG_DOCTOR=false
+ARG_CRITIQUE_SPECS=false
+ARG_SKIP_CRITIQUE=false
 
 _show_help() {
     cat <<'HELPTEXT'
@@ -11765,6 +11994,8 @@ Standard Mode:
   --budget-check        Show weekly allowance status without starting a run (spec-35)
   --validate-config     Validate config file and exit (spec-50)
   --doctor              Check environment, tools, and project health (spec-48)
+  --critique-specs      Run spec critique, produce report, and exit (spec-47)
+  --skip-critique       Skip pre-flight spec critique even when auto_preflight is on
   --help, -h            Show this help message
 
 Evolution Mode:
@@ -11946,6 +12177,14 @@ while [ $# -gt 0 ]; do
             ARG_DOCTOR=true
             shift
             ;;
+        --critique-specs)
+            ARG_CRITIQUE_SPECS=true
+            shift
+            ;;
+        --skip-critique)
+            ARG_SKIP_CRITIQUE=true
+            shift
+            ;;
         --help|-h)
             _show_help
             exit 0
@@ -12004,6 +12243,13 @@ if [ "$ARG_VALIDATE_CONFIG" = "true" ]; then
     exit 0
 fi
 validate_config
+
+# --- Standalone spec critique (spec-47) ---
+# Runs after config load so CRITIQUE_* vars are available. Standalone mode exits.
+if [ "$ARG_CRITIQUE_SPECS" = "true" ]; then
+    phase_critique "${PROJECT_ROOT:-.}/specs"
+    exit $?
+fi
 
 # --- Override config flags with CLI arguments ---
 if [ "$ARG_SKIP_RESEARCH" = "true" ]; then
@@ -15291,6 +15537,23 @@ run_orchestration() {
         if [ "$FLAG_SKIP_RESEARCH" = "true" ]; then
             current_phase="plan"
             log "ORCHESTRATOR" "Skipping research (--skip-research)"
+        fi
+    fi
+
+    # --- Pre-flight spec critique (spec-47) ---
+    # When auto_preflight is enabled and not skipped, critique specs before planning.
+    # Only runs on fresh starts (not resumes) and when not in self-build mode.
+    if [ "$CRITIQUE_AUTO_PREFLIGHT" = "true" ] && [ "$ARG_SKIP_CRITIQUE" != "true" ] \
+        && [ "$ARG_RESUME" != "true" ] && [ "${ARG_SELF:-false}" != "true" ]; then
+        log "ORCHESTRATOR" "Running pre-flight spec critique (spec-47)"
+        local critique_rc=0
+        phase_critique "${PROJECT_ROOT:-.}/specs" || critique_rc=$?
+        if [ "$critique_rc" -ne 0 ] && [ "$CRITIQUE_BLOCK_ON_ERROR" = "true" ]; then
+            local err_count
+            err_count=$(grep -c '^\### \[ERROR\]' "${AUTOMATON_DIR:-.automaton}/SPEC_CRITIQUE.md" 2>/dev/null || echo "?")
+            echo "Spec critique found ${err_count} error(s). Review .automaton/SPEC_CRITIQUE.md and re-run." >&2
+            echo "Use --skip-critique to bypass." >&2
+            exit 1
         fi
     fi
 

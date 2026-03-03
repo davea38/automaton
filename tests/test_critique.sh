@@ -32,31 +32,40 @@ cat > "$test_dir/specs/spec-02-another.md" <<'SPEC'
 - [ ] Feature works correctly
 SPEC
 
-# Extract phase_critique and its helpers from automaton.sh
-_extract_critique() {
-    cat > "$test_dir/harness.sh" <<'HARNESS'
+# Extract functions using awk (handles heredocs correctly)
+_build_harness() {
+    local harness_file="$1"
+    local extra_stubs="${2:-}"
+    cat > "$harness_file" <<'HARNESS_HEADER'
 #!/usr/bin/env bash
 set -uo pipefail
+log() { echo "LOG: $*" >&2; }
+HARNESS_HEADER
+    echo "$extra_stubs" >> "$harness_file"
+    # Extract each function using awk (brace-matching, handles heredocs)
+    for func_name in _critique_collect_specs _critique_generate_report phase_critique; do
+        awk "/^${func_name}\\(\\)/,/^\\}/" "$script_file" >> "$harness_file"
+        echo "" >> "$harness_file"
+    done
+}
 
-# Minimal stubs
-log() { :; }
+# --- Harness with mock claude that returns errors ---
+_build_harness "$test_dir/harness.sh" "$(cat <<'STUBS'
 AUTOMATON_DIR="$TEST_DIR/.automaton"
 PROJECT_ROOT="$TEST_DIR"
 CRITIQUE_AUTO_PREFLIGHT="false"
 CRITIQUE_BLOCK_ON_ERROR="true"
 CRITIQUE_MAX_TOKEN_ESTIMATE=80000
-
-# Stub claude command to return test JSON
 claude() {
-    cat <<'MOCK_OUTPUT'
+    cat <<'MOCK_JSON'
 {
   "findings": [
     {
       "severity": "ERROR",
       "spec": "spec-01",
       "dimension": "ambiguity",
-      "description": "Requirement 1 uses \"should be fast\" without defining a latency target.",
-      "suggestion": "Add a measurable threshold (e.g., \"responds within 200ms\")."
+      "description": "Requirement 1 uses should be fast without defining a latency target.",
+      "suggestion": "Add a measurable threshold."
     },
     {
       "severity": "WARNING",
@@ -69,33 +78,27 @@ claude() {
       "severity": "INFO",
       "spec": "spec-02",
       "dimension": "ambiguity",
-      "description": "\"scalable\" is vague without quantitative bounds.",
+      "description": "scalable is vague without quantitative bounds.",
       "suggestion": "Define expected data volume and growth rate."
     }
   ]
 }
-MOCK_OUTPUT
+MOCK_JSON
 }
 export -f claude
-HARNESS
-    # Extract the phase_critique function and _critique_generate_report helper
-    sed -n '/^phase_critique()/,/^[^ ]/{ /^[^ ]/!p; /^phase_critique()/p; }' "$script_file" >> "$test_dir/harness.sh"
-    sed -n '/^_critique_generate_report()/,/^[^ ]/{ /^[^ ]/!p; /^_critique_generate_report()/p; }' "$script_file" >> "$test_dir/harness.sh"
-    sed -n '/^_critique_collect_specs()/,/^[^ ]/{ /^[^ ]/!p; /^_critique_collect_specs()/p; }' "$script_file" >> "$test_dir/harness.sh"
-}
-_extract_critique
+STUBS
+)"
 
 # --- Test 1: _critique_collect_specs gathers spec files ---
 output=$(TEST_DIR="$test_dir" bash -c "
     source '$test_dir/harness.sh'
     _critique_collect_specs '$test_dir/specs'
 " 2>&1) || true
-rc=$?
-# Should contain both specs with headers
 assert_contains "$output" "spec-01-example.md" "collect_specs includes spec-01"
 assert_contains "$output" "spec-02-another.md" "collect_specs includes spec-02"
 
 # --- Test 2: phase_critique creates SPEC_CRITIQUE.md ---
+rm -f "$test_dir/.automaton/SPEC_CRITIQUE.md"
 TEST_DIR="$test_dir" bash -c "
     source '$test_dir/harness.sh'
     phase_critique '$test_dir/specs'
@@ -113,26 +116,23 @@ if [ -f "$test_dir/.automaton/SPEC_CRITIQUE.md" ]; then
 fi
 
 # --- Test 4: phase_critique returns exit 1 when errors found ---
+rm -f "$test_dir/.automaton/SPEC_CRITIQUE.md"
 exit_code=0
 TEST_DIR="$test_dir" bash -c "
     source '$test_dir/harness.sh'
     phase_critique '$test_dir/specs'
-" 2>&1 || exit_code=$?
+" >/dev/null 2>&1 || exit_code=$?
 assert_equals "1" "$exit_code" "phase_critique exits 1 when errors found"
 
 # --- Test 5: phase_critique returns exit 0 when only warnings ---
-# Override claude stub to return only warnings
-cat > "$test_dir/harness_warn.sh" <<'WARN_HARNESS'
-#!/usr/bin/env bash
-set -uo pipefail
-log() { :; }
+_build_harness "$test_dir/harness_warn.sh" "$(cat <<'STUBS'
 AUTOMATON_DIR="$TEST_DIR/.automaton"
 PROJECT_ROOT="$TEST_DIR"
 CRITIQUE_AUTO_PREFLIGHT="false"
 CRITIQUE_BLOCK_ON_ERROR="true"
 CRITIQUE_MAX_TOKEN_ESTIMATE=80000
 claude() {
-    cat <<'MOCK_OUTPUT'
+    cat <<'MOCK_JSON'
 {
   "findings": [
     {
@@ -144,56 +144,44 @@ claude() {
     }
   ]
 }
-MOCK_OUTPUT
+MOCK_JSON
 }
 export -f claude
-WARN_HARNESS
-sed -n '/^phase_critique()/,/^[^ ]/{ /^[^ ]/!p; /^phase_critique()/p; }' "$script_file" >> "$test_dir/harness_warn.sh"
-sed -n '/^_critique_generate_report()/,/^[^ ]/{ /^[^ ]/!p; /^_critique_generate_report()/p; }' "$script_file" >> "$test_dir/harness_warn.sh"
-sed -n '/^_critique_collect_specs()/,/^[^ ]/{ /^[^ ]/!p; /^_critique_collect_specs()/p; }' "$script_file" >> "$test_dir/harness_warn.sh"
+STUBS
+)"
 
 rm -f "$test_dir/.automaton/SPEC_CRITIQUE.md"
 exit_code=0
 TEST_DIR="$test_dir" bash -c "
     source '$test_dir/harness_warn.sh'
     phase_critique '$test_dir/specs'
-" 2>&1 || exit_code=$?
+" >/dev/null 2>&1 || exit_code=$?
 assert_equals "0" "$exit_code" "phase_critique exits 0 when only warnings"
 
 # --- Test 6: Token estimation and truncation ---
-# Create a spec file that's oversized relative to a low ceiling
-cat > "$test_dir/harness_trunc.sh" <<'TRUNC_HARNESS'
-#!/usr/bin/env bash
-set -uo pipefail
-log() { echo "$@" >&2; }
+_build_harness "$test_dir/harness_trunc.sh" "$(cat <<'STUBS'
 AUTOMATON_DIR="$TEST_DIR/.automaton"
 PROJECT_ROOT="$TEST_DIR"
 CRITIQUE_AUTO_PREFLIGHT="false"
 CRITIQUE_BLOCK_ON_ERROR="true"
-CRITIQUE_MAX_TOKEN_ESTIMATE=10  # Very low ceiling for testing
-claude() {
-    echo '{"findings": []}'
-}
+CRITIQUE_MAX_TOKEN_ESTIMATE=10
+claude() { echo '{"findings": []}'; }
 export -f claude
-TRUNC_HARNESS
-sed -n '/^phase_critique()/,/^[^ ]/{ /^[^ ]/!p; /^phase_critique()/p; }' "$script_file" >> "$test_dir/harness_trunc.sh"
-sed -n '/^_critique_generate_report()/,/^[^ ]/{ /^[^ ]/!p; /^_critique_generate_report()/p; }' "$script_file" >> "$test_dir/harness_trunc.sh"
-sed -n '/^_critique_collect_specs()/,/^[^ ]/{ /^[^ ]/!p; /^_critique_collect_specs()/p; }' "$script_file" >> "$test_dir/harness_trunc.sh"
+STUBS
+)"
 
 rm -f "$test_dir/.automaton/SPEC_CRITIQUE.md"
 output=$(TEST_DIR="$test_dir" bash -c "
     source '$test_dir/harness_trunc.sh'
     phase_critique '$test_dir/specs'
 " 2>&1) || true
+# Should see truncation warning (from log output on stderr)
 assert_contains "$output" "truncat" "truncation warning emitted when specs exceed ceiling"
 
 # --- Test 7: No spec files produces appropriate message ---
 empty_dir="$test_dir/empty_specs"
 mkdir -p "$empty_dir"
-cat > "$test_dir/harness_empty.sh" <<'EMPTY_HARNESS'
-#!/usr/bin/env bash
-set -uo pipefail
-log() { echo "$@" >&2; }
+_build_harness "$test_dir/harness_empty.sh" "$(cat <<'STUBS'
 AUTOMATON_DIR="$TEST_DIR/.automaton"
 PROJECT_ROOT="$TEST_DIR"
 CRITIQUE_AUTO_PREFLIGHT="false"
@@ -201,15 +189,29 @@ CRITIQUE_BLOCK_ON_ERROR="true"
 CRITIQUE_MAX_TOKEN_ESTIMATE=80000
 claude() { echo '{"findings": []}'; }
 export -f claude
-EMPTY_HARNESS
-sed -n '/^phase_critique()/,/^[^ ]/{ /^[^ ]/!p; /^phase_critique()/p; }' "$script_file" >> "$test_dir/harness_empty.sh"
-sed -n '/^_critique_generate_report()/,/^[^ ]/{ /^[^ ]/!p; /^_critique_generate_report()/p; }' "$script_file" >> "$test_dir/harness_empty.sh"
-sed -n '/^_critique_collect_specs()/,/^[^ ]/{ /^[^ ]/!p; /^_critique_collect_specs()/p; }' "$script_file" >> "$test_dir/harness_empty.sh"
+STUBS
+)"
 
 output=$(TEST_DIR="$test_dir" bash -c "
     source '$test_dir/harness_empty.sh'
     phase_critique '$empty_dir'
 " 2>&1) || true
 assert_contains "$output" "No spec files" "no spec files produces warning"
+
+# --- Test 8: Report format is valid (severity tags are greppable) ---
+if [ -f "$test_dir/.automaton/SPEC_CRITIQUE.md" ]; then
+    error_lines=$(grep -c '\[ERROR\]' "$test_dir/.automaton/SPEC_CRITIQUE.md" 2>/dev/null || echo 0)
+    warning_lines=$(grep -c '\[WARNING\]' "$test_dir/.automaton/SPEC_CRITIQUE.md" 2>/dev/null || echo 0)
+    # From test 2/3, the report had errors. Re-run to get a fresh report for this check.
+    rm -f "$test_dir/.automaton/SPEC_CRITIQUE.md"
+    TEST_DIR="$test_dir" bash -c "
+        source '$test_dir/harness.sh'
+        phase_critique '$test_dir/specs'
+    " >/dev/null 2>&1 || true
+    if [ -f "$test_dir/.automaton/SPEC_CRITIQUE.md" ]; then
+        error_lines=$(grep -c '\[ERROR\]' "$test_dir/.automaton/SPEC_CRITIQUE.md" 2>/dev/null || echo 0)
+        assert_equals "1" "$error_lines" "report has exactly 1 ERROR finding"
+    fi
+fi
 
 test_summary

@@ -151,6 +151,11 @@
     "ideate_model": "sonnet",
     "observe_model": "sonnet"
   },
+  "critique": {
+    "auto_preflight": false,
+    "block_on_error": true,
+    "max_token_estimate": 80000
+  },
   "safety": {
     "max_total_lines": 15000,
     "max_total_functions": 300,

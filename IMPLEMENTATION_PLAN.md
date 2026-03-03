@@ -506,23 +506,23 @@ These specs catch problems early — bad config, missing tools, lost error conte
 
 ---
 
-## Tier 11: Pre-Planning Quality (P1, No New-Spec Dependencies)
+## Tier 11: Pre-Planning Quality (P1, No New-Spec Dependencies) — COMPLETE
 
-### Spec 47 — Pre-Flight Spec Critique
+### Spec 47 — Pre-Flight Spec Critique — COMPLETE
 
 #### 47.1 Critique Function
 
-- [ ] Implement `phase_critique()` in `automaton.sh` that gathers all `specs/spec-*.md` files sorted by number, concatenates with filename headers, estimates token count (4 chars/token heuristic), and truncates at 80K tokens with a warning (WHY: front-loading all specs into one call is 10x cheaper than a multi-agent critique pipeline, and the 80K ceiling prevents context overflow) <!-- test: tests/test_critique.sh -->
+- [x] Implement `phase_critique()` in `automaton.sh` that gathers all `specs/spec-*.md` files sorted by number, concatenates with filename headers, estimates token count (4 chars/token heuristic), and truncates at 80K tokens with a warning (WHY: front-loading all specs into one call is 10x cheaper than a multi-agent critique pipeline, and the 80K ceiling prevents context overflow) <!-- test: tests/test_critique.sh -->
 
-- [ ] Make a single `claude -p` call with a critique prompt that evaluates specs across 6 dimensions (ambiguity, missing criteria, contradictions, missing dependencies, untestable criteria, scope gaps), producing structured JSON with severity levels (ERROR/WARNING/INFO) (WHY: a single cheap call before planning catches spec quality problems at the lowest possible token cost — before planning and building consume their budgets) <!-- test: tests/test_critique.sh -->
+- [x] Make a single `claude -p` call with a critique prompt that evaluates specs across 6 dimensions (ambiguity, missing criteria, contradictions, missing dependencies, untestable criteria, scope gaps), producing structured JSON with severity levels (ERROR/WARNING/INFO) (WHY: a single cheap call before planning catches spec quality problems at the lowest possible token cost — before planning and building consume their budgets) <!-- test: tests/test_critique.sh -->
 
 #### 47.2 Output and Integration
 
-- [ ] Generate `.automaton/SPEC_CRITIQUE.md` from the structured JSON with summary counts and per-finding details including severity tag, spec reference, description, and suggestion (WHY: the structured report is both human-readable and machine-parseable, enabling both manual review and automated gating) <!-- test: tests/test_critique.sh -->
+- [x] Generate `.automaton/SPEC_CRITIQUE.md` from the structured JSON with summary counts and per-finding details including severity tag, spec reference, description, and suggestion (WHY: the structured report is both human-readable and machine-parseable, enabling both manual review and automated gating) <!-- test: tests/test_critique.sh -->
 
-- [ ] Add `--critique-specs` standalone flag (print summary, write report, exit 0/1), `--skip-critique` bypass flag, and auto-preflight mode controlled by `critique.auto_preflight` config (blocks on ERROR when `critique.block_on_error` is true) (WHY: three modes — standalone audit, auto-gate, and bypass — cover all workflows from CI to interactive use) <!-- test: tests/test_critique.sh -->
+- [x] Add `--critique-specs` standalone flag (print summary, write report, exit 0/1), `--skip-critique` bypass flag, and auto-preflight mode controlled by `critique.auto_preflight` config (blocks on ERROR when `critique.block_on_error` is true) (WHY: three modes — standalone audit, auto-gate, and bypass — cover all workflows from CI to interactive use) <!-- test: tests/test_critique.sh -->
 
-- [ ] Add `critique` config section to `automaton.config.json`: `auto_preflight` (default false), `block_on_error` (default true), `max_token_estimate` (default 80000) (WHY: disabled by default avoids surprising existing users; `block_on_error` prevents building against flawed specs when opted in) <!-- test: none -->
+- [x] Add `critique` config section to `automaton.config.json`: `auto_preflight` (default false), `block_on_error` (default true), `max_token_estimate` (default 80000) (WHY: disabled by default avoids surprising existing users; `block_on_error` prevents building against flawed specs when opted in) <!-- test: none -->
 
 ---
 
