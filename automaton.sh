@@ -12087,6 +12087,125 @@ HEADER
     return 0
 }
 
+# Complexity assessment (spec-51): a single cheap Claude haiku call that
+# classifies the task into SIMPLE, MODERATE, or COMPLEX before the pipeline
+# runs. Writes .automaton/complexity.json. If ARG_COMPLEXITY is set (CLI
+# override), skips the Claude call and uses the override value directly.
+# On any failure, defaults to MODERATE. Always returns 0.
+# Usage: assess_complexity "task description"
+assess_complexity() {
+    local task_desc="${1:-}"
+    local complexity_file="${AUTOMATON_DIR:-.automaton}/complexity.json"
+    local tier="MODERATE"
+    local rationale="Standard task (default)"
+    local is_override="false"
+    local ts
+    ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+    # CLI override: skip the Claude call entirely
+    if [ -n "${ARG_COMPLEXITY:-}" ]; then
+        case "${ARG_COMPLEXITY}" in
+            simple)   tier="SIMPLE" ;;
+            moderate) tier="MODERATE" ;;
+            complex)  tier="COMPLEX" ;;
+        esac
+        rationale="CLI override (--complexity=${ARG_COMPLEXITY})"
+        is_override="true"
+        log "COMPLEXITY" "Using CLI override: tier=$tier"
+    else
+        # Make a single haiku call to classify the task
+        local prompt
+        prompt="Classify this task into exactly one tier: SIMPLE, MODERATE, or COMPLEX.
+
+SIMPLE: Single file, no logic change, no new tests needed (typo fix, config change, comment update).
+MODERATE: 1-3 files, contained logic change, existing patterns (single feature, bug fix, refactor one function).
+COMPLEX: 4+ files, new patterns, dependency changes, API surface change (multi-file architecture, new subsystem).
+
+Task: ${task_desc}
+
+Respond with ONLY a JSON object, no other text:
+{\"tier\": \"SIMPLE|MODERATE|COMPLEX\", \"rationale\": \"one-line reason\"}"
+
+        local claude_output=""
+        claude_output=$(echo "$prompt" | claude -p --model haiku --output-format json 2>/dev/null) || true
+
+        # Parse the response
+        if [ -n "$claude_output" ]; then
+            local parsed_tier parsed_rationale
+            parsed_tier=$(echo "$claude_output" | jq -r '.tier // empty' 2>/dev/null) || true
+            parsed_rationale=$(echo "$claude_output" | jq -r '.rationale // empty' 2>/dev/null) || true
+
+            # Validate tier value
+            case "${parsed_tier:-}" in
+                SIMPLE|MODERATE|COMPLEX)
+                    tier="$parsed_tier"
+                    rationale="${parsed_rationale:-No rationale provided}"
+                    ;;
+                *)
+                    log "COMPLEXITY" "Invalid tier from assessment: '${parsed_tier:-}'. Defaulting to MODERATE."
+                    tier="MODERATE"
+                    rationale="Assessment returned invalid tier (defaulted to MODERATE)"
+                    ;;
+            esac
+        else
+            log "COMPLEXITY" "Assessment call failed or returned empty. Defaulting to MODERATE."
+            rationale="Assessment call failed (defaulted to MODERATE)"
+        fi
+    fi
+
+    # Write complexity.json
+    cat > "$complexity_file" <<CEOF
+{"tier":"${tier}","rationale":"${rationale}","assessed_at":"${ts}","override":${is_override}}
+CEOF
+
+    log "COMPLEXITY" "Task classified as $tier: $rationale"
+    return 0
+}
+
+# Applies pipeline routing based on the tier in .automaton/complexity.json.
+# Adjusts global variables that downstream phases consume:
+#   FLAG_SKIP_RESEARCH, MODEL_BUILDING, EXEC_MAX_ITER_REVIEW,
+#   FLAG_BLIND_VALIDATION, FLAG_STEELMAN_CRITIQUE, QA_MAX_ITERATIONS
+# Does nothing if complexity.json does not exist (pipeline runs with defaults).
+# Usage: apply_complexity_routing
+apply_complexity_routing() {
+    local complexity_file="${AUTOMATON_DIR:-.automaton}/complexity.json"
+    if [ ! -f "$complexity_file" ]; then
+        return 0
+    fi
+
+    local tier
+    tier=$(jq -r '.tier // "MODERATE"' "$complexity_file" 2>/dev/null) || tier="MODERATE"
+
+    case "$tier" in
+        SIMPLE)
+            FLAG_SKIP_RESEARCH="true"
+            MODEL_BUILDING="sonnet"
+            EXEC_MAX_ITER_REVIEW=1
+            FLAG_BLIND_VALIDATION="false"
+            FLAG_STEELMAN_CRITIQUE="false"
+            QA_MAX_ITERATIONS=2
+            log "COMPLEXITY" "SIMPLE routing: skip research, sonnet build, 1 review iter, no blind/steelman"
+            ;;
+        MODERATE)
+            MODEL_BUILDING="sonnet"
+            EXEC_MAX_ITER_REVIEW=2
+            FLAG_BLIND_VALIDATION="false"
+            QA_MAX_ITERATIONS=3
+            log "COMPLEXITY" "MODERATE routing: standard pipeline, sonnet build, 2 review iters"
+            ;;
+        COMPLEX)
+            MODEL_BUILDING="opus"
+            EXEC_MAX_ITER_REVIEW=4
+            FLAG_BLIND_VALIDATION="true"
+            FLAG_STEELMAN_CRITIQUE="true"
+            QA_MAX_ITERATIONS=4
+            log "COMPLEXITY" "COMPLEX routing: opus build, 4 review iters, blind+steelman enabled"
+            ;;
+    esac
+    return 0
+}
+
 # Centralized agent invocation. Pipes the given prompt file into `claude -p`
 # with stream-json output, the specified model, and configured flags.
 # When agents.use_native_definitions is true (spec-27), invokes
@@ -12261,6 +12380,7 @@ ARG_DOCTOR=false
 ARG_CRITIQUE_SPECS=false
 ARG_SKIP_CRITIQUE=false
 ARG_STEELMAN=false
+ARG_COMPLEXITY=""
 
 _show_help() {
     cat <<'HELPTEXT'
@@ -12283,6 +12403,7 @@ Standard Mode:
   --critique-specs      Run spec critique, produce report, and exit (spec-47)
   --skip-critique       Skip pre-flight spec critique even when auto_preflight is on
   --steelman            Run adversarial plan critique, produce STEELMAN.md, and exit (spec-53)
+  --complexity TIER     Override complexity assessment (simple|moderate|complex) (spec-51)
   --help, -h            Show this help message
 
 Evolution Mode:
@@ -12475,6 +12596,14 @@ while [ $# -gt 0 ]; do
         --steelman)
             ARG_STEELMAN=true
             shift
+            ;;
+        --complexity)
+            if [ -z "${2:-}" ] || ! echo "${2:-}" | grep -qE '^(simple|moderate|complex)$'; then
+                echo "Error: --complexity requires one of: simple, moderate, complex" >&2
+                exit 1
+            fi
+            ARG_COMPLEXITY="$2"
+            shift 2
             ;;
         --help|-h)
             _show_help
@@ -16424,6 +16553,23 @@ if [ "$ARG_DRY_RUN" = "true" ]; then
     echo ""
     echo "Dry run complete. No agents were invoked."
     exit 0
+fi
+
+# --- Complexity assessment and routing (spec-51) ---
+# Classify task complexity before pipeline runs. The assessment uses a cheap
+# haiku call; --complexity=TIER bypasses it. Routing adjusts pipeline variables
+# (model, review iterations, blind validation, etc.) based on the tier.
+# Only runs on fresh starts (not resumes) and when not in evolution mode.
+if [ "$ARG_RESUME" != "true" ] && [ "${ARG_EVOLVE:-false}" != "true" ]; then
+    # Build a task description from available context
+    _task_desc=""
+    if [ -f "${PROJECT_ROOT:-.}/IMPLEMENTATION_PLAN.md" ]; then
+        _task_desc=$(grep -m1 '^\- \[ \]' "${PROJECT_ROOT:-.}/IMPLEMENTATION_PLAN.md" 2>/dev/null | sed 's/^- \[ \] //' || echo "")
+    fi
+    [ -z "$_task_desc" ] && _task_desc="General project task"
+    assess_complexity "$_task_desc"
+    apply_complexity_routing
+    unset _task_desc
 fi
 
 run_orchestration
