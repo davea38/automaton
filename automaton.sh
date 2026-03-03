@@ -469,6 +469,210 @@ RANGECHECKS
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# Doctor / Health Check (spec-48)
+# ---------------------------------------------------------------------------
+
+# Helper: consistent output for each doctor check line.
+# Usage: report_check "name" "PASS|WARN|FAIL|INFO" "detail"
+report_check() {
+    local name="$1" status="$2" detail="${3:-}"
+    local color="" reset=""
+    if [ "$_DOCTOR_COLOR" = "true" ]; then
+        case "$status" in
+            PASS) color="\033[32m" ;; # green
+            WARN) color="\033[33m" ;; # yellow
+            FAIL) color="\033[31m" ;; # red
+            INFO) color="\033[34m" ;; # blue
+        esac
+        reset="\033[0m"
+    fi
+    local pad
+    pad=$(printf '%.0s.' $(seq 1 $((22 - ${#name}))))
+    local msg="  ${name} ${pad} ${color}${status}${reset}"
+    [ -n "$detail" ] && msg="${msg}  (${detail})"
+    echo -e "$msg"
+    case "$status" in
+        PASS) _DOCTOR_PASS=$((_DOCTOR_PASS + 1)) ;;
+        WARN) _DOCTOR_WARN=$((_DOCTOR_WARN + 1)) ;;
+        FAIL) _DOCTOR_FAIL=$((_DOCTOR_FAIL + 1)) ;;
+        INFO) _DOCTOR_INFO=$((_DOCTOR_INFO + 1)) ;;
+    esac
+}
+
+# Runs all environment checks and prints a human-readable report.
+# Exit 0 if pass/warn only, exit 1 if any FAIL.
+doctor_check() {
+    _DOCTOR_PASS=0; _DOCTOR_WARN=0; _DOCTOR_FAIL=0; _DOCTOR_INFO=0
+    _DOCTOR_COLOR=true
+    [ -n "${NO_COLOR:-}" ] && _DOCTOR_COLOR=false
+    [ ! -t 1 ] && _DOCTOR_COLOR=false
+
+    echo "automaton --doctor"
+    echo ""
+
+    # --- Tool checks ---
+    # bash version
+    if [ "${BASH_VERSINFO[0]}" -ge 4 ] 2>/dev/null; then
+        report_check "bash" "PASS" "${BASH_VERSION}, requires >=4.0"
+    else
+        report_check "bash" "FAIL" "${BASH_VERSION:-unknown}, requires >=4.0; upgrade: brew install bash (macOS) or apt install bash"
+    fi
+
+    # git
+    if command -v git >/dev/null 2>&1; then
+        local git_ver
+        git_ver=$(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        local git_major git_minor
+        git_major="${git_ver%%.*}"
+        git_minor="${git_ver#*.}"
+        if [ "${git_major:-0}" -gt 2 ] || { [ "${git_major:-0}" -eq 2 ] && [ "${git_minor:-0}" -ge 20 ]; }; then
+            report_check "git" "PASS" "${git_ver}, requires >=2.20"
+        else
+            report_check "git" "FAIL" "${git_ver}, requires >=2.20; upgrade git"
+        fi
+    else
+        report_check "git" "FAIL" "not found; install: apt install git or brew install git"
+    fi
+
+    # claude
+    if command -v claude >/dev/null 2>&1; then
+        report_check "claude" "PASS"
+    else
+        report_check "claude" "FAIL" "not found; install: https://docs.anthropic.com/en/docs/claude-code"
+    fi
+
+    # jq
+    if command -v jq >/dev/null 2>&1; then
+        local jq_ver
+        jq_ver=$(jq --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1)
+        local jq_major jq_minor
+        jq_major="${jq_ver%%.*}"
+        jq_minor="${jq_ver#*.}"
+        if [ "${jq_major:-0}" -gt 1 ] || { [ "${jq_major:-0}" -eq 1 ] && [ "${jq_minor:-0}" -ge 5 ]; }; then
+            report_check "jq" "PASS" "${jq_ver}, requires >=1.5"
+        else
+            report_check "jq" "FAIL" "${jq_ver}, requires >=1.5; install: https://jqlang.github.io/jq/download/"
+        fi
+    else
+        report_check "jq" "FAIL" "not found; install: https://jqlang.github.io/jq/download/"
+    fi
+
+    # --- Claude auth check ---
+    if command -v claude >/dev/null 2>&1; then
+        if claude --version >/dev/null 2>&1; then
+            report_check "claude auth" "PASS"
+        else
+            report_check "claude auth" "WARN" "could not verify; run 'claude login' or check ANTHROPIC_API_KEY"
+        fi
+    else
+        report_check "claude auth" "WARN" "claude not installed; skipping auth check"
+    fi
+
+    # --- Disk space check ---
+    local free_kb
+    free_kb=$(df -k . 2>/dev/null | awk 'NR==2{print $4}')
+    if [ -n "$free_kb" ]; then
+        local free_mb=$((free_kb / 1024))
+        if [ "$free_mb" -lt 10 ]; then
+            report_check "disk space" "FAIL" "${free_mb} MB free; need at least 10 MB"
+        elif [ "$free_mb" -lt 100 ]; then
+            report_check "disk space" "WARN" "${free_mb} MB free; recommend at least 100 MB"
+        else
+            local free_display="${free_mb} MB"
+            if [ "$free_mb" -ge 1024 ]; then
+                local free_gb=$((free_mb / 1024))
+                local free_gb_frac=$(( (free_mb % 1024) * 10 / 1024 ))
+                free_display="${free_gb}.${free_gb_frac} GB"
+            fi
+            report_check "disk space" "PASS" "${free_display} free"
+        fi
+    else
+        report_check "disk space" "WARN" "could not determine free space"
+    fi
+
+    # --- Git repo checks ---
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        report_check "git repo" "PASS"
+
+        if git log -1 >/dev/null 2>&1; then
+            local remote_info
+            remote_info=$(git remote -v 2>/dev/null | head -1)
+            if [ -n "$remote_info" ]; then
+                local remote_name remote_url
+                remote_name=$(echo "$remote_info" | awk '{print $1}')
+                remote_url=$(echo "$remote_info" | awk '{print $2}')
+                report_check "git remote" "PASS" "${remote_name} -> ${remote_url}"
+            else
+                report_check "git remote" "WARN" "no remote configured; add: git remote add origin <url>"
+            fi
+        else
+            report_check "git commits" "WARN" "no commits yet"
+        fi
+
+        local dirty_count
+        dirty_count=$(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$dirty_count" -gt 0 ]; then
+            report_check "working tree" "INFO" "${dirty_count} uncommitted changes"
+        else
+            report_check "working tree" "INFO" "clean"
+        fi
+    else
+        report_check "git repo" "WARN" "not inside a git repository"
+    fi
+
+    # --- Project file checks ---
+    if [ -f "automaton.config.json" ]; then
+        if jq empty < automaton.config.json >/dev/null 2>&1; then
+            report_check "automaton.config.json" "PASS" "valid JSON"
+        else
+            report_check "automaton.config.json" "FAIL" "invalid JSON; fix syntax in automaton.config.json"
+        fi
+    else
+        report_check "automaton.config.json" "WARN" "not found; automaton runs with defaults"
+    fi
+
+    if [ -f "AGENTS.md" ]; then
+        report_check "AGENTS.md" "PASS"
+    else
+        report_check "AGENTS.md" "WARN" "not found; create to define agent roles"
+    fi
+
+    if [ -d "specs/" ]; then
+        report_check "specs/" "PASS"
+    else
+        report_check "specs/" "WARN" "not found; create for spec-driven workflow"
+    fi
+
+    if [ -f "PRD.md" ]; then
+        report_check "PRD.md" "PASS"
+    else
+        report_check "PRD.md" "WARN" "not found; create for product context"
+    fi
+
+    # --- .automaton/ state directory ---
+    if [ -d ".automaton" ]; then
+        if [ -w ".automaton" ]; then
+            report_check ".automaton/" "PASS"
+        else
+            report_check ".automaton/" "FAIL" "directory not writable"
+        fi
+    elif [ -e ".automaton" ]; then
+        report_check ".automaton/" "FAIL" "exists but is not a directory"
+    else
+        report_check ".automaton/" "PASS" "will be created on first run"
+    fi
+
+    # --- Summary ---
+    echo ""
+    echo "  Result: $_DOCTOR_PASS passed, $_DOCTOR_WARN warnings, $_DOCTOR_FAIL failures"
+
+    if [ "$_DOCTOR_FAIL" -gt 0 ]; then
+        return 1
+    fi
+    return 0
+}
+
 # Applies Max Plan preset defaults when max_plan_preset is true (spec-35).
 # Sets budget mode to allowance and models to opus, enabling cascading
 # optimizations: rate limits and parallel defaults trigger from allowance mode.
@@ -10881,6 +11085,7 @@ ARG_OVERRIDE=false
 ARG_PAUSE_EVOLUTION=false
 ARG_SIGNALS=false
 ARG_VALIDATE_CONFIG=false
+ARG_DOCTOR=false
 
 _show_help() {
     cat <<'HELPTEXT'
@@ -10899,6 +11104,7 @@ Standard Mode:
   --stats               Display run history and performance trends (spec-26)
   --budget-check        Show weekly allowance status without starting a run (spec-35)
   --validate-config     Validate config file and exit (spec-50)
+  --doctor              Check environment, tools, and project health (spec-48)
   --help, -h            Show this help message
 
 Evolution Mode:
@@ -11076,6 +11282,10 @@ while [ $# -gt 0 ]; do
             ARG_VALIDATE_CONFIG=true
             shift
             ;;
+        --doctor)
+            ARG_DOCTOR=true
+            shift
+            ;;
         --help|-h)
             _show_help
             exit 0
@@ -11087,6 +11297,13 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# --- Doctor / health check (spec-48) ---
+# Runs before dependency checks and config load — it IS the comprehensive check.
+if [ "$ARG_DOCTOR" = "true" ]; then
+    doctor_check
+    exit $?
+fi
 
 # --- Check system dependencies (claude, jq, git) ---
 # automaton.sh requires all three; fail fast with install instructions if missing.

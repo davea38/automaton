@@ -448,21 +448,21 @@ These specs catch problems early — bad config, missing tools, lost error conte
 
 - [x] Add `--validate-config` CLI flag that runs validation only, prints results, and exits (WHY: CI pipelines and editor integrations need a standalone validation command that doesn't start execution) <!-- test: tests/test_config_validation.sh -->
 
-### Spec 48 — Doctor / Health Check
+### Spec 48 — Doctor / Health Check — COMPLETE
 
 #### 48.1 Doctor Function
 
-- [ ] Implement `doctor_check()` in `automaton.sh` (~80-100 lines) with a `report_check` helper for consistent output formatting: check bash ≥4.0, git ≥2.20, claude presence, jq ≥1.5 — missing tool = FAIL, wrong version = FAIL with detected vs required versions (WHY: users encounter cryptic failures mid-execution when dependencies are missing or outdated; diagnosing this after tokens are spent is frustrating and wasteful) <!-- test: tests/test_doctor.sh -->
+- [x] Implement `doctor_check()` in `automaton.sh` (~80-100 lines) with a `report_check` helper for consistent output formatting: check bash ≥4.0, git ≥2.20, claude presence, jq ≥1.5 — missing tool = FAIL, wrong version = FAIL with detected vs required versions (WHY: users encounter cryptic failures mid-execution when dependencies are missing or outdated; diagnosing this after tokens are spent is frustrating and wasteful) <!-- test: tests/test_doctor.sh -->
 
-- [ ] Add claude auth check (run `claude --version`, no API call), disk space check (WARN below 100MB, FAIL below 10MB using `df`), git repo state checks (is-repo, has-commits, has-remote, clean/dirty tree) to `doctor_check()` (WHY: auth problems and low disk space cause failures that look like code bugs; git state checks prevent confusion about which branch/remote is active) <!-- test: tests/test_doctor.sh -->
+- [x] Add claude auth check (run `claude --version`, no API call), disk space check (WARN below 100MB, FAIL below 10MB using `df`), git repo state checks (is-repo, has-commits, has-remote, clean/dirty tree) to `doctor_check()` (WHY: auth problems and low disk space cause failures that look like code bugs; git state checks prevent confusion about which branch/remote is active) <!-- test: tests/test_doctor.sh -->
 
-- [ ] Add project file checks to `doctor_check()`: `automaton.config.json` (WARN if missing, FAIL if invalid JSON), `AGENTS.md` (WARN), `specs/` (WARN), `PRD.md` (WARN), `.automaton/` (PASS if writable or absent, FAIL if not writable) (WHY: missing project files produce confusing phase failures; checking upfront with actionable fix messages eliminates this) <!-- test: tests/test_doctor.sh -->
+- [x] Add project file checks to `doctor_check()`: `automaton.config.json` (WARN if missing, FAIL if invalid JSON), `AGENTS.md` (WARN), `specs/` (WARN), `PRD.md` (WARN), `.automaton/` (PASS if writable or absent, FAIL if not writable) (WHY: missing project files produce confusing phase failures; checking upfront with actionable fix messages eliminates this) <!-- test: tests/test_doctor.sh -->
 
 #### 48.2 Output and CLI
 
-- [ ] Add ANSI-colored PASS/WARN/FAIL/INFO output with `NO_COLOR` env var and non-TTY detection, plus a summary line counting each category (WHY: scannable colored output lets users immediately see what needs attention; `NO_COLOR` respect is the standard for accessibility and CI) <!-- test: tests/test_doctor.sh -->
+- [x] Add ANSI-colored PASS/WARN/FAIL/INFO output with `NO_COLOR` env var and non-TTY detection, plus a summary line counting each category (WHY: scannable colored output lets users immediately see what needs attention; `NO_COLOR` respect is the standard for accessibility and CI) <!-- test: tests/test_doctor.sh -->
 
-- [ ] Add `--doctor` CLI flag that calls `doctor_check()` and exits with 0 (pass/warn only) or 1 (any FAIL) (WHY: the flag is the entry point — it must be discoverable and return standard exit codes for scripting) <!-- test: tests/test_doctor.sh -->
+- [x] Add `--doctor` CLI flag that calls `doctor_check()` and exits with 0 (pass/warn only) or 1 (any FAIL) (WHY: the flag is the entry point — it must be discoverable and return standard exit codes for scripting) <!-- test: tests/test_doctor.sh -->
 
 ### Spec 49 — Output Truncation (Head/Tail)
 
