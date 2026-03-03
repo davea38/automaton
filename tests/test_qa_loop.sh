@@ -91,11 +91,11 @@ cat > "$test_dir/fix_project/IMPLEMENTATION_PLAN.md" <<'PLAN'
 # Implementation Plan
 - [x] Task 1
 PLAN
-# Use a failing test to trigger fix task creation
+# Use 2 max iterations with a failing test to trigger fix task creation
+# (fix tasks are only created when more iterations remain)
 TEST_AUTOMATON_DIR="$test_dir/fix_project/.automaton" \
     TEST_PROJECT_ROOT="$test_dir/fix_project" \
-    QA_MAX_ITERATIONS=1 \
-    bash -c "source '$test_dir/harness.sh'; QA_MAX_ITERATIONS=1; _qa_run_loop 'exit 1' '/nonexistent/specs'" 2>/dev/null || true
+    bash -c "source '$test_dir/harness.sh'; QA_MAX_ITERATIONS=2; _qa_run_loop 'exit 1' '/nonexistent/specs'" 2>/dev/null || true
 if grep -q 'QA-' "$test_dir/fix_project/IMPLEMENTATION_PLAN.md" 2>/dev/null; then
     assert_exit_code 0 0 "_qa_run_loop creates QA fix tasks on failure"
 else

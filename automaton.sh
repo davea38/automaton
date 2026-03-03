@@ -11279,6 +11279,93 @@ _qa_create_fix_tasks() {
     echo "$count"
 }
 
+# Runs the QA retry loop: validate → create fix tasks → build fixes → validate
+# again, up to qa_max_iterations. Returns structured JSON with final verdict.
+# The loop exits early on PASS or budget exhaustion.
+# Usage: _qa_run_loop "test_command" "spec_dir"
+# Outputs JSON: {verdict, iterations_run, final_failures, fix_tasks_created}
+_qa_run_loop() {
+    local test_cmd="${1:-bash -n automaton.sh}"
+    local spec_dir="${2:-specs}"
+    local max_iter="${QA_MAX_ITERATIONS:-5}"
+    local qa_iter=1
+    local total_fix_tasks=0
+    local last_verdict="FAIL"
+    local last_failures="[]"
+    local last_failed=0
+    local last_passed=0
+
+    mkdir -p "${AUTOMATON_DIR}/qa"
+
+    log "QA" "Starting QA loop (max ${max_iter} iterations)"
+
+    while [ "$qa_iter" -le "$max_iter" ]; do
+        local prev_iter=$((qa_iter - 1))
+
+        log "QA" "Iteration ${qa_iter}/${max_iter}: running validation"
+
+        # Step 1: Validate
+        local result
+        result=$(_qa_validate "$qa_iter" "$prev_iter" "$test_cmd" "$spec_dir")
+
+        last_verdict=$(echo "$result" | jq -r '.verdict')
+        last_failures=$(echo "$result" | jq -c '.failures')
+        last_failed=$(echo "$result" | jq -r '.failed')
+        last_passed=$(echo "$result" | jq -r '.passed')
+
+        # Step 2: Early exit on PASS
+        if [ "$last_verdict" = "PASS" ]; then
+            log "QA" "Iteration ${qa_iter}: all checks passed"
+            break
+        fi
+
+        log "QA" "Iteration ${qa_iter}: ${last_failed} failure(s) found"
+
+        # Step 3: Create fix tasks (only if more iterations remain)
+        if [ "$qa_iter" -lt "$max_iter" ]; then
+            local tasks_created
+            tasks_created=$(_qa_create_fix_tasks "$last_failures")
+            total_fix_tasks=$((total_fix_tasks + tasks_created))
+            log "QA" "Iteration ${qa_iter}: created ${tasks_created} fix task(s)"
+        fi
+
+        # Step 4: Budget check before next iteration
+        if [ "$qa_iter" -lt "$max_iter" ]; then
+            local budget_file="${AUTOMATON_DIR}/budget.json"
+            if [ -f "$budget_file" ]; then
+                local tokens_remaining
+                if [ "${BUDGET_MODE:-fixed}" = "allowance" ]; then
+                    tokens_remaining=$(jq '.tokens_remaining // 999999' "$budget_file" 2>/dev/null || echo "999999")
+                else
+                    tokens_remaining=$(jq '(.limits.max_total_tokens - .used.total_tokens) // 999999' "$budget_file" 2>/dev/null || echo "999999")
+                fi
+                if [ "$tokens_remaining" -lt "${BUDGET_PER_ITERATION:-100000}" ]; then
+                    log "QA" "Insufficient budget for another QA iteration (${tokens_remaining} tokens remaining). Stopping."
+                    break
+                fi
+            fi
+        fi
+
+        qa_iter=$((qa_iter + 1))
+    done
+
+    # Output final result JSON
+    jq -n --arg verdict "$last_verdict" \
+        --argjson iterations "$qa_iter" \
+        --argjson failures "$last_failures" \
+        --argjson fix_tasks "$total_fix_tasks" \
+        --argjson passed "$last_passed" \
+        --argjson failed "$last_failed" \
+        '{
+            verdict: $verdict,
+            iterations_run: (if $iterations > '"$max_iter"' then '"$max_iter"' else $iterations end),
+            passed: $passed,
+            failed: $failed,
+            final_failures: $failures,
+            fix_tasks_created: $fix_tasks
+        }'
+}
+
 # Centralized agent invocation. Pipes the given prompt file into `claude -p`
 # with stream-json output, the specified model, and configured flags.
 # When agents.use_native_definitions is true (spec-27), invokes
@@ -15207,6 +15294,26 @@ run_orchestration() {
             build)
                 # Gate 4: build completion. On fail: continue building (spec-05)
                 if gate_check "build_completion"; then
+                    # QA loop (spec-46): validate → fix → rebuild before review
+                    if [ "${QA_ENABLED:-true}" = "true" ]; then
+                        log "ORCHESTRATOR" "Running QA validation loop before review"
+                        local test_cmd
+                        test_cmd=$(grep -E '^- Test:' AGENTS.md 2>/dev/null | head -1 | sed 's/^- Test: *//' || echo "bash -n automaton.sh")
+                        [ -z "$test_cmd" ] && test_cmd="bash -n automaton.sh"
+                        local qa_result
+                        qa_result=$(_qa_run_loop "$test_cmd" "${PROJECT_ROOT:-.}/specs")
+                        local qa_verdict
+                        qa_verdict=$(echo "$qa_result" | jq -r '.verdict')
+                        local qa_iters
+                        qa_iters=$(echo "$qa_result" | jq -r '.iterations_run')
+                        local qa_fixes
+                        qa_fixes=$(echo "$qa_result" | jq -r '.fix_tasks_created')
+                        if [ "$qa_verdict" = "PASS" ]; then
+                            log "ORCHESTRATOR" "QA passed after ${qa_iters} iteration(s)"
+                        else
+                            log "ORCHESTRATOR" "QA exhausted ${qa_iters} iterations with unresolved failures (${qa_fixes} fix tasks created)"
+                        fi
+                    fi
                     transition_to_phase "review"
                 else
                     if [ "$max_iter" -gt 0 ] && [ "$phase_iteration" -ge "$max_iter" ]; then

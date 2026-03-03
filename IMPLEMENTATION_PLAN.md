@@ -496,7 +496,7 @@ These specs catch problems early — bad config, missing tools, lost error conte
 
 - [x] Implement targeted fix task creation: append `QA-fix:`, `QA-implement:`, `QA-regression:`, or `QA-style:` prefixed tasks to IMPLEMENTATION_PLAN.md based on failure type, with `(PERSISTENT)` escalation flag after 2 consecutive appearances (WHY: targeted tasks give the build agent specific context for each failure type instead of a generic "fix the tests" instruction) <!-- test: tests/test_qa_fix_tasks.sh -->
 
-- [ ] Implement the QA retry loop: validate → create fix tasks → build fixes → validate again, up to `qa_max_iterations` with budget check before each iteration (WHY: the retry loop is the core value — it catches and fixes mechanical problems cheaply with Sonnet before the expensive Opus review phase) <!-- test: tests/test_qa_loop.sh -->
+- [x] Implement the QA retry loop: validate → create fix tasks → build fixes → validate again, up to `qa_max_iterations` with budget check before each iteration (WHY: the retry loop is the core value — it catches and fixes mechanical problems cheaply with Sonnet before the expensive Opus review phase) <!-- test: tests/test_qa_loop.sh -->
 
 #### 46.4 QA Completion
 
