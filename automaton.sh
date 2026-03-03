@@ -12306,9 +12306,25 @@ fi
 
 # ---- Run Claude agent in the worktree ----
 set +e
-AGENT_RESULT=$(claude "${claude_args[@]}" < "$PROMPT_FILE" 2>&1)
+_tmp_output=$(mktemp)
+claude "${claude_args[@]}" < "$PROMPT_FILE" > "$_tmp_output" 2>&1
 exit_code=$?
 set -e
+
+# ---- Truncate output (spec-49, inlined since wrapper is standalone) ----
+_total_lines=$(wc -l < "$_tmp_output" 2>/dev/null || echo 0)
+_total_lines=$((_total_lines + 0))
+_OUT_MAX=200; _OUT_HEAD=50; _OUT_TAIL=150
+if [ "$_total_lines" -le "$_OUT_MAX" ]; then
+    AGENT_RESULT=$(cat "$_tmp_output")
+else
+    _logs_dir="$PROJECT_ROOT/.automaton/logs"
+    mkdir -p "$_logs_dir"
+    cp "$_tmp_output" "$_logs_dir/output_build_${BUILDER_NUM}_$(date +%s).log"
+    _trunc=$((_total_lines - _OUT_HEAD - _OUT_TAIL))
+    AGENT_RESULT=$(head -n "$_OUT_HEAD" "$_tmp_output"; echo "... [$_trunc lines truncated] ..."; tail -n "$_OUT_TAIL" "$_tmp_output")
+fi
+rm -f "$_tmp_output"
 
 completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -14100,7 +14116,11 @@ run_agent_teams_build() {
     local agent_result=""
     local agent_exit_code=0
 
-    agent_result=$(echo "$dynamic_context" | claude "${cmd_args[@]}" 2>&1) || agent_exit_code=$?
+    local _tmp_output
+    _tmp_output=$(mktemp)
+    echo "$dynamic_context" | claude "${cmd_args[@]}" > "$_tmp_output" 2>&1 || agent_exit_code=$?
+    agent_result=$(truncate_output "$_tmp_output" "agent_teams" "${CURRENT_ITERATION:-0}")
+    rm -f "$_tmp_output"
 
     log "ORCHESTRATOR" "Agent Teams session finished: exit_code=$agent_exit_code"
 

@@ -53,7 +53,10 @@
     "test_framework": "assertions",
     "bootstrap_enabled": true,
     "bootstrap_script": ".automaton/init.sh",
-    "bootstrap_timeout_ms": 2000
+    "bootstrap_timeout_ms": 2000,
+    "output_max_lines": 200,
+    "output_head_lines": 50,
+    "output_tail_lines": 150
   },
   "git": {
     "auto_push": true,
