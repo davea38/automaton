@@ -773,6 +773,154 @@ doctor_check() {
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# First-Time Setup Wizard (spec-57)
+# ---------------------------------------------------------------------------
+# Interactive wizard that generates automaton.config.json on first run.
+# Uses only read, printf, jq, and bash builtins — no Claude API calls.
+setup_wizard() {
+    # Non-TTY check: if stdin is not a terminal, cannot run interactively
+    if [ ! -t 0 ]; then
+        echo "Error: --setup requires an interactive terminal (stdin is not a TTY)." >&2
+        return 1
+    fi
+
+    local _decline_count=0
+
+    while true; do
+        # --- Prompt 1: Model Tier ---
+        local model_tier="sonnet"
+        printf '\nSelect model tier [sonnet]:\n'
+        printf '  1) opus   -- highest quality, ~$15/M input tokens\n'
+        printf '  2) sonnet -- balanced quality/cost, ~$3/M input tokens\n'
+        printf 'Choice (1 or 2): '
+        read -r _choice
+        case "$_choice" in
+            1) model_tier="opus" ;;
+            2|"") model_tier="sonnet" ;;
+            *) model_tier="sonnet" ;;
+        esac
+
+        # --- Prompt 2: Budget Limit ---
+        local budget_usd="50"
+        printf '\nMaximum spend limit in USD [50]: '
+        read -r _budget_input
+        if [ -z "$_budget_input" ]; then
+            budget_usd="50"
+        elif [[ "$_budget_input" =~ ^[0-9]+(\.[0-9]+)?$ ]] && [ "$(echo "$_budget_input > 0" | bc -l 2>/dev/null || echo 0)" = "1" ]; then
+            budget_usd="$_budget_input"
+        else
+            printf 'Invalid input. Enter a positive number [50]: '
+            read -r _budget_input
+            if [[ "$_budget_input" =~ ^[0-9]+(\.[0-9]+)?$ ]] && [ "$(echo "$_budget_input > 0" | bc -l 2>/dev/null || echo 0)" = "1" ]; then
+                budget_usd="$_budget_input"
+            else
+                budget_usd="50"
+            fi
+        fi
+
+        # --- Prompt 3: Auto-Push ---
+        local auto_push="true"
+        printf '\nAuto-push commits to git remote? (yes/no) [yes]: '
+        read -r _push_input
+        case "$(echo "$_push_input" | tr '[:upper:]' '[:lower:]')" in
+            y|yes|"") auto_push="true" ;;
+            n|no) auto_push="false" ;;
+            *)
+                printf 'Invalid input. (yes/no) [yes]: '
+                read -r _push_input
+                case "$(echo "$_push_input" | tr '[:upper:]' '[:lower:]')" in
+                    n|no) auto_push="false" ;;
+                    *) auto_push="true" ;;
+                esac
+                ;;
+        esac
+
+        # --- Prompt 4: Skip Research ---
+        local skip_research="false"
+        printf '\nSkip research phase? (yes/no) [no]:\n'
+        printf "  (Choose 'yes' for existing codebases where research is unnecessary)\n"
+        printf 'Choice: '
+        read -r _skip_input
+        case "$(echo "$_skip_input" | tr '[:upper:]' '[:lower:]')" in
+            y|yes) skip_research="true" ;;
+            n|no|"") skip_research="false" ;;
+            *) skip_research="false" ;;
+        esac
+
+        # --- Confirmation Summary ---
+        local _push_display="yes"
+        [ "$auto_push" = "false" ] && _push_display="no"
+        local _skip_display="no"
+        [ "$skip_research" = "true" ] && _skip_display="yes"
+
+        printf '\n--- Setup Summary ---\n'
+        printf '  Model tier:      %s\n' "$model_tier"
+        printf '  Budget limit:    $%s\n' "$budget_usd"
+        printf '  Auto-push:       %s\n' "$_push_display"
+        printf '  Skip research:   %s\n' "$_skip_display"
+        printf '  Config file:     automaton.config.json\n'
+        printf '\nWrite this configuration? (yes/no) [yes]: '
+        read -r _confirm
+        case "$(echo "$_confirm" | tr '[:upper:]' '[:lower:]')" in
+            n|no)
+                ((_decline_count++))
+                if [ "$_decline_count" -ge 2 ]; then
+                    printf '\nSetup cancelled. Edit automaton.config.json manually or run --setup again.\n'
+                    return 1
+                fi
+                printf '\nRestarting setup...\n'
+                continue
+                ;;
+        esac
+
+        # --- Generate Config ---
+        jq -n \
+            --arg model "$model_tier" \
+            --arg budget "$budget_usd" \
+            --argjson auto_push "$auto_push" \
+            --argjson skip_research "$skip_research" \
+            '{
+                models: { primary: $model, research: "sonnet", planning: "opus", building: $model, review: "opus", subagent_default: "sonnet" },
+                budget: { mode: "api", max_total_tokens: 10000000, max_cost_usd: ($budget | tonumber), per_phase: { research: 500000, plan: 1000000, build: 7000000, review: 1500000 }, per_iteration: 500000 },
+                rate_limits: { preset: "auto", tokens_per_minute: 80000, requests_per_minute: 50, cooldown_seconds: 60, backoff_multiplier: 2, max_backoff_seconds: 300 },
+                execution: { max_iterations: { research: 3, plan: 2, build: 0, review: 2 }, parallel_builders: 1, stall_threshold: 3, max_consecutive_failures: 3, retry_delay_seconds: 10, phase_timeout_seconds: { research: 0, plan: 0, build: 0, review: 0 }, test_first_enabled: true, test_scaffold_iterations: 2, test_framework: "assertions", bootstrap_enabled: true, bootstrap_script: ".automaton/init.sh", bootstrap_timeout_ms: 2000, output_max_lines: 200, output_head_lines: 50, output_tail_lines: 150, qa_enabled: true, qa_max_iterations: 5, qa_blind_validation: false, qa_model: "sonnet" },
+                git: { auto_push: $auto_push, auto_commit: true, branch_prefix: "automaton/" },
+                flags: { dangerously_skip_permissions: true, verbose: true, skip_research: $skip_research, skip_review: false, blind_validation: false, steelman_critique: false },
+                blind_validation: { max_diff_lines: 500 },
+                parallel: { enabled: false, mode: "automaton", max_builders: 3 },
+                self_build: { enabled: false, max_files_per_iteration: 3, max_lines_changed_per_iteration: 200, protected_functions: ["run_orchestration", "_handle_shutdown"], require_smoke_test: true },
+                journal: { max_runs: 50 },
+                agents: { use_native_definitions: false },
+                garden: { enabled: true, seed_ttl_days: 14, sprout_ttl_days: 30, sprout_threshold: 2, bloom_threshold: 3, bloom_priority_threshold: 40, signal_seed_threshold: 0.7, max_active_ideas: 50, auto_seed_from_metrics: true, auto_seed_from_signals: true },
+                stigmergy: { enabled: true, initial_strength: 0.3, reinforce_increment: 0.15, decay_floor: 0.05, match_threshold: 0.6, max_signals: 100 },
+                quorum: { enabled: true, voters: ["conservative", "ambitious", "efficiency", "quality", "advocate"], thresholds: { seed_promotion: 3, bloom_implementation: 3, constitutional_amendment: 4, emergency_override: 5 }, max_tokens_per_voter: 500, max_cost_per_cycle_usd: 1, rejection_cooldown_cycles: 5, model: "sonnet" },
+                metrics: { enabled: true, trend_window: 5, degradation_alert_threshold: 3, snapshot_retention: 100 },
+                evolution: { enabled: false, max_cycles: 0, max_cost_per_cycle_usd: 5.00, convergence_threshold: 5, idle_garden_threshold: 3, branch_prefix: "automaton/evolve-", auto_merge: true, reflect_model: "sonnet", ideate_model: "sonnet", observe_model: "sonnet" },
+                critique: { auto_preflight: false, block_on_error: true, max_token_estimate: 80000 },
+                notifications: { webhook_url: "", events: ["run_started", "phase_completed", "run_completed", "run_failed", "escalation"], command: "", timeout_seconds: 5 },
+                safety: { max_total_lines: 15000, max_total_functions: 300, min_test_pass_rate: 0.80, max_consecutive_failures: 3, max_consecutive_regressions: 2, preserve_failed_branches: true, preflight_enabled: true, sandbox_testing_enabled: true },
+                work_log: { enabled: true, log_level: "normal" },
+                debt_tracking: { enabled: true, threshold: 20, markers: ["TODO", "FIXME", "HACK", "DEBT", "WORKAROUND", "TEMPORARY"] },
+                guardrails_mode: "warn"
+            }' > automaton.config.json
+
+        printf '\nConfiguration written to automaton.config.json\n'
+
+        # --- Create .automaton/ if absent ---
+        if [ ! -d ".automaton" ]; then
+            mkdir -p ".automaton"
+            printf 'Created .automaton/ state directory.\n'
+        fi
+
+        # --- Post-setup doctor check (spec-48) ---
+        printf '\nRunning environment check...\n\n'
+        doctor_check || true
+
+        return 0
+    done
+}
+
 # Applies Max Plan preset defaults when max_plan_preset is true (spec-35).
 # Sets budget mode to allowance and models to opus, enabling cascading
 # optimizations: rate limits and parallel defaults trigger from allowance mode.
@@ -12730,6 +12878,8 @@ ARG_SKIP_CRITIQUE=false
 ARG_STEELMAN=false
 ARG_COMPLEXITY=""
 ARG_LOG_LEVEL=""
+ARG_SETUP=false
+ARG_NO_SETUP=false
 
 _show_help() {
     cat <<'HELPTEXT'
@@ -12747,6 +12897,8 @@ Standard Mode:
   --self --continue     Auto-pick highest-priority backlog item and run (spec-26)
   --stats               Display run history and performance trends (spec-26)
   --budget-check        Show weekly allowance status without starting a run (spec-35)
+  --setup               Run interactive setup wizard (re-generates config) (spec-57)
+  --no-setup            Skip setup wizard; use built-in defaults (spec-57)
   --validate-config     Validate config file and exit (spec-50)
   --doctor              Check environment, tools, and project health (spec-48)
   --critique-specs      Run spec critique, produce report, and exit (spec-47)
@@ -12963,6 +13115,14 @@ while [ $# -gt 0 ]; do
             ARG_LOG_LEVEL="$2"
             shift 2
             ;;
+        --setup)
+            ARG_SETUP=true
+            shift
+            ;;
+        --no-setup)
+            ARG_NO_SETUP=true
+            shift
+            ;;
         --help|-h)
             _show_help
             exit 0
@@ -12974,6 +13134,12 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# --- Mutual exclusion: --setup + --no-setup (spec-57) ---
+if [ "$ARG_SETUP" = "true" ] && [ "$ARG_NO_SETUP" = "true" ]; then
+    echo "Error: --setup and --no-setup are mutually exclusive." >&2
+    exit 1
+fi
 
 # --- Doctor / health check (spec-48) ---
 # Runs before dependency checks and config load — it IS the comprehensive check.
@@ -13003,6 +13169,24 @@ done
 if [ "$_dep_missing" = "true" ]; then
     echo "automaton.sh requires claude, jq, and git. Install missing dependencies and retry." >&2
     exit 1
+fi
+
+# --- First-time setup wizard (spec-57) ---
+# Runs after dependency checks, before config load. Detects missing config.
+if [ "$ARG_SETUP" = "true" ]; then
+    # Force re-run even if config exists
+    setup_wizard
+    _wizard_rc=$?
+    if [ "$_wizard_rc" -ne 0 ]; then
+        exit 1
+    fi
+elif [ "$ARG_NO_SETUP" != "true" ] && [ -z "$ARG_CONFIG_FILE" ] && [ ! -f "automaton.config.json" ]; then
+    # First-run detection: no config file and --no-setup not passed
+    if [ -t 0 ]; then
+        printf 'No automaton.config.json found. Starting setup wizard...\n'
+        setup_wizard || true
+    fi
+    # Non-TTY: silently continue with defaults (equivalent to --no-setup)
 fi
 
 # --- Apply --config before loading configuration ---

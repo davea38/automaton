@@ -37,8 +37,8 @@ rc=$?
 assert_exit_code 0 "$rc" "ARG_NO_SETUP default is false"
 
 # --- Test 5: --setup + --no-setup mutual exclusion ---
-output=$(bash "$script_file" --setup --no-setup 2>&1) || true
-rc=$?
+rc=0
+output=$(bash "$script_file" --setup --no-setup 2>&1) || rc=$?
 assert_exit_code 1 "$rc" "--setup + --no-setup exits with error code 1"
 assert_contains "$output" "mutually exclusive" "--setup + --no-setup error mentions mutual exclusion"
 
@@ -57,8 +57,8 @@ echo "PASS: --no-setup does not hang on non-TTY"
 ((_TEST_PASS_COUNT++))
 
 # --- Test 7: --setup on non-TTY exits 1 ---
-output=$(echo "" | bash "$script_file" --setup 2>&1) || true
-rc=$?
+rc=0
+output=$(echo "" | bash "$script_file" --setup 2>&1) || rc=$?
 assert_exit_code 1 "$rc" "--setup on non-TTY exits 1"
 assert_contains "$output" "interactive" "--setup non-TTY error mentions interactive terminal"
 
