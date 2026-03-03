@@ -75,12 +75,22 @@ fi
 blind_flag=$(echo "$output" | jq -r '.checks.blind_mode // false' 2>/dev/null)
 assert_equals "true" "$blind_flag" "_qa_validate_blind sets checks.blind_mode to true"
 
-# --- Test 6: _qa_validate_blind with passing tests returns PASS ---
-output=$(TEST_AUTOMATON_DIR="$test_dir/project1/.automaton" \
-    TEST_PROJECT_ROOT="$test_dir/project1" \
-    bash -c "source '$test_dir/harness.sh'; _qa_validate_blind 1 0 'exit 0' '$test_dir/project1/specs'" 2>/dev/null) || true
+# --- Test 6: _qa_validate_blind with passing tests and no unmet criteria returns PASS ---
+mkdir -p "$test_dir/project1b/.automaton/qa"
+mkdir -p "$test_dir/project1b/specs"
+# Spec with no unchecked acceptance criteria
+cat > "$test_dir/project1b/specs/spec-99-test.md" <<'EOF'
+# Spec 99: Test Spec
+
+## Requirements
+
+Some requirements here.
+EOF
+output=$(TEST_AUTOMATON_DIR="$test_dir/project1b/.automaton" \
+    TEST_PROJECT_ROOT="$test_dir/project1b" \
+    bash -c "source '$test_dir/harness.sh'; _qa_validate_blind 1 0 'exit 0' '$test_dir/project1b/specs'" 2>/dev/null) || true
 verdict=$(echo "$output" | jq -r '.verdict' 2>/dev/null)
-assert_equals "PASS" "$verdict" "_qa_validate_blind returns PASS with passing tests and no specs"
+assert_equals "PASS" "$verdict" "_qa_validate_blind returns PASS with passing tests and no unmet criteria"
 
 # --- Test 7: _qa_validate_blind with failing tests returns FAIL ---
 output=$(TEST_AUTOMATON_DIR="$test_dir/project1/.automaton" \

@@ -502,7 +502,7 @@ These specs catch problems early — bad config, missing tools, lost error conte
 
 - [x] Implement QA exhaustion handling: write `.automaton/qa/failure-report.md` listing unresolved failures with types and iteration history, pass report as context to Phase 4 review (WHY: when QA can't fix everything, the review agent needs to know exactly what failed and how many times — this prevents redundant investigation) <!-- test: tests/test_qa_report.sh -->
 
-- [ ] Implement blind validation option: when `qa_blind_validation` is true, run QA agent with only specs and test output, no source code (WHY: blind validation prevents confirmation bias where the QA agent rationalizes implementation choices instead of checking spec compliance) <!-- test: tests/test_qa_blind.sh -->
+- [x] Implement blind validation option: when `qa_blind_validation` is true, run QA agent with only specs and test output, no source code (WHY: blind validation prevents confirmation bias where the QA agent rationalizes implementation choices instead of checking spec compliance) <!-- test: tests/test_qa_blind.sh -->
 
 ---
 

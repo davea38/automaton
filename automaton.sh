@@ -11081,6 +11081,48 @@ _qa_check_spec_criteria() {
     echo "$failures"
 }
 
+# Blind spec criteria check: evaluates acceptance criteria using only test output,
+# without searching source code. Prevents confirmation bias by not letting the
+# validator see implementation details. Criteria mentioning function names are
+# flagged as unverifiable unless the test output confirms them.
+# Usage: _qa_check_spec_criteria_blind "spec_dir" "test_output"
+# Outputs JSON array of unmet/unverifiable criteria.
+_qa_check_spec_criteria_blind() {
+    local spec_dir="${1:-specs}"
+    local test_output="${2:-}"
+    local failures="[]"
+    if [ ! -d "$spec_dir" ]; then
+        echo "$failures"
+        return 0
+    fi
+    local spec_file
+    for spec_file in "$spec_dir"/spec-*.md; do
+        [ -f "$spec_file" ] || continue
+        local spec_name
+        spec_name=$(basename "$spec_file" .md)
+        local criteria
+        criteria=$(sed -n '/## Acceptance Criteria/,/^## /p' "$spec_file" | grep -E '^\- \[ \]' 2>/dev/null || true)
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            local criterion_text
+            criterion_text=$(echo "$line" | sed 's/^- \[ \] //')
+            # In blind mode, check if the test output mentions the criterion's key terms
+            local fn_name
+            fn_name=$(echo "$criterion_text" | grep -oE '[a-z_]+\(\)' | head -1 | tr -d '()' || true)
+            if [ -n "$fn_name" ]; then
+                # Only flag if test output does NOT mention the function (cannot confirm)
+                if [ -z "$test_output" ] || ! echo "$test_output" | grep -qi "$fn_name" 2>/dev/null; then
+                    failures=$(echo "$failures" | jq -c --arg id "${spec_name}_${fn_name}_blind" \
+                        --arg desc "Blind: cannot verify function $fn_name from test output alone (criterion: $criterion_text)" \
+                        --arg src "$spec_file" --arg spec "$spec_name" \
+                        '. + [{"id": $id, "type": "spec_gap", "description": $desc, "source": $src, "spec": $spec}]')
+                fi
+            fi
+        done <<< "$criteria"
+    done
+    echo "$failures"
+}
+
 # Compares current failures against previous iteration to detect regressions.
 # Usage: _qa_scan_regressions "current_failures_json" prev_iteration_num
 # Outputs updated failures JSON with regression detection.
@@ -11226,7 +11268,74 @@ _qa_validate() {
         --argjson failures "$failures" \
         --argjson passed "$passed" --argjson failed "$total_failed" \
         --arg verdict "$verdict" \
-        '{iteration: $iter, checks: {tests_run: true, spec_criteria_checked: true, regressions_scanned: true}, failures: $failures, passed: $passed, failed: $failed, verdict: $verdict}'
+        '{iteration: $iter, checks: {tests_run: true, spec_criteria_checked: true, regressions_scanned: true, blind_mode: false}, failures: $failures, passed: $passed, failed: $failed, verdict: $verdict}'
+}
+
+# Blind QA validation pass. Runs tests and checks spec criteria using only test
+# output — no source code access. Prevents confirmation bias where the QA agent
+# rationalizes implementation choices instead of checking spec compliance.
+# Usage: _qa_validate_blind iter_num prev_iter_num test_command spec_dir
+# Outputs JSON result and writes iteration file.
+_qa_validate_blind() {
+    local iter_num="${1:-1}"
+    local prev_iter="${2:-0}"
+    local test_cmd="${3:-bash -n automaton.sh}"
+    local spec_dir="${4:-specs}"
+
+    mkdir -p "${AUTOMATON_DIR}/qa"
+    local failures="[]"
+    local passed=0 failed=0
+
+    # Step 1: Run tests (same as normal — tests are the primary signal in blind mode)
+    local test_result
+    test_result=$(_qa_run_tests "$test_cmd")
+    local test_exit_code
+    test_exit_code=$(echo "$test_result" | jq -r '.exit_code')
+    local test_output
+    test_output=$(echo "$test_result" | jq -r '.output')
+    if [ "$test_exit_code" -ne 0 ]; then
+        local test_output_summary
+        test_output_summary=$(echo "$test_output" | head -5)
+        local failure
+        failure=$(_qa_classify_failure "test_suite" "Test suite failed with exit code $test_exit_code: $test_output_summary" "test_command" "" "test_failure" "$iter_num" "false")
+        failures=$(echo "$failures" | jq -c --argjson f "$failure" '. + [$f]')
+        failed=$((failed + 1))
+    else
+        passed=$((passed + 1))
+    fi
+
+    # Step 2: Blind spec criteria check — uses only test output, no source code
+    local spec_failures
+    spec_failures=$(_qa_check_spec_criteria_blind "$spec_dir" "$test_output")
+    local spec_count
+    spec_count=$(echo "$spec_failures" | jq 'length')
+    if [ "$spec_count" -gt 0 ]; then
+        failures=$(echo "$failures" | jq -c --argjson sf "$spec_failures" '. + $sf')
+        failed=$((failed + spec_count))
+    else
+        passed=$((passed + 1))
+    fi
+
+    # Step 3: Scan for regressions (updates persistence flags)
+    failures=$(_qa_mark_persistent "$failures" "$prev_iter")
+
+    # Determine verdict
+    local total_failed
+    total_failed=$(echo "$failures" | jq 'length')
+    local verdict="PASS"
+    if [ "$total_failed" -gt 0 ]; then
+        verdict="FAIL"
+    fi
+
+    # Write iteration file
+    _qa_write_iteration "$iter_num" "$failures" "$passed" "$total_failed" "$verdict"
+
+    # Output result JSON (blind_mode flag indicates this was a blind validation)
+    jq -n --argjson iter "$iter_num" \
+        --argjson failures "$failures" \
+        --argjson passed "$passed" --argjson failed "$total_failed" \
+        --arg verdict "$verdict" \
+        '{iteration: $iter, checks: {tests_run: true, spec_criteria_checked: true, regressions_scanned: true, blind_mode: true}, failures: $failures, passed: $passed, failed: $failed, verdict: $verdict}'
 }
 
 # Creates targeted fix tasks in IMPLEMENTATION_PLAN.md based on QA failure types.
@@ -11392,11 +11501,15 @@ _qa_run_loop() {
     while [ "$qa_iter" -le "$max_iter" ]; do
         local prev_iter=$((qa_iter - 1))
 
-        log "QA" "Iteration ${qa_iter}/${max_iter}: running validation"
+        log "QA" "Iteration ${qa_iter}/${max_iter}: running validation${QA_BLIND_VALIDATION:+ (blind mode)}"
 
-        # Step 1: Validate
+        # Step 1: Validate (blind mode uses only specs + test output, no source code)
         local result
-        result=$(_qa_validate "$qa_iter" "$prev_iter" "$test_cmd" "$spec_dir")
+        if [ "${QA_BLIND_VALIDATION:-false}" = "true" ]; then
+            result=$(_qa_validate_blind "$qa_iter" "$prev_iter" "$test_cmd" "$spec_dir")
+        else
+            result=$(_qa_validate "$qa_iter" "$prev_iter" "$test_cmd" "$spec_dir")
+        fi
 
         last_verdict=$(echo "$result" | jq -r '.verdict')
         last_failures=$(echo "$result" | jq -c '.failures')
