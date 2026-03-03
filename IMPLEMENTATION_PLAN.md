@@ -413,3 +413,197 @@ This spec adds the human-facing commands that wrap all evolution subsystems in a
 - [x] Create 4 skill files in `.claude/skills/`: `garden-tender.md` (guided garden review), `constitutional-review.md` (guided constitution review and amendments), `signal-reader.md` (guided signal interpretation), `metrics-analyzer.md` (guided metrics analysis and trend interpretation) (WHY: skills provide higher-level guided workflows beyond what individual CLI commands offer — they help the human make informed decisions about garden tending, governance, and system health) <!-- test: tests/test_cli_skills.sh -->
 
 - [x] Update `_show_help()` in `automaton.sh` to include all new commands organized by category (Standard Mode, Evolution Mode, Garden, Observation, Governance) (WHY: discoverable help text is essential — users who do not know about `--garden` or `--health` cannot use the evolution interface effectively) <!-- test: tests/test_cli_help.sh -->
+
+---
+
+## Specs 46-58: Quality, Routing, and Observability
+
+Thirteen new specs add: a post-build QA validation loop (the #1 competitive gap), pre-flight validation for both config and specs, head+tail output truncation, complexity-based pipeline routing, notification callbacks, steelman/blind review patterns, structured work logs, technical debt tracking, a first-time setup wizard, and design principle guard rails. All 13 specs are 100% unimplemented — no functions, CLI flags, config keys, test files, or `.automaton/` artifacts exist for any of them.
+
+**Key codebase fact**: `automaton.sh` is currently 14,767 lines. Spec 58's proposed 5,000-line ceiling would fail on day one. The plan notes this conflict; the threshold may need adjustment to reflect the current codebase reality.
+
+---
+
+## Tier 10: Core Quality Infrastructure (P0-P1, No New-Spec Dependencies)
+
+These specs catch problems early — bad config, missing tools, lost error context — and add the #1 missing feature (QA loop). They depend only on existing specs already fully implemented.
+
+### Spec 50 — Config Pre-Flight Validation
+
+#### 50.1 Validation Function
+
+- [x] Implement `validate_config()` in `automaton.sh` that runs `jq empty` for JSON syntax, then checks types (string/number/boolean) for all 20+ config fields using `jq type`, collects errors into a `CONFIG_ERRORS` bash array (WHY: catching all errors in one pass lets the user fix everything at once instead of hitting errors one-by-one during execution, wasting tokens each time) <!-- test: tests/test_config_validation.sh -->
+
+- [x] Add range validation in `validate_config()`: `budget.max_total_tokens > 0`, `budget.max_cost_usd > 0`, `budget.per_iteration > 0`, `rate_limits.tokens_per_minute > 0`, `rate_limits.backoff_multiplier > 1.0`, `execution.stall_threshold >= 1`, `execution.max_consecutive_failures >= 1` (WHY: negative or zero values in budget/rate fields cause division-by-zero or infinite loops deep in execution where the root cause is invisible) <!-- test: tests/test_config_validation.sh -->
+
+- [x] Add enum validation in `validate_config()`: all `models.*` fields must be one of `opus|sonnet|haiku`, reporting the invalid value and field path (WHY: a typo like `"sonnet "` or `"gpt-4"` silently passes config load but causes Claude CLI failures mid-build) <!-- test: tests/test_config_validation.sh -->
+
+- [x] Add cross-field conflict detection in `validate_config()`: `per_phase.*` must not exceed `max_total_tokens`, `per_iteration` must not exceed smallest `per_phase.*` (WHY: conflicting budget boundaries cause the orchestrator to exceed phase budgets while believing it's within limits) <!-- test: tests/test_config_validation.sh -->
+
+- [x] Add warnings (stderr, non-blocking) for unusual values: `max_iterations.build > 50`, `max_cost_usd > 200`, `backoff_multiplier > 10`, `stall_threshold == max_consecutive_failures` (WHY: these are almost always typos or copy-paste errors; warning early saves hours of confusing behavior) <!-- test: tests/test_config_validation.sh -->
+
+#### 50.2 Integration
+
+- [x] Wire `validate_config()` into `main()` after `load_config()` and before any phase dispatch, exiting with code 1 and aggregated error messages if validation fails (WHY: zero tokens should be spent before config is known-good — this is the single highest-leverage quality gate) <!-- test: tests/test_config_validation.sh -->
+
+- [x] Add `--validate-config` CLI flag that runs validation only, prints results, and exits (WHY: CI pipelines and editor integrations need a standalone validation command that doesn't start execution) <!-- test: tests/test_config_validation.sh -->
+
+### Spec 48 — Doctor / Health Check
+
+#### 48.1 Doctor Function
+
+- [ ] Implement `doctor_check()` in `automaton.sh` (~80-100 lines) with a `report_check` helper for consistent output formatting: check bash ≥4.0, git ≥2.20, claude presence, jq ≥1.5 — missing tool = FAIL, wrong version = FAIL with detected vs required versions (WHY: users encounter cryptic failures mid-execution when dependencies are missing or outdated; diagnosing this after tokens are spent is frustrating and wasteful) <!-- test: tests/test_doctor.sh -->
+
+- [ ] Add claude auth check (run `claude --version`, no API call), disk space check (WARN below 100MB, FAIL below 10MB using `df`), git repo state checks (is-repo, has-commits, has-remote, clean/dirty tree) to `doctor_check()` (WHY: auth problems and low disk space cause failures that look like code bugs; git state checks prevent confusion about which branch/remote is active) <!-- test: tests/test_doctor.sh -->
+
+- [ ] Add project file checks to `doctor_check()`: `automaton.config.json` (WARN if missing, FAIL if invalid JSON), `AGENTS.md` (WARN), `specs/` (WARN), `PRD.md` (WARN), `.automaton/` (PASS if writable or absent, FAIL if not writable) (WHY: missing project files produce confusing phase failures; checking upfront with actionable fix messages eliminates this) <!-- test: tests/test_doctor.sh -->
+
+#### 48.2 Output and CLI
+
+- [ ] Add ANSI-colored PASS/WARN/FAIL/INFO output with `NO_COLOR` env var and non-TTY detection, plus a summary line counting each category (WHY: scannable colored output lets users immediately see what needs attention; `NO_COLOR` respect is the standard for accessibility and CI) <!-- test: tests/test_doctor.sh -->
+
+- [ ] Add `--doctor` CLI flag that calls `doctor_check()` and exits with 0 (pass/warn only) or 1 (any FAIL) (WHY: the flag is the entry point — it must be discoverable and return standard exit codes for scripting) <!-- test: tests/test_doctor.sh -->
+
+### Spec 49 — Output Truncation (Head/Tail)
+
+#### 49.1 Truncation Function
+
+- [ ] Implement `truncate_output()` in `automaton.sh` that captures full output to a temp file, counts lines, and applies head+tail truncation with a `... [N lines truncated] ...` marker when output exceeds `execution.output_max_lines` (WHY: current head-only truncation discards error messages and stack traces at the end of output, causing agents to miss the most actionable failure information and retry blindly) <!-- test: tests/test_output_truncation.sh -->
+
+- [ ] Add full output archival: copy untruncated output to `.automaton/logs/output_${phase}_${iteration}_$(date +%s).log` before truncation (WHY: truncation is a display optimization — full output must be preserved for post-mortem debugging so no information is permanently lost) <!-- test: tests/test_output_truncation.sh -->
+
+#### 49.2 Configuration and Integration
+
+- [ ] Add `execution.output_max_lines` (default 200), `execution.output_head_lines` (default 50), `execution.output_tail_lines` (default 150) to `automaton.config.json`, with validation that `head + tail == max` (WHY: tail-weighted defaults preserve error context; the constraint prevents misconfiguration where head+tail exceeds or falls short of max) <!-- test: tests/test_output_truncation.sh -->
+
+- [ ] Call `truncate_output()` at every output capture point in `run_agent()` and phase execution functions (WHY: inconsistent truncation means some agents see errors and some don't — all capture points must use the same strategy) <!-- test: tests/test_output_truncation.sh -->
+
+### Spec 46 — Self-Validating QA Loop
+
+#### 46.1 QA Phase Infrastructure
+
+- [ ] Add `execution.qa_enabled` (default true), `execution.qa_max_iterations` (default 5), `execution.qa_blind_validation` (default false), `execution.qa_model` (default "sonnet") to `automaton.config.json` (WHY: the QA loop is the single biggest feature gap vs competitors — configuration must exist before the loop can be wired in) <!-- test: tests/test_qa_config.sh -->
+
+- [ ] Create `PROMPT_qa.md` with structured QA validation instructions: run tests, check spec acceptance criteria, classify failures into `test_failure|spec_gap|regression|style_issue`, output structured JSON with failure array (WHY: the QA agent needs clear classification instructions to produce parseable output the orchestrator can route to targeted fix tasks) <!-- test: tests/test_qa_prompt.sh -->
+
+#### 46.2 QA Validation Pass
+
+- [ ] Implement the QA validation pass in `automaton.sh` that runs three checks per iteration: test execution (command from AGENTS.md), spec criteria check (codebase search), and regression scan (compare against previous iteration's `iteration-N.json`) (WHY: three complementary checks catch mechanical test failures, missing requirements, and newly introduced regressions respectively) <!-- test: tests/test_qa_validate.sh -->
+
+- [ ] Implement failure classification that assigns each failure exactly one type (`test_failure`, `spec_gap`, `regression`, `style_issue`) and writes results to `.automaton/qa/iteration-N.json` with persistence tracking (failures seen in consecutive iterations marked `persistent: true`) (WHY: typed failures route to different fix strategies — a regression needs revert context while a spec gap needs implementation context) <!-- test: tests/test_qa_classify.sh -->
+
+#### 46.3 QA Fix Loop
+
+- [ ] Implement targeted fix task creation: append `QA-fix:`, `QA-implement:`, `QA-regression:`, or `QA-style:` prefixed tasks to IMPLEMENTATION_PLAN.md based on failure type, with `(PERSISTENT)` escalation flag after 2 consecutive appearances (WHY: targeted tasks give the build agent specific context for each failure type instead of a generic "fix the tests" instruction) <!-- test: tests/test_qa_fix_tasks.sh -->
+
+- [ ] Implement the QA retry loop: validate → create fix tasks → build fixes → validate again, up to `qa_max_iterations` with budget check before each iteration (WHY: the retry loop is the core value — it catches and fixes mechanical problems cheaply with Sonnet before the expensive Opus review phase) <!-- test: tests/test_qa_loop.sh -->
+
+#### 46.4 QA Completion
+
+- [ ] Implement QA exhaustion handling: write `.automaton/qa/failure-report.md` listing unresolved failures with types and iteration history, pass report as context to Phase 4 review (WHY: when QA can't fix everything, the review agent needs to know exactly what failed and how many times — this prevents redundant investigation) <!-- test: tests/test_qa_report.sh -->
+
+- [ ] Implement blind validation option: when `qa_blind_validation` is true, run QA agent with only specs and test output, no source code (WHY: blind validation prevents confirmation bias where the QA agent rationalizes implementation choices instead of checking spec compliance) <!-- test: tests/test_qa_blind.sh -->
+
+---
+
+## Tier 11: Pre-Planning Quality (P1, No New-Spec Dependencies)
+
+### Spec 47 — Pre-Flight Spec Critique
+
+#### 47.1 Critique Function
+
+- [ ] Implement `phase_critique()` in `automaton.sh` that gathers all `specs/spec-*.md` files sorted by number, concatenates with filename headers, estimates token count (4 chars/token heuristic), and truncates at 80K tokens with a warning (WHY: front-loading all specs into one call is 10x cheaper than a multi-agent critique pipeline, and the 80K ceiling prevents context overflow) <!-- test: tests/test_critique.sh -->
+
+- [ ] Make a single `claude -p` call with a critique prompt that evaluates specs across 6 dimensions (ambiguity, missing criteria, contradictions, missing dependencies, untestable criteria, scope gaps), producing structured JSON with severity levels (ERROR/WARNING/INFO) (WHY: a single cheap call before planning catches spec quality problems at the lowest possible token cost — before planning and building consume their budgets) <!-- test: tests/test_critique.sh -->
+
+#### 47.2 Output and Integration
+
+- [ ] Generate `.automaton/SPEC_CRITIQUE.md` from the structured JSON with summary counts and per-finding details including severity tag, spec reference, description, and suggestion (WHY: the structured report is both human-readable and machine-parseable, enabling both manual review and automated gating) <!-- test: tests/test_critique.sh -->
+
+- [ ] Add `--critique-specs` standalone flag (print summary, write report, exit 0/1), `--skip-critique` bypass flag, and auto-preflight mode controlled by `critique.auto_preflight` config (blocks on ERROR when `critique.block_on_error` is true) (WHY: three modes — standalone audit, auto-gate, and bypass — cover all workflows from CI to interactive use) <!-- test: tests/test_critique.sh -->
+
+- [ ] Add `critique` config section to `automaton.config.json`: `auto_preflight` (default false), `block_on_error` (default true), `max_token_estimate` (default 80000) (WHY: disabled by default avoids surprising existing users; `block_on_error` prevents building against flawed specs when opted in) <!-- test: none -->
+
+---
+
+## Tier 12: Pipeline Enhancements (P2, No New-Spec Dependencies)
+
+These specs add optional pipeline stages — adversarial critique, blind review, and event notifications. Each is independent and flag-gated.
+
+### Spec 54 — Blind Validation Pattern
+
+- [ ] Implement `run_blind_validation()` in `automaton.sh` (~40-60 lines) that extracts acceptance criteria from the spec file, reads `.automaton/test-results.log`, captures `git diff` (truncated to `blind_validation.max_diff_lines`), and invokes a separate `claude` CLI call with only those three inputs — no IMPLEMENTATION_PLAN.md, no commit messages, no prior review feedback (WHY: a reviewer who sees the builder's reasoning develops confirmation bias; blind validation forces evaluation against what was asked, not what was intended) <!-- test: tests/test_blind_validation.sh -->
+
+- [ ] Parse the structured verdict (`VERDICT: PASS|FAIL`, `CRITERIA_MET`, `CRITERIA_MISSED`, `ISSUES`), write to `.automaton/blind-validation.md`, and integrate into review phase outcome — a FAIL overrides a passing contextual review (WHY: if the blind validator says criteria are missed, the contextual reviewer was likely biased; the blind result is the stronger signal) <!-- test: tests/test_blind_validation.sh -->
+
+- [ ] Add `flags.blind_validation` (default false) and `blind_validation.max_diff_lines` (default 500) to `automaton.config.json` (WHY: flag-gated because blind validation adds one Claude call per review cycle; max_diff_lines bounds token cost for large changes) <!-- test: none -->
+
+### Spec 53 — Steelman Self-Critique
+
+- [ ] Implement `run_steelman_critique()` in `automaton.sh` that reads IMPLEMENTATION_PLAN.md and all `specs/*.md`, makes a single Claude call with an adversarial prompt requesting 5 sections (Risks and Failure Modes, Rejected Alternatives, Questionable Assumptions, Fragile Dependencies, Complexity Hotspots), and writes `STEELMAN.md` to the project root (WHY: plans receive no adversarial analysis by default; a single post-planning critique surfaces risks cheaply before any code is written) <!-- test: tests/test_steelman.sh -->
+
+- [ ] Add `--steelman` standalone CLI flag (exit 1 if no plan exists) and `flags.steelman_critique` config key (default false), with non-blocking failure handling (log warning, continue) (WHY: standalone mode lets users run critique on demand; non-blocking ensures a network error doesn't halt the pipeline) <!-- test: tests/test_steelman.sh -->
+
+### Spec 52 — Notification Callbacks
+
+- [ ] Implement `send_notification()` in `automaton.sh` (~60-80 lines) with webhook POST via background `curl` and command execution via background subshell with `AUTOMATON_EVENT`/`AUTOMATON_PROJECT`/`AUTOMATON_PHASE`/`AUTOMATON_STATUS`/`AUTOMATON_MESSAGE` env vars — both fire-and-forget, never blocking (WHY: users walk away during long runs with no way to know when they finish or fail; fire-and-forget delivery ensures notifications never delay execution) <!-- test: tests/test_notifications.sh -->
+
+- [ ] Add 5 call sites for `send_notification()`: `run_started` (after init), `phase_completed` (after each phase), `run_completed` (after final phase), `run_failed` (on error/budget exhaustion), `escalation` (when human intervention needed) (WHY: five event types cover the full lifecycle — users can filter to only the events they care about) <!-- test: tests/test_notifications.sh -->
+
+- [ ] Add `notifications` config section to `automaton.config.json`: `webhook_url` (default ""), `events` (default all five), `command` (default ""), `timeout_seconds` (default 5) — both empty means zero notification overhead (WHY: opt-in by default; empty config produces zero overhead; webhook URLs are truncated to hostname in logs to avoid leaking auth tokens) <!-- test: none -->
+
+---
+
+## Tier 13: Advanced Routing (P2, Depends on Specs 46 + 54)
+
+### Spec 51 — Complexity-Based Execution Routing
+
+- [ ] Implement `assess_complexity()` in `automaton.sh` (~30 lines) that makes a single haiku Claude call (<1.5k tokens) to classify the task into SIMPLE/MODERATE/COMPLEX, writes `.automaton/complexity.json` with tier, rationale, timestamp, and override flag; defaults to MODERATE on failure (WHY: running the same deep pipeline for a typo fix vs an architectural change wastes 80%+ of tokens on simple tasks; cheap pre-classification saves budget) <!-- test: tests/test_complexity.sh -->
+
+- [ ] Implement routing logic (~20 lines) as a `case` block that sets pipeline variables: SIMPLE skips research, uses sonnet, caps review at 1 iteration, skips blind validation; MODERATE runs standard pipeline; COMPLEX uses opus for build, allows 4 QA iterations, enables blind validation (WHY: tier-specific pipeline depth matches effort to complexity — simple tasks are fast and cheap, complex tasks get full validation) <!-- test: tests/test_complexity.sh -->
+
+- [ ] Add `--complexity=simple|moderate|complex` CLI flag that bypasses the assessment call and sets `override: true` in `complexity.json` (WHY: users who know the scope can skip the assessment cost, and can correct misclassification without re-running) <!-- test: tests/test_complexity.sh -->
+
+---
+
+## Tier 14: Observability & Hardening (P3)
+
+These features are additive — the system works without them. They add visibility into execution, debt accumulation, and engineering quality.
+
+### Spec 55 — Structured Work Logs (JSONL)
+
+- [ ] Implement `emit_event()` in `automaton.sh` (~25 lines) that constructs a JSON object with `ts`, `event`, `phase`, `iteration`, `elapsed_s`, `tokens`, `details` fields and appends one line to `.automaton/work-log-{run-id}.jsonl`, with log level filtering (minimal/normal/verbose) (WHY: the current `session.log` is human-readable but not queryable; JSONL enables `jq` analysis of phase durations, token spend, and error patterns across runs) <!-- test: tests/test_work_log.sh -->
+
+- [ ] Add 9 call sites at existing control points: `phase_start`, `phase_end`, `iteration_start`, `iteration_end`, `error`, `gate_check`, `budget_update`, `escalation`, `completion` (WHY: nine events cover the full orchestrator lifecycle — all are single-line insertions at existing control points, no restructuring needed) <!-- test: tests/test_work_log.sh -->
+
+- [ ] Add `--log-level minimal|normal|verbose` CLI flag, `work_log` config section (`enabled: true`, `log_level: "normal"`), per-run file naming, and `work-log.jsonl` symlink to latest run (WHY: per-run files prevent a crashed run from corrupting the log; symlink makes `jq .automaton/work-log.jsonl` always work) <!-- test: tests/test_work_log.sh -->
+
+### Spec 56 — Typed Technical Debt Tracking
+
+- [ ] Implement `_scan_technical_debt()` in `automaton.sh` (~60 lines) that scans files changed in the current run (via `git diff --name-only`) for markers (TODO, FIXME, HACK, DEBT, WORKAROUND, TEMPORARY), classifies each into one of 5 types (error_handling, hardcoded, performance, test_coverage, cleanup) via cascading grep, and appends findings to `.automaton/debt-ledger.jsonl` (WHY: autonomous agents take shortcuts — hardcoded values, stubbed error handling, TODO promises — that are invisible because the agent that wrote them has exited; scanning makes debt visible) <!-- test: tests/test_debt_tracking.sh -->
+
+- [ ] Implement `_generate_debt_summary()` in `automaton.sh` (~30 lines) that aggregates the ledger with `jq -s 'group_by(.type)'` to produce `.automaton/debt-summary.md` with per-type and per-file counts, add debt counts to run summary output, and emit threshold warning when count exceeds `debt_tracking.threshold` (WHY: the summary surfaces debt counts alongside token costs and test results — visible in run output without checking a separate file) <!-- test: tests/test_debt_tracking.sh -->
+
+- [ ] Add `debt_tracking` config section to `automaton.config.json`: `enabled` (default true), `threshold` (default 20), `markers` (default array of 6 markers) (WHY: configurable markers let projects add domain-specific debt tags; threshold enables project-appropriate alerting) <!-- test: none -->
+
+### Spec 58 — Design Principles & Anti-Pattern Guard Rails
+
+> **NOTE**: `automaton.sh` is currently 14,767 lines — 3x over spec 58's proposed 5,000-line ceiling. The `guardrail_check_size` threshold should be adjusted to reflect the current codebase reality (e.g., 16,000 lines as ceiling), or the spec should be updated before implementation. This is noted as a known conflict.
+
+- [ ] Create `.automaton/DESIGN_PRINCIPLES.md` documenting 7 principles (size ceiling, zero external deps, plain text state, loud failure, stdout-is-UI, Claude-for-creativity-only, no-feature-without-tests) with measurable thresholds (WHY: without codified rules, development drifts toward competitor complexity; the principles document is the reference for all guard rail checks) <!-- test: tests/test_guardrails.sh -->
+
+- [ ] Implement 6 `guardrail_check_*` functions in `automaton.sh` (each <30 lines): `guardrail_check_size` (wc -l ceiling), `guardrail_check_dependencies` (grep for apt-get/npm/pip/brew/cargo/gem), `guardrail_check_silent_errors` (2>/dev/null without ||, unrestored set +e), `guardrail_check_state_location` (writes outside .automaton/), `guardrail_check_tui_deps` (curses/dialog/electron), `guardrail_check_prompt_logic` (control-flow in heredoc prompts) (WHY: each check targets one of the top 10 anti-patterns found in competitor analysis; zero-API-call enforcement keeps guard rails free to run on every phase transition) <!-- test: tests/test_guardrails.sh -->
+
+- [ ] Implement `run_guardrails()` dispatcher (~40 lines) that calls all 6 checks, writes `.automaton/principle-violations.md` on any failure, and supports `guardrails_mode` config (`"warn"` logs and continues, `"block"` fails the phase) — wired into review phase, self-build, and evolution loop (WHY: the dispatcher aggregates violations into one report; mode switching lets teams start with warnings and escalate to blocking as the codebase stabilizes) <!-- test: tests/test_guardrails.sh -->
+
+---
+
+## Tier 15: Onboarding (P3, Depends on Spec 48)
+
+### Spec 57 — First-Time Setup Wizard
+
+- [ ] Implement `setup_wizard()` in `automaton.sh` (~80-100 lines) with 4 interactive prompts (model tier, budget limit, auto-push, skip-research), each with displayed default and one-retry validation, plus a confirmation summary with two-decline exit (WHY: new users must manually edit JSON to configure automaton; the wizard eliminates the #1 onboarding failure: malformed or missing config) <!-- test: tests/test_setup_wizard.sh -->
+
+- [ ] Add first-run detection in `main()` (no config + no `--no-setup`), `--setup` (force re-run) and `--no-setup` (skip) flags with mutual-exclusion check, config generation via `jq -n` with all spec-12 schema fields, and non-TTY fallback to defaults (WHY: automatic detection catches first-time users; --no-setup prevents CI/CD hangs; jq generation guarantees valid JSON with complete schema) <!-- test: tests/test_setup_wizard.sh -->
+
+- [ ] Call `doctor_check()` (spec-48) after writing config, and create `.automaton/` if absent (WHY: post-setup doctor check validates the environment alongside the newly generated config; directory creation prevents "not found" errors on first real run) <!-- test: tests/test_setup_wizard.sh -->
