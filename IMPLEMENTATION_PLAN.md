@@ -540,9 +540,9 @@ These specs add optional pipeline stages — adversarial critique, blind review,
 
 ### Spec 53 — Steelman Self-Critique
 
-- [ ] Implement `run_steelman_critique()` in `automaton.sh` that reads IMPLEMENTATION_PLAN.md and all `specs/*.md`, makes a single Claude call with an adversarial prompt requesting 5 sections (Risks and Failure Modes, Rejected Alternatives, Questionable Assumptions, Fragile Dependencies, Complexity Hotspots), and writes `STEELMAN.md` to the project root (WHY: plans receive no adversarial analysis by default; a single post-planning critique surfaces risks cheaply before any code is written) <!-- test: tests/test_steelman.sh -->
+- [x] Implement `run_steelman_critique()` in `automaton.sh` that reads IMPLEMENTATION_PLAN.md and all `specs/*.md`, makes a single Claude call with an adversarial prompt requesting 5 sections (Risks and Failure Modes, Rejected Alternatives, Questionable Assumptions, Fragile Dependencies, Complexity Hotspots), and writes `STEELMAN.md` to the project root (WHY: plans receive no adversarial analysis by default; a single post-planning critique surfaces risks cheaply before any code is written) <!-- test: tests/test_steelman.sh -->
 
-- [ ] Add `--steelman` standalone CLI flag (exit 1 if no plan exists) and `flags.steelman_critique` config key (default false), with non-blocking failure handling (log warning, continue) (WHY: standalone mode lets users run critique on demand; non-blocking ensures a network error doesn't halt the pipeline) <!-- test: tests/test_steelman.sh -->
+- [x] Add `--steelman` standalone CLI flag (exit 1 if no plan exists) and `flags.steelman_critique` config key (default false), with non-blocking failure handling (log warning, continue) (WHY: standalone mode lets users run critique on demand; non-blocking ensures a network error doesn't halt the pipeline) <!-- test: tests/test_steelman.sh -->
 
 ### Spec 52 — Notification Callbacks
 
