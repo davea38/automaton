@@ -11209,6 +11209,76 @@ _qa_validate() {
         '{iteration: $iter, checks: {tests_run: true, spec_criteria_checked: true, regressions_scanned: true}, failures: $failures, passed: $passed, failed: $failed, verdict: $verdict}'
 }
 
+# Creates targeted fix tasks in IMPLEMENTATION_PLAN.md based on QA failure types.
+# Each failure type maps to a specific QA- prefix:
+#   test_failure -> QA-fix:, spec_gap -> QA-implement:,
+#   regression -> QA-regression:, style_issue -> QA-style:
+# Persistent failures (seen in 2+ consecutive iterations) get a (PERSISTENT) flag.
+# Skips failures whose ID already appears as a QA task in the plan.
+# Usage: _qa_create_fix_tasks "failures_json_array"
+# Outputs: number of tasks created
+_qa_create_fix_tasks() {
+    local failures="$1"
+    local plan_file="${PROJECT_ROOT}/IMPLEMENTATION_PLAN.md"
+    local count=0
+
+    if [ ! -f "$plan_file" ]; then
+        echo "0"
+        return 0
+    fi
+
+    local num_failures
+    num_failures=$(echo "$failures" | jq 'length')
+    if [ "$num_failures" -eq 0 ]; then
+        echo "0"
+        return 0
+    fi
+
+    local i=0
+    while [ "$i" -lt "$num_failures" ]; do
+        local id type desc spec persistent
+        id=$(echo "$failures" | jq -r ".[$i].id")
+        type=$(echo "$failures" | jq -r ".[$i].type")
+        desc=$(echo "$failures" | jq -r ".[$i].description")
+        spec=$(echo "$failures" | jq -r ".[$i].spec // empty")
+        persistent=$(echo "$failures" | jq -r ".[$i].persistent // false")
+
+        # Skip if this failure ID already has a QA task in the plan
+        if grep -q "QA-.*${id}" "$plan_file" 2>/dev/null; then
+            i=$((i + 1))
+            continue
+        fi
+
+        local prefix task_line
+        case "$type" in
+            test_failure)  prefix="QA-fix" ;;
+            spec_gap)      prefix="QA-implement" ;;
+            regression)    prefix="QA-regression" ;;
+            style_issue)   prefix="QA-style" ;;
+            *)             prefix="QA-fix" ;;
+        esac
+
+        # Build the task description
+        local esc_flag=""
+        if [ "$persistent" = "true" ]; then
+            esc_flag=" (PERSISTENT)"
+        fi
+
+        local spec_ref=""
+        if [ -n "$spec" ]; then
+            spec_ref=" [${spec}]"
+        fi
+
+        task_line="- [ ] ${prefix}${esc_flag}: ${id}${spec_ref} — ${desc}"
+        echo "$task_line" >> "$plan_file"
+        count=$((count + 1))
+
+        i=$((i + 1))
+    done
+
+    echo "$count"
+}
+
 # Centralized agent invocation. Pipes the given prompt file into `claude -p`
 # with stream-json output, the specified model, and configured flags.
 # When agents.use_native_definitions is true (spec-27), invokes
