@@ -474,9 +474,9 @@ These specs catch problems early — bad config, missing tools, lost error conte
 
 #### 49.2 Configuration and Integration
 
-- [ ] Add `execution.output_max_lines` (default 200), `execution.output_head_lines` (default 50), `execution.output_tail_lines` (default 150) to `automaton.config.json`, with validation that `head + tail == max` (WHY: tail-weighted defaults preserve error context; the constraint prevents misconfiguration where head+tail exceeds or falls short of max) <!-- test: tests/test_output_truncation.sh -->
+- [x] Add `execution.output_max_lines` (default 200), `execution.output_head_lines` (default 50), `execution.output_tail_lines` (default 150) to `automaton.config.json`, with validation that `head + tail == max` (WHY: tail-weighted defaults preserve error context; the constraint prevents misconfiguration where head+tail exceeds or falls short of max) <!-- test: tests/test_output_truncation.sh -->
 
-- [ ] Call `truncate_output()` at every output capture point in `run_agent()` and phase execution functions (WHY: inconsistent truncation means some agents see errors and some don't — all capture points must use the same strategy) <!-- test: tests/test_output_truncation.sh -->
+- [x] Call `truncate_output()` at every output capture point in `run_agent()` and phase execution functions (WHY: inconsistent truncation means some agents see errors and some don't — all capture points must use the same strategy) <!-- test: tests/test_output_truncation.sh -->
 
 ### Spec 46 — Self-Validating QA Loop
 
