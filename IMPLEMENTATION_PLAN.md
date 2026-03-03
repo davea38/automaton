@@ -482,9 +482,9 @@ These specs catch problems early — bad config, missing tools, lost error conte
 
 #### 46.1 QA Phase Infrastructure
 
-- [ ] Add `execution.qa_enabled` (default true), `execution.qa_max_iterations` (default 5), `execution.qa_blind_validation` (default false), `execution.qa_model` (default "sonnet") to `automaton.config.json` (WHY: the QA loop is the single biggest feature gap vs competitors — configuration must exist before the loop can be wired in) <!-- test: tests/test_qa_config.sh -->
+- [x] Add `execution.qa_enabled` (default true), `execution.qa_max_iterations` (default 5), `execution.qa_blind_validation` (default false), `execution.qa_model` (default "sonnet") to `automaton.config.json` (WHY: the QA loop is the single biggest feature gap vs competitors — configuration must exist before the loop can be wired in) <!-- test: tests/test_qa_config.sh -->
 
-- [ ] Create `PROMPT_qa.md` with structured QA validation instructions: run tests, check spec acceptance criteria, classify failures into `test_failure|spec_gap|regression|style_issue`, output structured JSON with failure array (WHY: the QA agent needs clear classification instructions to produce parseable output the orchestrator can route to targeted fix tasks) <!-- test: tests/test_qa_prompt.sh -->
+- [x] Create `PROMPT_qa.md` with structured QA validation instructions: run tests, check spec acceptance criteria, classify failures into `test_failure|spec_gap|regression|style_issue`, output structured JSON with failure array (WHY: the QA agent needs clear classification instructions to produce parseable output the orchestrator can route to targeted fix tasks) <!-- test: tests/test_qa_prompt.sh -->
 
 #### 46.2 QA Validation Pass
 
