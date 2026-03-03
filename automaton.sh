@@ -332,6 +332,143 @@ load_config() {
     fi
 }
 
+# Validates config file: JSON syntax, types, ranges, enums, cross-field conflicts (spec-50).
+# Collects all errors and reports them at once. Returns 0 if valid, 1 if errors found.
+validate_config() {
+    local config_file="${1:-${CONFIG_FILE:-automaton.config.json}}"
+    local -a CONFIG_ERRORS=()
+
+    # --- Missing config file ---
+    if [ ! -f "$config_file" ]; then
+        echo "CONFIG ERROR: config file not found: $config_file" >&2
+        return 1
+    fi
+
+    # --- JSON syntax check ---
+    local jq_err
+    if ! jq_err=$(jq empty "$config_file" 2>&1); then
+        echo "CONFIG ERROR: JSON parse error in $config_file:" >&2
+        echo "  $jq_err" >&2
+        return 1
+    fi
+
+    # --- Type checks ---
+    local field jtype expected
+    while IFS='|' read -r field expected; do
+        jtype=$(jq -r "$field | type" "$config_file" 2>/dev/null)
+        if [ "$jtype" != "$expected" ]; then
+            CONFIG_ERRORS+=("CONFIG ERROR: ${field#.} must be $expected (got $jtype)")
+        fi
+    done <<'TYPECHECKS'
+.models.primary|string
+.models.research|string
+.models.planning|string
+.models.building|string
+.models.review|string
+.models.subagent_default|string
+.budget.max_total_tokens|number
+.budget.max_cost_usd|number
+.budget.per_iteration|number
+.budget.per_phase.research|number
+.budget.per_phase.plan|number
+.budget.per_phase.build|number
+.budget.per_phase.review|number
+.rate_limits.tokens_per_minute|number
+.rate_limits.cooldown_seconds|number
+.rate_limits.backoff_multiplier|number
+.execution.max_iterations.research|number
+.execution.max_iterations.plan|number
+.execution.max_iterations.build|number
+.execution.max_iterations.review|number
+.execution.stall_threshold|number
+.execution.max_consecutive_failures|number
+.git.auto_push|boolean
+.git.auto_commit|boolean
+.git.branch_prefix|string
+.flags.dangerously_skip_permissions|boolean
+.flags.verbose|boolean
+TYPECHECKS
+
+    # --- Range validation ---
+    local val
+    while IFS='|' read -r field op threshold label; do
+        val=$(jq -r "$field // empty" "$config_file" 2>/dev/null)
+        [ -z "$val" ] && continue
+        if ! echo "$val $op $threshold" | awk '{exit !($1 '"$op"' $3)}'; then
+            CONFIG_ERRORS+=("CONFIG ERROR: ${field#.} must be $op $threshold (got: $val)")
+        fi
+    done <<'RANGECHECKS'
+.budget.max_total_tokens|>|0|
+.budget.max_cost_usd|>|0|
+.budget.per_iteration|>|0|
+.rate_limits.tokens_per_minute|>|0|
+.rate_limits.backoff_multiplier|>|1.0|
+.execution.stall_threshold|>=|1|
+.execution.max_consecutive_failures|>=|1|
+RANGECHECKS
+
+    # --- Enum validation: model names ---
+    local model_val
+    for model_field in .models.primary .models.research .models.planning .models.building .models.review .models.subagent_default; do
+        model_val=$(jq -r "$model_field // empty" "$config_file" 2>/dev/null)
+        [ -z "$model_val" ] && continue
+        case "$model_val" in
+            opus|sonnet|haiku) ;;
+            *) CONFIG_ERRORS+=("CONFIG ERROR: ${model_field#.} must be one of opus|sonnet|haiku (got: \"$model_val\")") ;;
+        esac
+    done
+
+    # --- Cross-field conflict detection ---
+    local max_tokens per_phase_val smallest_phase per_iter
+    max_tokens=$(jq -r '.budget.max_total_tokens // 0' "$config_file")
+    per_iter=$(jq -r '.budget.per_iteration // 0' "$config_file")
+    smallest_phase="$max_tokens"
+    for phase in research plan build review; do
+        per_phase_val=$(jq -r ".budget.per_phase.$phase // 0" "$config_file")
+        if echo "$per_phase_val $max_tokens" | awk '{exit !($1 > $2)}'; then
+            CONFIG_ERRORS+=("CONFIG ERROR: budget.per_phase.$phase ($per_phase_val) exceeds budget.max_total_tokens ($max_tokens)")
+        fi
+        if echo "$per_phase_val $smallest_phase" | awk '{exit !($1 < $2)}'; then
+            smallest_phase="$per_phase_val"
+        fi
+    done
+    if echo "$per_iter $smallest_phase" | awk '{exit !($1 > $2)}'; then
+        CONFIG_ERRORS+=("CONFIG ERROR: budget.per_iteration ($per_iter) exceeds smallest budget.per_phase value ($smallest_phase)")
+    fi
+
+    # --- Warnings (stderr, non-blocking) ---
+    local build_iters cost_usd backoff stall_t fail_t
+    build_iters=$(jq -r '.execution.max_iterations.build // 0' "$config_file")
+    cost_usd=$(jq -r '.budget.max_cost_usd // 0' "$config_file")
+    backoff=$(jq -r '.rate_limits.backoff_multiplier // 0' "$config_file")
+    stall_t=$(jq -r '.execution.stall_threshold // 0' "$config_file")
+    fail_t=$(jq -r '.execution.max_consecutive_failures // 0' "$config_file")
+
+    if echo "$build_iters" | awk '{exit !($1 > 50)}'; then
+        echo "CONFIG WARNING: execution.max_iterations.build is $build_iters — unusually high, possible infinite loop risk" >&2
+    fi
+    if echo "$cost_usd" | awk '{exit !($1 > 200)}'; then
+        echo "CONFIG WARNING: budget.max_cost_usd is \$$cost_usd — unusually high" >&2
+    fi
+    if echo "$backoff" | awk '{exit !($1 > 10)}'; then
+        echo "CONFIG WARNING: rate_limits.backoff_multiplier is $backoff — unusually high, likely a typo" >&2
+    fi
+    if [ "$stall_t" = "$fail_t" ] && [ "$stall_t" != "0" ]; then
+        echo "CONFIG WARNING: execution.stall_threshold ($stall_t) equals execution.max_consecutive_failures ($fail_t) — stall detection and failure abort will trigger simultaneously" >&2
+    fi
+
+    # --- Report errors ---
+    if [ "${#CONFIG_ERRORS[@]}" -gt 0 ]; then
+        for err in "${CONFIG_ERRORS[@]}"; do
+            echo "$err" >&2
+        done
+        echo "Found ${#CONFIG_ERRORS[@]} config errors. Fix automaton.config.json and re-run." >&2
+        return 1
+    fi
+
+    return 0
+}
+
 # Applies Max Plan preset defaults when max_plan_preset is true (spec-35).
 # Sets budget mode to allowance and models to opus, enabling cascading
 # optimizations: rate limits and parallel defaults trigger from allowance mode.
@@ -10743,6 +10880,7 @@ ARG_AMEND=false
 ARG_OVERRIDE=false
 ARG_PAUSE_EVOLUTION=false
 ARG_SIGNALS=false
+ARG_VALIDATE_CONFIG=false
 
 _show_help() {
     cat <<'HELPTEXT'
@@ -10760,6 +10898,7 @@ Standard Mode:
   --self --continue     Auto-pick highest-priority backlog item and run (spec-26)
   --stats               Display run history and performance trends (spec-26)
   --budget-check        Show weekly allowance status without starting a run (spec-35)
+  --validate-config     Validate config file and exit (spec-50)
   --help, -h            Show this help message
 
 Evolution Mode:
@@ -10933,6 +11072,10 @@ while [ $# -gt 0 ]; do
             ARG_SIGNALS=true
             shift
             ;;
+        --validate-config)
+            ARG_VALIDATE_CONFIG=true
+            shift
+            ;;
         --help|-h)
             _show_help
             exit 0
@@ -10975,6 +11118,15 @@ fi
 
 # --- Load configuration (uses CONFIG_FILE if set, else automaton.config.json) ---
 load_config
+
+# --- Config pre-flight validation (spec-50) ---
+# Runs after load_config, before any phase dispatch. Catches bad config early.
+if [ "$ARG_VALIDATE_CONFIG" = "true" ]; then
+    validate_config
+    echo "Config validation passed."
+    exit 0
+fi
+validate_config
 
 # --- Override config flags with CLI arguments ---
 if [ "$ARG_SKIP_RESEARCH" = "true" ]; then
