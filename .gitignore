@@ -24,6 +24,8 @@
 .automaton/journal/
 .automaton/evolution/
 .automaton/evolution/circuit-breakers.json
+.automaton/qa/
+.automaton/logs/
 
 # Automaton persistent state (git-tracked — DO NOT add to gitignore)
 # .automaton/budget-history.json

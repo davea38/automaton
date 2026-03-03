@@ -27,7 +27,7 @@ QA_MODEL="sonnet"
 QA_BLIND_VALIDATION="false"
 HARNESS
     # Extract QA functions
-    for fn in _qa_validate _qa_run_tests _qa_check_spec_criteria _qa_scan_regressions _qa_classify_failure _qa_write_iteration; do
+    for fn in _qa_validate _qa_run_tests _qa_check_spec_criteria _qa_scan_regressions _qa_classify_failure _qa_write_iteration _qa_mark_persistent; do
         sed -n "/^${fn}() {/,/^}/p" "$script_file" >> "$test_dir/harness.sh" 2>/dev/null || true
     done
 }
@@ -56,7 +56,7 @@ assert_exit_code 0 "$rc" "_qa_scan_regressions function exists in automaton.sh"
 # --- Test 5: _qa_validate creates .automaton/qa/ directory ---
 mkdir -p "$test_dir/project/.automaton"
 TEST_AUTOMATON_DIR="$test_dir/project/.automaton" \
-    bash -c "source '$test_dir/harness.sh'; _qa_validate 1 '' 'bash -n /dev/null' ''" 2>/dev/null || true
+    bash -c "source '$test_dir/harness.sh'; _qa_validate 1 0 'bash -n /dev/null' '/nonexistent/specs'" 2>/dev/null || true
 if [ -d "$test_dir/project/.automaton/qa" ]; then
     assert_exit_code 0 0 "_qa_validate creates .automaton/qa/ directory"
 else
@@ -78,7 +78,7 @@ assert_contains "$output" "1" "_qa_run_tests captures failed exit code"
 # --- Test 8: _qa_validate produces JSON output ---
 mkdir -p "$test_dir/project3/.automaton/qa"
 output=$(TEST_AUTOMATON_DIR="$test_dir/project3/.automaton" \
-    bash -c "source '$test_dir/harness.sh'; _qa_validate 1 '' 'exit 0' ''" 2>/dev/null) || true
+    bash -c "source '$test_dir/harness.sh'; _qa_validate 1 0 'exit 0' '/nonexistent/specs'" 2>/dev/null) || true
 # Check that it produced valid JSON output
 if echo "$output" | jq empty 2>/dev/null; then
     assert_exit_code 0 0 "_qa_validate produces valid JSON output"
@@ -95,20 +95,20 @@ fi
 
 # --- Test 10: _qa_validate with passing tests returns PASS verdict ---
 output=$(TEST_AUTOMATON_DIR="$test_dir/project3/.automaton" \
-    bash -c "source '$test_dir/harness.sh'; _qa_validate 1 '' 'exit 0' ''" 2>/dev/null) || true
+    bash -c "source '$test_dir/harness.sh'; _qa_validate 1 0 'exit 0' '/nonexistent/specs'" 2>/dev/null) || true
 verdict=$(echo "$output" | jq -r '.verdict' 2>/dev/null)
 assert_equals "PASS" "$verdict" "_qa_validate returns PASS with passing tests"
 
 # --- Test 11: _qa_validate with failing tests returns FAIL verdict ---
 output=$(TEST_AUTOMATON_DIR="$test_dir/project3/.automaton" \
-    bash -c "source '$test_dir/harness.sh'; _qa_validate 1 '' 'echo FAIL; exit 1' ''" 2>/dev/null) || true
+    bash -c "source '$test_dir/harness.sh'; _qa_validate 1 0 'echo FAIL; exit 1' '/nonexistent/specs'" 2>/dev/null) || true
 verdict=$(echo "$output" | jq -r '.verdict' 2>/dev/null)
 assert_equals "FAIL" "$verdict" "_qa_validate returns FAIL with failing tests"
 
 # --- Test 12: _qa_validate writes iteration file ---
 mkdir -p "$test_dir/project4/.automaton/qa"
 TEST_AUTOMATON_DIR="$test_dir/project4/.automaton" \
-    bash -c "source '$test_dir/harness.sh'; _qa_validate 1 '' 'exit 0' ''" >/dev/null 2>&1 || true
+    bash -c "source '$test_dir/harness.sh'; _qa_validate 1 0 'exit 0' '/nonexistent/specs'" >/dev/null 2>&1 || true
 if [ -f "$test_dir/project4/.automaton/qa/iteration-1.json" ]; then
     assert_exit_code 0 0 "_qa_validate writes iteration-1.json"
 else

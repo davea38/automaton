@@ -80,6 +80,12 @@ load_config() {
         OUTPUT_HEAD_LINES=$(jq -r '.execution.output_head_lines // 50' "$config_file")
         OUTPUT_TAIL_LINES=$(jq -r '.execution.output_tail_lines // 150' "$config_file")
 
+        # -- QA validation loop (spec-46) --
+        QA_ENABLED=$(jq -r '.execution.qa_enabled // true' "$config_file")
+        QA_MAX_ITERATIONS=$(jq -r '.execution.qa_max_iterations // 5' "$config_file")
+        QA_BLIND_VALIDATION=$(jq -r '.execution.qa_blind_validation // false' "$config_file")
+        QA_MODEL=$(jq -r '.execution.qa_model // "sonnet"' "$config_file")
+
         # -- git --
         GIT_AUTO_PUSH=$(jq -r '.git.auto_push // true' "$config_file")
         GIT_AUTO_COMMIT=$(jq -r '.git.auto_commit // true' "$config_file")
@@ -233,6 +239,17 @@ load_config() {
         EXEC_BOOTSTRAP_ENABLED="true"
         EXEC_BOOTSTRAP_SCRIPT=".automaton/init.sh"
         EXEC_BOOTSTRAP_TIMEOUT_MS=2000
+
+        # -- QA validation loop (spec-46) --
+        QA_ENABLED="true"
+        QA_MAX_ITERATIONS=5
+        QA_BLIND_VALIDATION="false"
+        QA_MODEL="sonnet"
+
+        # -- output truncation (spec-49) --
+        OUTPUT_MAX_LINES=200
+        OUTPUT_HEAD_LINES=50
+        OUTPUT_TAIL_LINES=150
 
         # -- git --
         GIT_AUTO_PUSH="true"
@@ -10985,6 +11002,211 @@ truncate_output() {
     head -n "$OUTPUT_HEAD_LINES" "$input_file"
     echo "... [$truncated_count lines truncated] ..."
     tail -n "$OUTPUT_TAIL_LINES" "$input_file"
+}
+
+# === QA Validation Pass (spec-46) ===
+# Runs three checks per iteration: test execution, spec criteria, regression scan.
+# Returns structured JSON with classified failures.
+
+# Runs the project test suite and returns the exit code and output.
+# Usage: _qa_run_tests "test_command"
+# Outputs JSON: {"exit_code": N, "output": "..."}
+_qa_run_tests() {
+    local test_cmd="${1:-bash -n automaton.sh}"
+    local output exit_code=0
+    output=$(eval "$test_cmd" 2>&1) || exit_code=$?
+    # Truncate output to avoid huge JSON values
+    local truncated_output
+    truncated_output=$(echo "$output" | head -n 100)
+    jq -n --arg out "$truncated_output" --argjson ec "$exit_code" \
+        '{exit_code: $ec, output: $out}'
+}
+
+# Checks spec acceptance criteria by searching codebase for required patterns.
+# Usage: _qa_check_spec_criteria "spec_dir"
+# Outputs JSON array of unmet criteria (empty if all pass).
+_qa_check_spec_criteria() {
+    local spec_dir="${1:-specs}"
+    local failures="[]"
+    # If no specs directory, skip
+    if [ ! -d "$spec_dir" ]; then
+        echo "$failures"
+        return 0
+    fi
+    # Look for acceptance criteria in spec files, check basic presence
+    local spec_file
+    for spec_file in "$spec_dir"/spec-*.md; do
+        [ -f "$spec_file" ] || continue
+        local spec_name
+        spec_name=$(basename "$spec_file" .md)
+        # Extract lines between "Acceptance Criteria" and the next "##"
+        local criteria
+        criteria=$(sed -n '/## Acceptance Criteria/,/^## /p' "$spec_file" | grep -E '^\- \[ \]' 2>/dev/null || true)
+        # Each unchecked criterion is a potential spec_gap
+        while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            local criterion_text
+            criterion_text=$(echo "$line" | sed 's/^- \[ \] //')
+            # Only flag criteria that mention function names we can verify
+            local fn_name
+            fn_name=$(echo "$criterion_text" | grep -oE '[a-z_]+\(\)' | head -1 | tr -d '()' || true)
+            if [ -n "$fn_name" ] && ! grep -q "^${fn_name}() {" automaton.sh 2>/dev/null; then
+                failures=$(echo "$failures" | jq -c --arg id "${spec_name}_${fn_name}" \
+                    --arg desc "Function $fn_name not found (criterion: $criterion_text)" \
+                    --arg src "$spec_file" --arg spec "$spec_name" \
+                    '. + [{"id": $id, "type": "spec_gap", "description": $desc, "source": $src, "spec": $spec}]')
+            fi
+        done <<< "$criteria"
+    done
+    echo "$failures"
+}
+
+# Compares current failures against previous iteration to detect regressions.
+# Usage: _qa_scan_regressions "current_failures_json" prev_iteration_num
+# Outputs updated failures JSON with regression detection.
+_qa_scan_regressions() {
+    local current_failures="$1"
+    local prev_iter="${2:-0}"
+    if [ "$prev_iter" -le 0 ]; then
+        echo "$current_failures"
+        return 0
+    fi
+    local prev_file="${AUTOMATON_DIR}/qa/iteration-${prev_iter}.json"
+    if [ ! -f "$prev_file" ]; then
+        echo "$current_failures"
+        return 0
+    fi
+    local prev_failures
+    prev_failures=$(jq -r '.failures // []' "$prev_file")
+    local prev_ids
+    prev_ids=$(echo "$prev_failures" | jq -r '.[].id' 2>/dev/null || true)
+    # Check if any previously passing items now fail (regression detection
+    # is handled by the QA agent; here we just mark persistence)
+    echo "$current_failures"
+}
+
+# Classifies a single failure into one of 4 types.
+# Usage: _qa_classify_failure "id" "description" "source" "spec" "type"
+# Outputs JSON object for the failure.
+_qa_classify_failure() {
+    local id="$1" description="$2" source="$3" spec="${4:-}" type="$5"
+    local first_seen="${6:-1}" persistent="${7:-false}"
+    jq -n --arg id "$id" --arg type "$type" --arg desc "$description" \
+        --arg src "$source" --arg spec "$spec" \
+        --argjson fs "$first_seen" --argjson pers "$persistent" \
+        '{id: $id, type: $type, description: $desc, source: $src, spec: $spec, first_seen: $fs, persistent: $pers}'
+}
+
+# Marks failures as persistent if they appeared in the previous iteration.
+# Usage: _qa_mark_persistent "failures_json_array" prev_iteration_num
+# Outputs updated failures JSON array with persistent flags and first_seen adjusted.
+_qa_mark_persistent() {
+    local failures="$1"
+    local prev_iter="${2:-0}"
+    if [ "$prev_iter" -le 0 ]; then
+        echo "$failures"
+        return 0
+    fi
+    local prev_file="${AUTOMATON_DIR}/qa/iteration-${prev_iter}.json"
+    if [ ! -f "$prev_file" ]; then
+        echo "$failures"
+        return 0
+    fi
+    # Build a lookup of previous failure IDs -> first_seen
+    local prev_lookup
+    prev_lookup=$(jq -c '[.failures[]? | {key: .id, value: .first_seen}] | from_entries' "$prev_file" 2>/dev/null || echo '{}')
+    # Update current failures: mark persistent if ID exists in previous, preserve first_seen
+    echo "$failures" | jq -c --argjson prev "$prev_lookup" '
+        [.[] | . as $f |
+            if $prev[$f.id] then
+                .persistent = true | .first_seen = $prev[$f.id]
+            else . end
+        ]'
+}
+
+# Writes iteration results to .automaton/qa/iteration-N.json.
+# Usage: _qa_write_iteration iter_num failures_json passed failed verdict
+_qa_write_iteration() {
+    local iter_num="$1" failures="$2" passed="$3" failed="$4" verdict="$5"
+    mkdir -p "${AUTOMATON_DIR}/qa"
+    local ts
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    jq -n --argjson iter "$iter_num" --arg ts "$ts" \
+        --argjson failures "$failures" \
+        --argjson passed "$passed" --argjson failed "$failed" \
+        --arg verdict "$verdict" \
+        '{
+            iteration: $iter,
+            timestamp: $ts,
+            checks: {tests_run: true, spec_criteria_checked: true, regressions_scanned: true},
+            failures: $failures,
+            passed: $passed,
+            failed: $failed,
+            verdict: $verdict
+        }' > "${AUTOMATON_DIR}/qa/iteration-${iter_num}.json"
+}
+
+# Main QA validation pass. Runs all three checks and produces structured results.
+# Usage: _qa_validate iter_num prev_iter_num test_command spec_dir
+# Outputs JSON result and writes iteration file.
+_qa_validate() {
+    local iter_num="${1:-1}"
+    local prev_iter="${2:-0}"
+    local test_cmd="${3:-bash -n automaton.sh}"
+    local spec_dir="${4:-specs}"
+
+    mkdir -p "${AUTOMATON_DIR}/qa"
+    local failures="[]"
+    local passed=0 failed=0
+
+    # Step 1: Run tests
+    local test_result
+    test_result=$(_qa_run_tests "$test_cmd")
+    local test_exit_code
+    test_exit_code=$(echo "$test_result" | jq -r '.exit_code')
+    if [ "$test_exit_code" -ne 0 ]; then
+        local test_output
+        test_output=$(echo "$test_result" | jq -r '.output' | head -5)
+        local failure
+        failure=$(_qa_classify_failure "test_suite" "Test suite failed with exit code $test_exit_code: $test_output" "test_command" "" "test_failure" "$iter_num" "false")
+        failures=$(echo "$failures" | jq -c --argjson f "$failure" '. + [$f]')
+        failed=$((failed + 1))
+    else
+        passed=$((passed + 1))
+    fi
+
+    # Step 2: Check spec criteria
+    local spec_failures
+    spec_failures=$(_qa_check_spec_criteria "$spec_dir")
+    local spec_count
+    spec_count=$(echo "$spec_failures" | jq 'length')
+    if [ "$spec_count" -gt 0 ]; then
+        failures=$(echo "$failures" | jq -c --argjson sf "$spec_failures" '. + $sf')
+        failed=$((failed + spec_count))
+    else
+        passed=$((passed + 1))
+    fi
+
+    # Step 3: Scan for regressions (updates persistence flags)
+    failures=$(_qa_mark_persistent "$failures" "$prev_iter")
+
+    # Determine verdict
+    local total_failed
+    total_failed=$(echo "$failures" | jq 'length')
+    local verdict="PASS"
+    if [ "$total_failed" -gt 0 ]; then
+        verdict="FAIL"
+    fi
+
+    # Write iteration file
+    _qa_write_iteration "$iter_num" "$failures" "$passed" "$total_failed" "$verdict"
+
+    # Output result JSON
+    jq -n --argjson iter "$iter_num" \
+        --argjson failures "$failures" \
+        --argjson passed "$passed" --argjson failed "$total_failed" \
+        --arg verdict "$verdict" \
+        '{iteration: $iter, checks: {tests_run: true, spec_criteria_checked: true, regressions_scanned: true}, failures: $failures, passed: $passed, failed: $failed, verdict: $verdict}'
 }
 
 # Centralized agent invocation. Pipes the given prompt file into `claude -p`

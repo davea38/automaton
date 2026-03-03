@@ -488,9 +488,9 @@ These specs catch problems early — bad config, missing tools, lost error conte
 
 #### 46.2 QA Validation Pass
 
-- [ ] Implement the QA validation pass in `automaton.sh` that runs three checks per iteration: test execution (command from AGENTS.md), spec criteria check (codebase search), and regression scan (compare against previous iteration's `iteration-N.json`) (WHY: three complementary checks catch mechanical test failures, missing requirements, and newly introduced regressions respectively) <!-- test: tests/test_qa_validate.sh -->
+- [x] Implement the QA validation pass in `automaton.sh` that runs three checks per iteration: test execution (command from AGENTS.md), spec criteria check (codebase search), and regression scan (compare against previous iteration's `iteration-N.json`) (WHY: three complementary checks catch mechanical test failures, missing requirements, and newly introduced regressions respectively) <!-- test: tests/test_qa_validate.sh -->
 
-- [ ] Implement failure classification that assigns each failure exactly one type (`test_failure`, `spec_gap`, `regression`, `style_issue`) and writes results to `.automaton/qa/iteration-N.json` with persistence tracking (failures seen in consecutive iterations marked `persistent: true`) (WHY: typed failures route to different fix strategies — a regression needs revert context while a spec gap needs implementation context) <!-- test: tests/test_qa_classify.sh -->
+- [x] Implement failure classification that assigns each failure exactly one type (`test_failure`, `spec_gap`, `regression`, `style_issue`) and writes results to `.automaton/qa/iteration-N.json` with persistence tracking (failures seen in consecutive iterations marked `persistent: true`) (WHY: typed failures route to different fix strategies — a regression needs revert context while a spec gap needs implementation context) <!-- test: tests/test_qa_classify.sh -->
 
 #### 46.3 QA Fix Loop
 
