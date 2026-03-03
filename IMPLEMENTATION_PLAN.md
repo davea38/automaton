@@ -598,12 +598,12 @@ These features are additive — the system works without them. They add visibili
 
 ---
 
-## Tier 15: Onboarding (P3, Depends on Spec 48)
+## Tier 15: Onboarding (P3, Depends on Spec 48) — COMPLETE
 
-### Spec 57 — First-Time Setup Wizard
+### Spec 57 — First-Time Setup Wizard — COMPLETE
 
-- [ ] Implement `setup_wizard()` in `automaton.sh` (~80-100 lines) with 4 interactive prompts (model tier, budget limit, auto-push, skip-research), each with displayed default and one-retry validation, plus a confirmation summary with two-decline exit (WHY: new users must manually edit JSON to configure automaton; the wizard eliminates the #1 onboarding failure: malformed or missing config) <!-- test: tests/test_setup_wizard.sh -->
+- [x] Implement `setup_wizard()` in `automaton.sh` (~80-100 lines) with 4 interactive prompts (model tier, budget limit, auto-push, skip-research), each with displayed default and one-retry validation, plus a confirmation summary with two-decline exit (WHY: new users must manually edit JSON to configure automaton; the wizard eliminates the #1 onboarding failure: malformed or missing config) <!-- test: tests/test_setup_wizard.sh -->
 
-- [ ] Add first-run detection in `main()` (no config + no `--no-setup`), `--setup` (force re-run) and `--no-setup` (skip) flags with mutual-exclusion check, config generation via `jq -n` with all spec-12 schema fields, and non-TTY fallback to defaults (WHY: automatic detection catches first-time users; --no-setup prevents CI/CD hangs; jq generation guarantees valid JSON with complete schema) <!-- test: tests/test_setup_wizard.sh -->
+- [x] Add first-run detection in `main()` (no config + no `--no-setup`), `--setup` (force re-run) and `--no-setup` (skip) flags with mutual-exclusion check, config generation via `jq -n` with all spec-12 schema fields, and non-TTY fallback to defaults (WHY: automatic detection catches first-time users; --no-setup prevents CI/CD hangs; jq generation guarantees valid JSON with complete schema) <!-- test: tests/test_setup_wizard.sh -->
 
-- [ ] Call `doctor_check()` (spec-48) after writing config, and create `.automaton/` if absent (WHY: post-setup doctor check validates the environment alongside the newly generated config; directory creation prevents "not found" errors on first real run) <!-- test: tests/test_setup_wizard.sh -->
+- [x] Call `doctor_check()` (spec-48) after writing config, and create `.automaton/` if absent (WHY: post-setup doctor check validates the environment alongside the newly generated config; directory creation prevents "not found" errors on first real run) <!-- test: tests/test_setup_wizard.sh -->
