@@ -558,11 +558,11 @@ These specs add optional pipeline stages — adversarial critique, blind review,
 
 ### Spec 51 — Complexity-Based Execution Routing
 
-- [ ] Implement `assess_complexity()` in `automaton.sh` (~30 lines) that makes a single haiku Claude call (<1.5k tokens) to classify the task into SIMPLE/MODERATE/COMPLEX, writes `.automaton/complexity.json` with tier, rationale, timestamp, and override flag; defaults to MODERATE on failure (WHY: running the same deep pipeline for a typo fix vs an architectural change wastes 80%+ of tokens on simple tasks; cheap pre-classification saves budget) <!-- test: tests/test_complexity.sh -->
+- [x] Implement `assess_complexity()` in `automaton.sh` (~30 lines) that makes a single haiku Claude call (<1.5k tokens) to classify the task into SIMPLE/MODERATE/COMPLEX, writes `.automaton/complexity.json` with tier, rationale, timestamp, and override flag; defaults to MODERATE on failure (WHY: running the same deep pipeline for a typo fix vs an architectural change wastes 80%+ of tokens on simple tasks; cheap pre-classification saves budget) <!-- test: tests/test_complexity.sh -->
 
-- [ ] Implement routing logic (~20 lines) as a `case` block that sets pipeline variables: SIMPLE skips research, uses sonnet, caps review at 1 iteration, skips blind validation; MODERATE runs standard pipeline; COMPLEX uses opus for build, allows 4 QA iterations, enables blind validation (WHY: tier-specific pipeline depth matches effort to complexity — simple tasks are fast and cheap, complex tasks get full validation) <!-- test: tests/test_complexity.sh -->
+- [x] Implement routing logic (~20 lines) as a `case` block that sets pipeline variables: SIMPLE skips research, uses sonnet, caps review at 1 iteration, skips blind validation; MODERATE runs standard pipeline; COMPLEX uses opus for build, allows 4 QA iterations, enables blind validation (WHY: tier-specific pipeline depth matches effort to complexity — simple tasks are fast and cheap, complex tasks get full validation) <!-- test: tests/test_complexity.sh -->
 
-- [ ] Add `--complexity=simple|moderate|complex` CLI flag that bypasses the assessment call and sets `override: true` in `complexity.json` (WHY: users who know the scope can skip the assessment cost, and can correct misclassification without re-running) <!-- test: tests/test_complexity.sh -->
+- [x] Add `--complexity=simple|moderate|complex` CLI flag that bypasses the assessment call and sets `override: true` in `complexity.json` (WHY: users who know the scope can skip the assessment cost, and can correct misclassification without re-running) <!-- test: tests/test_complexity.sh -->
 
 ---
 
