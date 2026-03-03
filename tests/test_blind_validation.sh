@@ -40,7 +40,8 @@ _extract_function
 
 # Helper to set up project structure
 _setup_project() {
-    local project_dir="$test_dir/project"
+    local project_dir
+    project_dir=$(mktemp -d "$test_dir/project_XXXXXX")
     mkdir -p "$project_dir/specs" "$project_dir/.automaton"
 
     # Create a spec file with acceptance criteria

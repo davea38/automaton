@@ -71,7 +71,11 @@
     "dangerously_skip_permissions": true,
     "verbose": true,
     "skip_research": false,
-    "skip_review": false
+    "skip_review": false,
+    "blind_validation": false
+  },
+  "blind_validation": {
+    "max_diff_lines": 500
   },
   "parallel": {
     "enabled": false,

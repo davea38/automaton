@@ -86,6 +86,10 @@ load_config() {
         QA_BLIND_VALIDATION=$(jq -r '.execution.qa_blind_validation // false' "$config_file")
         QA_MODEL=$(jq -r '.execution.qa_model // "sonnet"' "$config_file")
 
+        # -- blind validation (spec-54) --
+        FLAG_BLIND_VALIDATION=$(jq -r '.flags.blind_validation // false' "$config_file")
+        BLIND_VALIDATION_MAX_DIFF_LINES=$(jq -r '.blind_validation.max_diff_lines // 500' "$config_file")
+
         # -- critique (spec-47) --
         CRITIQUE_AUTO_PREFLIGHT=$(jq -r '.critique.auto_preflight // false' "$config_file")
         CRITIQUE_BLOCK_ON_ERROR=$(jq -r '.critique.block_on_error // true' "$config_file")
@@ -271,6 +275,8 @@ load_config() {
         FLAG_VERBOSE="true"
         FLAG_SKIP_RESEARCH="false"
         FLAG_SKIP_REVIEW="false"
+        FLAG_BLIND_VALIDATION="false"
+        BLIND_VALIDATION_MAX_DIFF_LINES=500
 
         # -- parallel --
         PARALLEL_ENABLED="false"
@@ -423,6 +429,8 @@ validate_config() {
 .git.branch_prefix|string
 .flags.dangerously_skip_permissions|boolean
 .flags.verbose|boolean
+.flags.blind_validation|boolean
+.blind_validation.max_diff_lines|number
 TYPECHECKS
 
     # --- Range validation ---
@@ -442,6 +450,7 @@ TYPECHECKS
 .execution.stall_threshold|>=|1|
 .execution.max_consecutive_failures|>=|1|
 .execution.qa_max_iterations|>=|1|
+.blind_validation.max_diff_lines|>|0|
 RANGECHECKS
 
     # --- Enum validation: model names ---
@@ -11802,6 +11811,115 @@ phase_critique() {
     return 0
 }
 
+# Blind validation (spec-54): a separate Claude invocation that reviews changes
+# with ONLY spec acceptance criteria, test results, and git diff — no builder
+# reasoning, no implementation plan, no prior review feedback. Returns 0 on
+# PASS or when disabled, 1 on FAIL.
+# Usage: run_blind_validation "specs/spec-NN.md"
+run_blind_validation() {
+    local spec_file="${1:-}"
+
+    # Skip if blind validation is disabled
+    if [ "${FLAG_BLIND_VALIDATION:-false}" != "true" ]; then
+        log "BLIND" "Blind validation disabled (flags.blind_validation=false)"
+        return 0
+    fi
+
+    local max_diff_lines="${BLIND_VALIDATION_MAX_DIFF_LINES:-500}"
+
+    # --- Extract acceptance criteria from spec ---
+    local criteria=""
+    if [ -n "$spec_file" ] && [ -f "$spec_file" ]; then
+        # Try Acceptance Criteria section first
+        criteria=$(sed -n '/^## Acceptance Criteria/,/^## /p' "$spec_file" | sed '$d')
+        # Fall back to Requirements section
+        if [ -z "$criteria" ]; then
+            criteria=$(sed -n '/^## Requirements/,/^## /p' "$spec_file" | sed '$d')
+        fi
+    fi
+    if [ -z "$criteria" ]; then
+        log "BLIND" "WARNING: No acceptance criteria found in ${spec_file:-<none>}"
+        criteria="No acceptance criteria available."
+    fi
+
+    # --- Get test results ---
+    local test_results=""
+    if [ -f "${AUTOMATON_DIR}/test-results.log" ]; then
+        test_results=$(cat "${AUTOMATON_DIR}/test-results.log")
+    else
+        test_results="No test results available."
+    fi
+
+    # --- Get git diff (truncated if large) ---
+    local diff_output
+    diff_output=$(git diff --cached --no-color 2>/dev/null || git diff --no-color 2>/dev/null || echo "No diff available.")
+    local diff_lines
+    diff_lines=$(echo "$diff_output" | wc -l)
+    if [ "$diff_lines" -gt "$max_diff_lines" ]; then
+        diff_output=$(echo "$diff_output" | tail -n "$max_diff_lines")
+        diff_output="[... diff truncated: showing last ${max_diff_lines} of ${diff_lines} lines ...]
+${diff_output}"
+    fi
+
+    # --- Assemble prompt (criteria + test results + diff only) ---
+    local prompt_file
+    prompt_file=$(mktemp)
+    cat > "$prompt_file" <<PROMPT
+You are a blind validator. You have NOT seen the implementation plan, builder's reasoning, or commit messages. Evaluate the changes ONLY against the acceptance criteria below.
+
+## Spec Acceptance Criteria
+
+${criteria}
+
+## Test Results
+
+${test_results}
+
+## Code Changes (git diff)
+
+${diff_output}
+
+## Instructions
+
+Compare the code changes against each acceptance criterion. For each criterion, determine if it is satisfied by the diff. Output your verdict in exactly this format:
+
+VERDICT: PASS or FAIL
+CRITERIA_MET: [list of criteria that are satisfied]
+CRITERIA_MISSED: [list of criteria not satisfied, with reasoning]
+ISSUES: [any problems found outside listed criteria]
+PROMPT
+
+    # --- Invoke separate Claude CLI call ---
+    log "BLIND" "Running blind validation for ${spec_file:-unknown spec}"
+    local claude_output
+    claude_output=$(claude -p --output-format text --max-tokens 4000 < "$prompt_file" 2>/dev/null) || true
+    rm -f "$prompt_file"
+
+    # --- Write result to .automaton/blind-validation.md ---
+    local spec_name
+    spec_name=$(basename "${spec_file:-unknown}" .md)
+    cat > "${AUTOMATON_DIR}/blind-validation.md" <<RESULT
+# Blind Validation Result
+
+Spec: ${spec_name}
+Timestamp: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+${claude_output}
+RESULT
+
+    # --- Parse verdict ---
+    local verdict
+    verdict=$(echo "$claude_output" | grep -m1 '^VERDICT:' | sed 's/^VERDICT:[[:space:]]*//' | tr -d '[:space:]')
+
+    if [ "$verdict" = "FAIL" ]; then
+        log "BLIND" "Blind validation FAILED for $spec_name — see .automaton/blind-validation.md"
+        return 1
+    else
+        log "BLIND" "Blind validation PASSED for $spec_name"
+        return 0
+    fi
+}
+
 # Centralized agent invocation. Pipes the given prompt file into `claude -p`
 # with stream-json output, the specified model, and configured flags.
 # When agents.use_native_definitions is true (spec-27), invokes
@@ -15800,6 +15918,23 @@ run_orchestration() {
                 # Gate 5: review pass. On fail: back to build.
                 # After 2 failures: attempt focused fix. After 3: terminal escalate.
                 if gate_check "review_pass"; then
+                    # Blind validation (spec-54): additional independent review pass
+                    if [ "${FLAG_BLIND_VALIDATION:-false}" = "true" ]; then
+                        local blind_spec
+                        blind_spec=$(ls -t specs/spec-*.md 2>/dev/null | head -1)
+                        if [ -n "$blind_spec" ] && ! run_blind_validation "$blind_spec"; then
+                            log "ORCHESTRATOR" "Blind validation FAILED — overriding review pass"
+                            review_attempts=$((review_attempts + 1))
+                            if [ "$review_attempts" -ge 3 ]; then
+                                escalate "Review passed but blind validation failed after $review_attempts attempts."
+                            else
+                                log "ORCHESTRATOR" "Returning to build to address blind validation findings."
+                                stall_count=0
+                                transition_to_phase "build"
+                                continue 2
+                            fi
+                        fi
+                    fi
                     transition_to_phase "COMPLETE"
                 else
                     review_attempts=$((review_attempts + 1))
