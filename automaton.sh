@@ -4801,6 +4801,16 @@ inject_dynamic_context() {
             fi
         fi
 
+        # Review-specific context: inject QA failure report when available (spec-46.4)
+        if [ "$current_phase" = "review" ] && [ -f "$AUTOMATON_DIR/qa/failure-report.md" ]; then
+            echo "## QA Failure Report"
+            echo ""
+            echo "The QA loop exhausted its iterations with unresolved failures. Review the report below:"
+            echo ""
+            cat "$AUTOMATON_DIR/qa/failure-report.md"
+            echo ""
+        fi
+
         # Suffix: </dynamic_context> and everything after
         sed -n '/<\/dynamic_context>/,$p' "$prompt_file"
     } > "$augmented"
@@ -10963,6 +10973,16 @@ _build_dynamic_context_stdin() {
         fi
     fi
 
+    # Review-specific context: inject QA failure report when available (spec-46.4)
+    if [ "$current_phase" = "review" ] && [ -f "$AUTOMATON_DIR/qa/failure-report.md" ]; then
+        dynamic_content+="## QA Failure Report"$'\n'
+        dynamic_content+=""$'\n'
+        dynamic_content+="The QA loop exhausted its iterations with unresolved failures. Review the report below:"$'\n'
+        dynamic_content+=""$'\n'
+        dynamic_content+=$(cat "$AUTOMATON_DIR/qa/failure-report.md")$'\n'
+        dynamic_content+=""$'\n'
+    fi
+
     echo "$dynamic_content"
 }
 
@@ -11279,6 +11299,76 @@ _qa_create_fix_tasks() {
     echo "$count"
 }
 
+# Writes .automaton/qa/failure-report.md listing unresolved failures with types,
+# iteration history, and persistence flags. Called when QA loop exhausts retries.
+# The report is passed as context to Phase 4 review so the reviewer knows exactly
+# what QA could not fix.
+# Usage: _qa_write_failure_report iterations_exhausted final_failures_json
+_qa_write_failure_report() {
+    local iters_exhausted="$1"
+    local final_failures="$2"
+    local report_file="${AUTOMATON_DIR}/qa/failure-report.md"
+    mkdir -p "${AUTOMATON_DIR}/qa"
+
+    {
+        echo "# QA Failure Report"
+        echo ""
+        echo "QA validation exhausted **${iters_exhausted}** iterations with unresolved failures."
+        echo ""
+
+        # Unresolved failures table
+        local num_failures
+        num_failures=$(echo "$final_failures" | jq 'length')
+        echo "## Unresolved Failures (${num_failures})"
+        echo ""
+        if [ "$num_failures" -gt 0 ]; then
+            echo "| id | type | persistent | description |"
+            echo "|---|---|---|---|"
+            local i=0
+            while [ "$i" -lt "$num_failures" ]; do
+                local fid ftype fdesc fpersist
+                fid=$(echo "$final_failures" | jq -r ".[$i].id")
+                ftype=$(echo "$final_failures" | jq -r ".[$i].type")
+                fdesc=$(echo "$final_failures" | jq -r ".[$i].description" | head -1 | cut -c1-120)
+                fpersist=$(echo "$final_failures" | jq -r ".[$i].persistent // false")
+                echo "| ${fid} | ${ftype} | ${fpersist} | ${fdesc} |"
+                i=$((i + 1))
+            done
+            echo ""
+        else
+            echo "No unresolved failures recorded."
+            echo ""
+        fi
+
+        # Iteration history from iteration files
+        echo "## Iteration History"
+        echo ""
+        local iter_num=1
+        while [ "$iter_num" -le "$iters_exhausted" ]; do
+            local iter_file="${AUTOMATON_DIR}/qa/iteration-${iter_num}.json"
+            if [ -f "$iter_file" ]; then
+                local ts verdict failed passed
+                ts=$(jq -r '.timestamp // "unknown"' "$iter_file")
+                verdict=$(jq -r '.verdict // "unknown"' "$iter_file")
+                failed=$(jq -r '.failed // 0' "$iter_file")
+                passed=$(jq -r '.passed // 0' "$iter_file")
+                echo "- **Iteration ${iter_num}** (${ts}): ${verdict} — ${passed} passed, ${failed} failed"
+            fi
+            iter_num=$((iter_num + 1))
+        done
+        echo ""
+
+        echo "## Action Required"
+        echo ""
+        echo "The review agent should examine these failures and determine whether they indicate:"
+        echo "1. Implementation bugs that need targeted fixes"
+        echo "2. Spec ambiguities that need clarification"
+        echo "3. Test issues that need correction"
+    } > "$report_file"
+
+    log "QA" "Failure report written to ${report_file}"
+}
+
 # Runs the QA retry loop: validate → create fix tasks → build fixes → validate
 # again, up to qa_max_iterations. Returns structured JSON with final verdict.
 # The loop exits early on PASS or budget exhaustion.
@@ -11348,6 +11438,12 @@ _qa_run_loop() {
 
         qa_iter=$((qa_iter + 1))
     done
+
+    # Write failure report when QA exhausted iterations without passing (spec-46.4)
+    if [ "$last_verdict" != "PASS" ]; then
+        local actual_iters=$((qa_iter > max_iter ? max_iter : qa_iter))
+        _qa_write_failure_report "$actual_iters" "$last_failures"
+    fi
 
     # Output final result JSON
     jq -n --arg verdict "$last_verdict" \
