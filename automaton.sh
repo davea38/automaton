@@ -215,6 +215,10 @@ load_config() {
         DEBT_TRACKING_ENABLED=$(jq -r '.debt_tracking.enabled // true' "$config_file")
         DEBT_TRACKING_THRESHOLD=$(jq -r '.debt_tracking.threshold // 20' "$config_file")
         DEBT_TRACKING_MARKERS=$(jq -r '.debt_tracking.markers // ["TODO","FIXME","HACK","DEBT","WORKAROUND","TEMPORARY"] | join(" ")' "$config_file")
+
+        # -- guardrails (spec-58) --
+        GUARDRAILS_MODE=$(jq -r '.guardrails_mode // "warn"' "$config_file")
+        GUARDRAILS_SIZE_CEILING=18000
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -401,6 +405,10 @@ load_config() {
         DEBT_TRACKING_ENABLED="true"
         DEBT_TRACKING_THRESHOLD=20
         DEBT_TRACKING_MARKERS="TODO FIXME HACK DEBT WORKAROUND TEMPORARY"
+
+        # -- guardrails (spec-58) --
+        GUARDRAILS_MODE="warn"
+        GUARDRAILS_SIZE_CEILING=18000
     fi
 }
 
@@ -11319,6 +11327,154 @@ _generate_debt_summary() {
     local type_breakdown
     type_breakdown=$(jq -rs 'group_by(.type) | map("\(.[0].type):\(length)") | join(" ")' "$ledger")
     echo "Technical debt: $total items ($type_breakdown)"
+}
+
+# === Design Principles Guard Rails (spec-58) ===
+# Zero-API-call checks that enforce the 7 design principles from DESIGN_PRINCIPLES.md.
+# Each check returns 0 on pass, 1 on violation, and appends to GUARDRAIL_VIOLATIONS array.
+
+guardrail_check_size() {
+    local target="${PROJECT_ROOT:-.}/automaton.sh"
+    [ -f "$target" ] || return 0
+    local ceiling="${GUARDRAILS_SIZE_CEILING:-18000}"
+    local lines
+    lines=$(wc -l < "$target")
+    if [ "$lines" -ge "$ceiling" ]; then
+        local delta=$((lines - ceiling))
+        GUARDRAIL_VIOLATIONS+=("Size Ceiling: automaton.sh is $lines lines ($delta over the $ceiling limit)")
+        return 1
+    fi
+    return 0
+}
+
+guardrail_check_dependencies() {
+    local found=0
+    local matches
+    matches=$(grep -rnE '(apt-get|npm install|pip3? install|brew install|cargo install|gem install|go get|curl\s.*\|\s*sh|wget\s.*\|\s*sh)' ./*.sh ./**/*.sh 2>/dev/null || true)
+    if [ -n "$matches" ]; then
+        while IFS= read -r line; do
+            GUARDRAIL_VIOLATIONS+=("External Dependency: $line")
+            found=1
+        done <<< "$matches"
+    fi
+    return $found
+}
+
+guardrail_check_silent_errors() {
+    local found=0
+    # Check for 2>/dev/null without || fallback on the same line
+    local silent
+    silent=$(grep -rnE '2>/dev/null' ./*.sh 2>/dev/null | grep -vE '\|\||# ' || true)
+    if [ -n "$silent" ]; then
+        while IFS= read -r line; do
+            GUARDRAIL_VIOLATIONS+=("Silent Error: $line")
+            found=1
+        done <<< "$silent"
+    fi
+    # Check for set +e without restoration within 20 lines
+    local files
+    files=$(grep -rlE 'set \+e' ./*.sh 2>/dev/null || true)
+    for f in $files; do
+        [ -n "$f" ] || continue
+        grep -n 'set +e' "$f" 2>/dev/null | while IFS=: read -r lineno _rest; do
+            local end=$((lineno + 20))
+            if ! sed -n "$((lineno+1)),${end}p" "$f" 2>/dev/null | grep -q 'set -e'; then
+                GUARDRAIL_VIOLATIONS+=("Unrestored set +e: $f:$lineno")
+                found=1
+            fi
+        done
+    done
+    return $found
+}
+
+guardrail_check_state_location() {
+    local found=0
+    # Find file writes (redirects) to absolute or home-relative paths outside .automaton/
+    local writes
+    writes=$(grep -rnE '>>?\s*(\/[^d]|~\/)' ./*.sh 2>/dev/null | grep -vE '\.automaton|\$AUTOMATON_DIR|/dev/' || true)
+    if [ -n "$writes" ]; then
+        while IFS= read -r line; do
+            GUARDRAIL_VIOLATIONS+=("State Outside .automaton/: $line")
+            found=1
+        done <<< "$writes"
+    fi
+    return $found
+}
+
+guardrail_check_tui_deps() {
+    local found=0
+    local matches
+    matches=$(grep -rnE '(curses|tput cup|dialog|whiptail|electron|react|textual)' ./*.sh ./**/*.sh 2>/dev/null || true)
+    if [ -n "$matches" ]; then
+        while IFS= read -r line; do
+            GUARDRAIL_VIOLATIONS+=("TUI/GUI Dependency: $line")
+            found=1
+        done <<< "$matches"
+    fi
+    return $found
+}
+
+guardrail_check_prompt_logic() {
+    local found=0
+    # Look for control-flow keywords inside heredoc blocks (between <<EOF/<<'EOF' and EOF)
+    local files
+    files=$(grep -rlE '<<.*EOF' ./*.sh 2>/dev/null || true)
+    for f in $files; do
+        [ -n "$f" ] || continue
+        # Extract heredoc contents and check for control-flow patterns
+        local in_heredoc=0
+        local lineno=0
+        while IFS= read -r line; do
+            lineno=$((lineno + 1))
+            if echo "$line" | grep -qE '<<-?\s*'\''?EOF'; then
+                in_heredoc=1
+                continue
+            fi
+            if [ "$in_heredoc" -eq 1 ]; then
+                if echo "$line" | grep -qE '^EOF$'; then
+                    in_heredoc=0
+                    continue
+                fi
+                if echo "$line" | grep -qE '\bif\b.*\bthen\b|\bfor\b.*\bdo\b|\bwhile\b.*\bdo\b'; then
+                    GUARDRAIL_VIOLATIONS+=("Prompt Logic: $f:$lineno: $line")
+                    found=1
+                fi
+            fi
+        done < "$f"
+    done
+    return $found
+}
+
+run_guardrails() {
+    GUARDRAIL_VIOLATIONS=()
+    local had_failure=0 checks="size dependencies silent_errors state_location tui_deps prompt_logic"
+    local -A results=()
+    for check in $checks; do
+        if "guardrail_check_$check"; then results[$check]="PASS"
+        else results[$check]="FAIL"; had_failure=1; fi
+    done
+    local report="${AUTOMATON_DIR:-.automaton}/principle-violations.md"
+    {
+        echo "# Principle Violations Report"
+        echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+        echo ""
+        for check in $checks; do
+            if [ "${results[$check]}" = "FAIL" ]; then
+                echo "## FAIL: $check"
+                for v in "${GUARDRAIL_VIOLATIONS[@]}"; do
+                    echo "$v" | grep -qi "${check%%_*}" && echo "- $v"
+                done
+            else echo "## PASS: $check"; fi
+        done
+    } > "$report"
+    if [ "$had_failure" -eq 1 ]; then
+        if [ "${GUARDRAILS_MODE:-warn}" = "block" ]; then
+            log "ORCHESTRATOR" "GUARDRAILS BLOCKED: ${#GUARDRAIL_VIOLATIONS[@]} violations. See $report"
+            return 1
+        fi
+        log "ORCHESTRATOR" "GUARDRAILS WARNING: ${#GUARDRAIL_VIOLATIONS[@]} violations. See $report"
+    fi
+    return 0
 }
 
 # === QA Validation Pass (spec-46) ===

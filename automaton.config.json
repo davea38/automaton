@@ -185,5 +185,6 @@
     "enabled": true,
     "threshold": 20,
     "markers": ["TODO", "FIXME", "HACK", "DEBT", "WORKAROUND", "TEMPORARY"]
-  }
+  },
+  "guardrails_mode": "warn"
 }
