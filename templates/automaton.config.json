@@ -56,7 +56,11 @@
     "bootstrap_timeout_ms": 2000,
     "output_max_lines": 200,
     "output_head_lines": 50,
-    "output_tail_lines": 150
+    "output_tail_lines": 150,
+    "qa_enabled": true,
+    "qa_max_iterations": 5,
+    "qa_blind_validation": false,
+    "qa_model": "sonnet"
   },
   "git": {
     "auto_push": true,

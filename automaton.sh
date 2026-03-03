@@ -387,6 +387,10 @@ validate_config() {
 .execution.max_iterations.review|number
 .execution.stall_threshold|number
 .execution.max_consecutive_failures|number
+.execution.qa_enabled|boolean
+.execution.qa_max_iterations|number
+.execution.qa_blind_validation|boolean
+.execution.qa_model|string
 .git.auto_push|boolean
 .git.auto_commit|boolean
 .git.branch_prefix|string
@@ -410,11 +414,12 @@ TYPECHECKS
 .rate_limits.backoff_multiplier|>|1.0|
 .execution.stall_threshold|>=|1|
 .execution.max_consecutive_failures|>=|1|
+.execution.qa_max_iterations|>=|1|
 RANGECHECKS
 
     # --- Enum validation: model names ---
     local model_val
-    for model_field in .models.primary .models.research .models.planning .models.building .models.review .models.subagent_default; do
+    for model_field in .models.primary .models.research .models.planning .models.building .models.review .models.subagent_default .execution.qa_model; do
         model_val=$(jq -r "$model_field // empty" "$config_file" 2>/dev/null)
         [ -z "$model_val" ] && continue
         case "$model_val" in
