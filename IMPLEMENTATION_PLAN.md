@@ -572,11 +572,11 @@ These features are additive — the system works without them. They add visibili
 
 ### Spec 55 — Structured Work Logs (JSONL)
 
-- [ ] Implement `emit_event()` in `automaton.sh` (~25 lines) that constructs a JSON object with `ts`, `event`, `phase`, `iteration`, `elapsed_s`, `tokens`, `details` fields and appends one line to `.automaton/work-log-{run-id}.jsonl`, with log level filtering (minimal/normal/verbose) (WHY: the current `session.log` is human-readable but not queryable; JSONL enables `jq` analysis of phase durations, token spend, and error patterns across runs) <!-- test: tests/test_work_log.sh -->
+- [x] Implement `emit_event()` in `automaton.sh` (~25 lines) that constructs a JSON object with `ts`, `event`, `phase`, `iteration`, `elapsed_s`, `tokens`, `details` fields and appends one line to `.automaton/work-log-{run-id}.jsonl`, with log level filtering (minimal/normal/verbose) (WHY: the current `session.log` is human-readable but not queryable; JSONL enables `jq` analysis of phase durations, token spend, and error patterns across runs) <!-- test: tests/test_work_log.sh -->
 
-- [ ] Add 9 call sites at existing control points: `phase_start`, `phase_end`, `iteration_start`, `iteration_end`, `error`, `gate_check`, `budget_update`, `escalation`, `completion` (WHY: nine events cover the full orchestrator lifecycle — all are single-line insertions at existing control points, no restructuring needed) <!-- test: tests/test_work_log.sh -->
+- [x] Add 9 call sites at existing control points: `phase_start`, `phase_end`, `iteration_start`, `iteration_end`, `error`, `gate_check`, `budget_update`, `escalation`, `completion` (WHY: nine events cover the full orchestrator lifecycle — all are single-line insertions at existing control points, no restructuring needed) <!-- test: tests/test_work_log.sh -->
 
-- [ ] Add `--log-level minimal|normal|verbose` CLI flag, `work_log` config section (`enabled: true`, `log_level: "normal"`), per-run file naming, and `work-log.jsonl` symlink to latest run (WHY: per-run files prevent a crashed run from corrupting the log; symlink makes `jq .automaton/work-log.jsonl` always work) <!-- test: tests/test_work_log.sh -->
+- [x] Add `--log-level minimal|normal|verbose` CLI flag, `work_log` config section (`enabled: true`, `log_level: "normal"`), per-run file naming, and `work-log.jsonl` symlink to latest run (WHY: per-run files prevent a crashed run from corrupting the log; symlink makes `jq .automaton/work-log.jsonl` always work) <!-- test: tests/test_work_log.sh -->
 
 ### Spec 56 — Typed Technical Debt Tracking
 

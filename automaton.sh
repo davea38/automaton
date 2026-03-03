@@ -206,6 +206,10 @@ load_config() {
         NOTIFY_COMMAND=$(jq -r '.notifications.command // ""' "$config_file")
         NOTIFY_EVENTS=$(jq -r '.notifications.events // [] | join(",")' "$config_file")
         NOTIFY_TIMEOUT=$(jq -r '.notifications.timeout_seconds // 5' "$config_file")
+
+        # -- work_log (spec-55) --
+        WORK_LOG_ENABLED=$(jq -r '.work_log.enabled // true' "$config_file")
+        WORK_LOG_LEVEL=$(jq -r '.work_log.log_level // "normal"' "$config_file")
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -383,6 +387,10 @@ load_config() {
         NOTIFY_COMMAND=""
         NOTIFY_EVENTS=""
         NOTIFY_TIMEOUT=5
+
+        # -- work_log (spec-55) --
+        WORK_LOG_ENABLED="true"
+        WORK_LOG_LEVEL="normal"
     fi
 }
 
@@ -1354,6 +1362,16 @@ RATE
 
     # Create empty session.log (log() appends to this)
     : > "$AUTOMATON_DIR/session.log"
+
+    # Initialize structured work log (spec-55)
+    RUN_START_EPOCH=$(date +%s)
+    if [ "${WORK_LOG_ENABLED:-false}" = "true" ]; then
+        local run_ts
+        run_ts=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+        WORK_LOG="$AUTOMATON_DIR/work-log-${run_ts}.jsonl"
+        : > "$WORK_LOG"
+        ln -sf "work-log-${run_ts}.jsonl" "$AUTOMATON_DIR/work-log.jsonl"
+    fi
 
     log "ORCHESTRATOR" "Initialized $AUTOMATON_DIR/ directory"
 }
@@ -2395,6 +2413,13 @@ update_budget() {
         local iter_tokens=$((input_tokens + output_tokens))
         _update_cross_project_allowance "$iter_tokens"
     fi
+
+    # Structured work log: budget_update (spec-55)
+    local cumulative_tokens
+    cumulative_tokens=$(jq -r '(.used.total_input + .used.total_output) // 0' "$budget_file" 2>/dev/null || echo 0)
+    local remaining_budget
+    remaining_budget=$(jq -r '(.limits.max_tokens - .used.total_input - .used.total_output) // 0' "$budget_file" 2>/dev/null || echo 0)
+    emit_event "budget_update" "{\"tokens_used\":${cumulative_tokens},\"budget_remaining\":${remaining_budget},\"cost_usd\":${iter_cost}}"
 }
 
 # Checks rolling average cache hit ratio for the current phase.
@@ -4316,6 +4341,9 @@ display_stats() {
 escalate() {
     local description="$1"
     log "ORCHESTRATOR" "ESCALATION: $description"
+
+    # Structured work log: escalation (spec-55)
+    emit_event "escalation" "{\"reason\":\"${description}\",\"target\":\"user\"}"
 
     # Notify: escalation and run_failed (spec-52)
     send_notification "escalation" "${current_phase:-unknown}" "failure" "Escalation: $description"
@@ -10703,9 +10731,11 @@ gate_check() {
 
     if "gate_$gate_name"; then
         log "ORCHESTRATOR" "Gate: $gate_name... PASS"
+        emit_event "gate_check" "{\"gate\":\"${gate_name}\",\"passed\":true,\"reason\":\"\"}"
         return 0
     else
         log "ORCHESTRATOR" "Gate: $gate_name... FAIL"
+        emit_event "gate_check" "{\"gate\":\"${gate_name}\",\"passed\":false,\"reason\":\"gate failed\"}"
         return 1
     fi
 }
@@ -11127,6 +11157,42 @@ send_notification() {
          AUTOMATON_MESSAGE="$message" \
          eval "$NOTIFY_COMMAND" >/dev/null 2>&1 &)
     fi
+}
+
+# === Structured Work Log (spec-55) ===
+# Appends one JSON line per event to the JSONL work log file.
+# Usage: emit_event "event_type" '{"details":"..."}'
+# Reads from global shell variables: current_phase, iteration, RUN_START_EPOCH,
+# WORK_LOG, WORK_LOG_ENABLED, WORK_LOG_LEVEL.
+emit_event() {
+    [ "${WORK_LOG_ENABLED:-false}" = "true" ] || return 0
+    local event="$1"
+    local details="${2-"{}"}"
+    local now_epoch elapsed_s ts
+
+    # Log level filtering
+    case "$WORK_LOG_LEVEL" in
+        minimal)
+            case "$event" in
+                phase_start|phase_end|completion|error) ;;
+                *) return 0 ;;
+            esac
+            ;;
+        normal)
+            case "$event" in
+                gate_check|budget_update) return 0 ;;
+            esac
+            ;;
+        verbose) ;;  # all events pass
+    esac
+
+    now_epoch=$(date +%s)
+    elapsed_s=$((now_epoch - ${RUN_START_EPOCH:-now_epoch}))
+    ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    printf '{"ts":"%s","event":"%s","phase":"%s","iteration":%s,"elapsed_s":%s,"details":%s}\n' \
+        "$ts" "$event" "${current_phase:-orchestrator}" \
+        "${iteration:-0}" "$elapsed_s" "$details" >> "${WORK_LOG:-/dev/null}"
 }
 
 # === QA Validation Pass (spec-46) ===
@@ -12381,6 +12447,7 @@ ARG_CRITIQUE_SPECS=false
 ARG_SKIP_CRITIQUE=false
 ARG_STEELMAN=false
 ARG_COMPLEXITY=""
+ARG_LOG_LEVEL=""
 
 _show_help() {
     cat <<'HELPTEXT'
@@ -12404,6 +12471,7 @@ Standard Mode:
   --skip-critique       Skip pre-flight spec critique even when auto_preflight is on
   --steelman            Run adversarial plan critique, produce STEELMAN.md, and exit (spec-53)
   --complexity TIER     Override complexity assessment (simple|moderate|complex) (spec-51)
+  --log-level LEVEL     Set work log verbosity (minimal|normal|verbose) (spec-55)
   --help, -h            Show this help message
 
 Evolution Mode:
@@ -12605,6 +12673,14 @@ while [ $# -gt 0 ]; do
             ARG_COMPLEXITY="$2"
             shift 2
             ;;
+        --log-level)
+            if [ -z "${2:-}" ] || ! echo "${2:-}" | grep -qE '^(minimal|normal|verbose)$'; then
+                echo "Error: --log-level requires one of: minimal, normal, verbose" >&2
+                exit 1
+            fi
+            ARG_LOG_LEVEL="$2"
+            shift 2
+            ;;
         --help|-h)
             _show_help
             exit 0
@@ -12684,6 +12760,9 @@ if [ "$ARG_SKIP_RESEARCH" = "true" ]; then
 fi
 if [ "$ARG_SKIP_REVIEW" = "true" ]; then
     FLAG_SKIP_REVIEW="true"
+fi
+if [ -n "$ARG_LOG_LEVEL" ]; then
+    WORK_LOG_LEVEL="$ARG_LOG_LEVEL"
 fi
 
 # --- Self-build mode activation (spec-25) ---
@@ -15914,6 +15993,9 @@ transition_to_phase() {
     # Notify: phase completed (spec-52)
     send_notification "phase_completed" "$current_phase" "success" "${current_phase} phase completed"
 
+    # Structured work log: phase_end and phase_start (spec-55)
+    emit_event "phase_end" "{\"exit_code\":0,\"iterations\":${phase_iteration:-0}}"
+
     phase_history=$(echo "$phase_history" | jq -c \
         --arg p "$current_phase" --arg t "$now" \
         '. + [{"phase": $p, "completed_at": $t}]')
@@ -15921,6 +16003,8 @@ transition_to_phase() {
     current_phase="$new_phase"
     phase_iteration=0
     PHASE_START_TIME=$(date +%s)
+
+    emit_event "phase_start" "{\"phase_config\":{}}"
 
     # Initialize build sub-phase when entering build (spec-36)
     if [ "$new_phase" = "build" ] && [ "$EXEC_TEST_FIRST_ENABLED" = "true" ]; then
@@ -16084,12 +16168,14 @@ run_orchestration() {
             fi
 
             # --- Invoke the agent ---
+            emit_event "iteration_start" "{\"task\":\"${current_phase} iteration ${phase_iteration}\"}"
             local iter_start_epoch
             iter_start_epoch=$(date +%s)
             run_agent "$prompt_file" "$model"
 
             # --- Error classification and recovery ---
             if [ "$AGENT_EXIT_CODE" -ne 0 ]; then
+                emit_event "error" "{\"message\":\"agent exit code ${AGENT_EXIT_CODE}\",\"fatal\":false}"
                 if is_rate_limit "$AGENT_RESULT" || is_network_error "$AGENT_RESULT"; then
                     if ! handle_rate_limit run_agent "$prompt_file" "$model"; then
                         # All retries exhausted (inc. 10-min pause); retry iteration
@@ -16154,6 +16240,8 @@ run_orchestration() {
                 fi
                 continue
             fi
+
+            emit_event "iteration_end" "{\"exit_code\":${AGENT_EXIT_CODE:-0},\"files_changed\":0}"
 
             # Check if agent signaled COMPLETE
             if agent_signaled_complete; then
@@ -16296,6 +16384,9 @@ run_orchestration() {
     archive_run_journal
 
     log "ORCHESTRATOR" "Run complete."
+
+    # Structured work log: completion (spec-55)
+    emit_event "completion" "{\"status\":\"success\",\"total_iterations\":${iteration:-0},\"total_tokens\":0}"
 
     # Notify: run completed (spec-52)
     send_notification "run_completed" "all" "success" "Run completed successfully"

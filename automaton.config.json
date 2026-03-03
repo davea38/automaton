@@ -176,5 +176,9 @@
     "preserve_failed_branches": true,
     "preflight_enabled": true,
     "sandbox_testing_enabled": true
+  },
+  "work_log": {
+    "enabled": true,
+    "log_level": "normal"
   }
 }
