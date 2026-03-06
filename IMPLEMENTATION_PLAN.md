@@ -410,7 +410,7 @@ Spec 59 is the last unfinished spec. The `lib/` refactor also created template a
 
 - [x] Add `'PROMPT_wizard.md'` to the `TEMPLATE_FILES` array in `bin/cli.js` (WHY: scaffolded projects need the wizard prompt to support the `--wizard` flow; without it, `requirements_wizard()` fails with "PROMPT_wizard.md not found") <!-- test: none -->
 
-- [ ] Update `bin/cli.js` scaffolder output to remove any "run `claude` first" language and explain that `./automaton.sh` handles everything including requirements gathering (WHY: spec-59 eliminates the manual `claude` step — the scaffolder banner must reflect this) <!-- test: none -->
+- [x] Update `bin/cli.js` scaffolder output to remove any "run `claude` first" language and explain that `./automaton.sh` handles everything including requirements gathering (WHY: spec-59 eliminates the manual `claude` step — the scaffolder banner must reflect this) <!-- test: none -->
 
 ### Template & Scaffolder Sync (Housekeeping)
 

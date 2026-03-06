@@ -164,10 +164,14 @@ function printBanner() {
 
  Next steps:
    1. Run './automaton.sh'
-      (Walks you through requirements, then builds autonomously)
+      It handles everything: requirements gathering,
+      planning, building, and review — all autonomously.
+      If no specs exist, it launches an interactive wizard.
 
- Power users:
-   Run 'claude' to manually write specs, then './automaton.sh'
+ Options:
+   ./automaton.sh --wizard    Force the requirements wizard
+   ./automaton.sh --resume    Resume an interrupted run
+   ./automaton.sh --doctor    Check system dependencies
 
  Files created:
    automaton.sh          - Master orchestrator
@@ -175,9 +179,6 @@ function printBanner() {
    automaton.config.json - Configuration
    AGENTS.md             - Operational guide
    specs/                - Your specs go here
-
- To resume an interrupted run:
-   ./automaton.sh --resume
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 }
 
