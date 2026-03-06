@@ -422,7 +422,7 @@ The codebase was refactored from a monolithic `automaton.sh` (14,767 lines) into
 
 - [x] Copy `lib/` directory to `templates/lib/` (WHY: scaffolded projects need all library modules to function; without them, the modular `automaton.sh` fails on `source` lines 23-39) <!-- test: none -->
 
-- [ ] Add `lib/` directory copying to the scaffolder in `bin/cli.js` (WHY: `npx automaton` must copy the `lib/` directory alongside `automaton.sh` for the modular architecture to work in scaffolded projects) <!-- test: none -->
+- [x] Add `lib/` directory copying to the scaffolder in `bin/cli.js` (WHY: `npx automaton` must copy the `lib/` directory alongside `automaton.sh` for the modular architecture to work in scaffolded projects) <!-- test: none -->
 
 - [ ] Sync `templates/automaton.config.json` with root config including all spec 38-59 config sections (WHY: the template config is missing garden, stigmergy, quorum, metrics, evolution, safety, qa, critique, notifications, work_log, debt_tracking, guardrails, and wizard-related fields) <!-- test: none -->
 

@@ -131,6 +131,33 @@ function createDirectories() {
   }
 }
 
+function copyLibDirectory() {
+  const srcDir = path.join(TEMPLATES_DIR, 'lib');
+  const destDir = path.join(TARGET_DIR, 'lib');
+
+  if (!fs.existsSync(srcDir)) {
+    console.log('  Skipped   lib/ (template not available)');
+    return;
+  }
+
+  if (!fs.existsSync(destDir)) {
+    fs.mkdirSync(destDir, { recursive: true });
+  }
+
+  const files = fs.readdirSync(srcDir);
+  let copied = 0;
+  for (const file of files) {
+    const srcFile = path.join(srcDir, file);
+    const destFile = path.join(destDir, file);
+    if (fs.statSync(srcFile).isFile()) {
+      fs.copyFileSync(srcFile, destFile);
+      copied++;
+    }
+  }
+
+  console.log(`  Copied    lib/ (${copied} modules)`);
+}
+
 function makeExecutable(filename) {
   const filePath = path.join(TARGET_DIR, filename);
   if (fs.existsSync(filePath)) {
@@ -175,6 +202,7 @@ function printBanner() {
 
  Files created:
    automaton.sh          - Master orchestrator
+   lib/                  - Library modules (17 modules)
    PROMPT_*.md           - Agent prompts (5 phases)
    automaton.config.json - Configuration
    AGENTS.md             - Operational guide
@@ -204,6 +232,11 @@ for (const file of TEMPLATE_FILES) {
   else if (result === 'updated') updated++;
   else if (result === 'skipped') skippedMissing++;
 }
+
+console.log('');
+
+// Copy lib/ directory (modular architecture)
+copyLibDirectory();
 
 console.log('');
 
