@@ -3,6 +3,27 @@
 # Spec references: spec-14 (agent execution), spec-30 (dynamic context),
 #                  spec-36 (guardrails), spec-55 (status line)
 
+# Atomically writes content to a file using write-to-temp + rename.
+# This prevents readers from seeing partial writes. Uses the target's
+# directory for the temp file so mv is a same-filesystem rename (atomic).
+# Usage: atomic_write <target_file> < content   OR
+#        echo "data" | atomic_write <target_file>
+atomic_write() {
+    local target="$1"
+    local dir
+    dir=$(dirname "$target")
+    mkdir -p "$dir"
+    local tmp
+    tmp=$(mktemp "$dir/.tmp.XXXXXX") || { echo "atomic_write: mktemp failed for $target" >&2; return 1; }
+    if cat > "$tmp"; then
+        mv -f "$tmp" "$target"
+    else
+        rm -f "$tmp"
+        echo "atomic_write: write failed for $target" >&2
+        return 1
+    fi
+}
+
 _prompt_to_agent_name() {
     local prompt_file="$1"
     local basename
@@ -467,7 +488,7 @@ run_agent() {
         AGENT_EXIT_CODE=0
 
         local _tmp_output
-        _tmp_output=$(mktemp)
+        _tmp_output=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file"; AGENT_EXIT_CODE=1; return 0; }
         echo "$dynamic_context" | claude "${cmd_args[@]}" > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
         local _phase_hint="${prompt_file##*/PROMPT_}"
         _phase_hint="${_phase_hint%.md}"
@@ -521,7 +542,7 @@ run_agent() {
     # extract_tokens() greps for "type":"result" lines so stderr noise is harmless.
     # Error classifiers (is_rate_limit, is_network_error) need stderr to detect failures.
     local _tmp_output
-    _tmp_output=$(mktemp)
+    _tmp_output=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file"; AGENT_EXIT_CODE=1; return 0; }
     cat "$effective_prompt" | claude "${cmd_args[@]}" > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
     local _phase_hint="${prompt_file##*/PROMPT_}"
     _phase_hint="${_phase_hint%.md}"

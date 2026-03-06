@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
 # --- Test 1: build_agent_teams_command function exists ---
-grep_result=$(grep -c 'build_agent_teams_command' "$SCRIPT_DIR/../automaton.sh" || true)
+grep_result=$(grep -c 'build_agent_teams_command' "$script_file" || true)
 if [ "$grep_result" -ge 1 ]; then
     echo "PASS: automaton.sh contains build_agent_teams_command function"
     ((_TEST_PASS_COUNT++))
@@ -19,7 +19,7 @@ else
 fi
 
 # --- Test 2: Function references automaton-builder agent definition ---
-grep_result=$(grep -c 'automaton-builder' "$SCRIPT_DIR/../automaton.sh" || true)
+grep_result=$(grep -c 'automaton-builder' "$script_file" || true)
 if [ "$grep_result" -ge 1 ]; then
     echo "PASS: automaton.sh references automaton-builder agent definition"
     ((_TEST_PASS_COUNT++))
@@ -30,7 +30,7 @@ fi
 
 # --- Test 3: run_agent_teams_build references build_agent_teams_command ---
 # Extract run_agent_teams_build and check it calls build_agent_teams_command
-func_body=$(sed -n '/^run_agent_teams_build()/,/^[^ ]/p' "$SCRIPT_DIR/../automaton.sh")
+func_body=$(sed -n '/^run_agent_teams_build()/,/^[^ ]/p' "$script_file")
 if echo "$func_body" | grep -q 'build_agent_teams_command'; then
     echo "PASS: run_agent_teams_build calls build_agent_teams_command"
     ((_TEST_PASS_COUNT++))
@@ -66,7 +66,7 @@ JSON
     log() { :; }
 
     # Source just the function from automaton.sh
-    eval "$(sed -n '/^build_agent_teams_command()/,/^}/p' "$SCRIPT_DIR/../automaton.sh")"
+    eval "$(sed -n '/^build_agent_teams_command()/,/^}/p' "$script_file")"
 
     # Run the function and capture the output (array of args)
     cmd_output=$(build_agent_teams_command)
@@ -107,7 +107,7 @@ JSON
 # Since subshell exit codes won't propagate the detailed counts, verify structurally
 
 # --- Test 5: Verify display mode is configurable ---
-grep_result=$(grep -c 'PARALLEL_TEAMMATE_DISPLAY' "$SCRIPT_DIR/../automaton.sh" || true)
+grep_result=$(grep -c 'PARALLEL_TEAMMATE_DISPLAY' "$script_file" || true)
 if [ "$grep_result" -ge 2 ]; then
     echo "PASS: automaton.sh uses PARALLEL_TEAMMATE_DISPLAY for display mode config"
     ((_TEST_PASS_COUNT++))
@@ -117,7 +117,7 @@ else
 fi
 
 # --- Test 6: Verify permission mode handling (bypassPermissions / dangerously-skip) ---
-func_body=$(sed -n '/^build_agent_teams_command()/,/^}/p' "$SCRIPT_DIR/../automaton.sh")
+func_body=$(sed -n '/^build_agent_teams_command()/,/^}/p' "$script_file")
 if echo "$func_body" | grep -q 'dangerously.skip.permissions\|bypassPermissions'; then
     echo "PASS: build_agent_teams_command handles permission mode"
     ((_TEST_PASS_COUNT++))
@@ -127,7 +127,7 @@ else
 fi
 
 # --- Test 7: run_agent_teams_build no longer has "Fall back to single-builder" ---
-func_body=$(sed -n '/^run_agent_teams_build()/,/^[^ ]/p' "$SCRIPT_DIR/../automaton.sh")
+func_body=$(sed -n '/^run_agent_teams_build()/,/^[^ ]/p' "$script_file")
 if echo "$func_body" | grep -q 'Fall back to single-builder'; then
     echo "FAIL: run_agent_teams_build should not contain fallback stub" >&2
     ((_TEST_FAIL_COUNT++))

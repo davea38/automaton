@@ -9,7 +9,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
 config_file="$SCRIPT_DIR/../automaton.config.json"
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: automaton.config.json contains stigmergy.enabled ---
 val=$(jq -r '.stigmergy.enabled // "missing"' "$config_file")
@@ -35,29 +34,17 @@ assert_equals "0.6" "$val" "stigmergy.match_threshold defaults to 0.6"
 val=$(jq -r '.stigmergy.max_signals // "missing"' "$config_file")
 assert_equals "100" "$val" "stigmergy.max_signals defaults to 100"
 
-# --- Test 7: automaton.sh reads STIGMERGY_ENABLED from config ---
-grep_result=$(grep -c 'STIGMERGY_ENABLED.*jq.*stigmergy.enabled' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads STIGMERGY_ENABLED from stigmergy.enabled config"
-
-# --- Test 8: automaton.sh reads STIGMERGY_INITIAL_STRENGTH ---
-grep_result=$(grep -c 'STIGMERGY_INITIAL_STRENGTH.*jq.*stigmergy.initial_strength' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads STIGMERGY_INITIAL_STRENGTH"
-
-# --- Test 9: automaton.sh reads STIGMERGY_REINFORCE_INCREMENT ---
-grep_result=$(grep -c 'STIGMERGY_REINFORCE_INCREMENT.*jq.*stigmergy.reinforce_increment' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads STIGMERGY_REINFORCE_INCREMENT"
-
-# --- Test 10: automaton.sh reads STIGMERGY_DECAY_FLOOR ---
-grep_result=$(grep -c 'STIGMERGY_DECAY_FLOOR.*jq.*stigmergy.decay_floor' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads STIGMERGY_DECAY_FLOOR"
-
-# --- Test 11: automaton.sh reads STIGMERGY_MATCH_THRESHOLD ---
-grep_result=$(grep -c 'STIGMERGY_MATCH_THRESHOLD.*jq.*stigmergy.match_threshold' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads STIGMERGY_MATCH_THRESHOLD"
-
-# --- Test 12: automaton.sh reads STIGMERGY_MAX_SIGNALS ---
-grep_result=$(grep -c 'STIGMERGY_MAX_SIGNALS.*jq.*stigmergy.max_signals' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads STIGMERGY_MAX_SIGNALS"
+# --- Test 7-12: load_config() sets STIGMERGY_* variables from config ---
+(
+    source "$_PROJECT_DIR/lib/config.sh"
+    CONFIG_FILE="$config_file" load_config
+    assert_equals "true" "$STIGMERGY_ENABLED" "load_config sets STIGMERGY_ENABLED"
+    assert_equals "0.3" "$STIGMERGY_INITIAL_STRENGTH" "load_config sets STIGMERGY_INITIAL_STRENGTH"
+    assert_equals "0.15" "$STIGMERGY_REINFORCE_INCREMENT" "load_config sets STIGMERGY_REINFORCE_INCREMENT"
+    assert_equals "0.05" "$STIGMERGY_DECAY_FLOOR" "load_config sets STIGMERGY_DECAY_FLOOR"
+    assert_equals "0.6" "$STIGMERGY_MATCH_THRESHOLD" "load_config sets STIGMERGY_MATCH_THRESHOLD"
+    assert_equals "100" "$STIGMERGY_MAX_SIGNALS" "load_config sets STIGMERGY_MAX_SIGNALS"
+)
 
 # --- Test 13: automaton.sh has STIGMERGY_ defaults in the else branch ---
 grep_result=$(grep -c 'STIGMERGY_ENABLED="true"' "$script_file" || true)

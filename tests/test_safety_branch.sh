@@ -7,7 +7,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: _safety_branch_create() function exists ---
 grep_result=$(grep -c '^_safety_branch_create()' "$script_file" || true)

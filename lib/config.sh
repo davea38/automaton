@@ -16,198 +16,358 @@ load_config() {
     if [ -f "$config_file" ]; then
         CONFIG_FILE_USED="$config_file"
 
+        # Single jq invocation extracts all config values as newline-separated fields.
+        # This replaces 70+ individual jq calls with one process spawn.
+        local _cfg
+        _cfg=$(jq -r '[
+            # models (6)
+            (.models.primary // "opus"),
+            (.models.research // "sonnet"),
+            (.models.planning // "opus"),
+            (.models.building // "sonnet"),
+            (.models.review // "opus"),
+            (.models.subagent_default // "sonnet"),
+            # budget (11)
+            (.budget.max_total_tokens // 10000000 | tostring),
+            (.budget.max_cost_usd // 50 | tostring),
+            (.budget.per_phase.research // 500000 | tostring),
+            (.budget.per_phase.plan // 1000000 | tostring),
+            (.budget.per_phase.build // 7000000 | tostring),
+            (.budget.per_phase.review // 1500000 | tostring),
+            (.budget.per_iteration // 500000 | tostring),
+            (.budget.mode // "api"),
+            (.budget.weekly_allowance_tokens // 45000000 | tostring),
+            (.budget.allowance_reset_day // "monday"),
+            (.budget.reserve_percentage // 20 | tostring),
+            # rate_limits (8)
+            (.rate_limits.tokens_per_minute // 80000 | tostring),
+            (.rate_limits.requests_per_minute // 50 | tostring),
+            (.rate_limits.cooldown_seconds // 60 | tostring),
+            (.rate_limits.backoff_multiplier // 2 | tostring),
+            (.rate_limits.max_backoff_seconds // 300 | tostring),
+            (.rate_limits.max_retries // 5 | tostring),
+            (.rate_limits.extended_pause_seconds // 600 | tostring),
+            (.rate_limits.preset // "auto"),
+            # execution (16)
+            (.execution.max_iterations.research // 3 | tostring),
+            (.execution.max_iterations.plan // 2 | tostring),
+            (.execution.max_iterations.build // 0 | tostring),
+            (.execution.max_iterations.review // 2 | tostring),
+            (.execution.parallel_builders // 1 | tostring),
+            (.execution.stall_threshold // 3 | tostring),
+            (.execution.max_consecutive_failures // 3 | tostring),
+            (.execution.retry_delay_seconds // 10 | tostring),
+            (.execution.phase_timeout_seconds.research // 0 | tostring),
+            (.execution.phase_timeout_seconds.plan // 0 | tostring),
+            (.execution.phase_timeout_seconds.build // 0 | tostring),
+            (.execution.phase_timeout_seconds.review // 0 | tostring),
+            (.execution.test_first_enabled // true | tostring),
+            (.execution.test_scaffold_iterations // 2 | tostring),
+            (.execution.test_framework // "assertions"),
+            (.execution.bootstrap_enabled // true | tostring),
+            # bootstrap + output + qa (9)
+            (.execution.bootstrap_script // ".automaton/init.sh"),
+            (.execution.bootstrap_timeout_ms // 2000 | tostring),
+            (.execution.output_max_lines // 200 | tostring),
+            (.execution.output_head_lines // 50 | tostring),
+            (.execution.output_tail_lines // 150 | tostring),
+            (.execution.qa_enabled // true | tostring),
+            (.execution.qa_max_iterations // 5 | tostring),
+            (.execution.qa_blind_validation // false | tostring),
+            (.execution.qa_model // "sonnet"),
+            # flags (7)
+            (.flags.blind_validation // false | tostring),
+            (.blind_validation.max_diff_lines // 500 | tostring),
+            (.flags.steelman_critique // false | tostring),
+            (.flags.dangerously_skip_permissions // true | tostring),
+            (.flags.verbose // true | tostring),
+            (.flags.skip_research // false | tostring),
+            (.flags.skip_review // false | tostring),
+            # critique (3)
+            (.critique.auto_preflight // false | tostring),
+            (.critique.block_on_error // true | tostring),
+            (.critique.max_token_estimate // 80000 | tostring),
+            # git (3)
+            (.git.auto_push // true | tostring),
+            (.git.auto_commit // true | tostring),
+            (.git.branch_prefix // "automaton/"),
+            # parallel (8)
+            (.parallel.enabled // false | tostring),
+            (.parallel.mode // "automaton"),
+            (.parallel.max_builders // 3 | tostring),
+            (.parallel.tmux_session_name // "automaton"),
+            (.parallel.stagger_seconds // 15 | tostring),
+            (.parallel.wave_timeout_seconds // 600 | tostring),
+            (.parallel.dashboard // true | tostring),
+            (.parallel.teammate_display // "in-process"),
+            # self_build (5)
+            (.self_build.enabled // false | tostring),
+            (.self_build.max_files_per_iteration // 3 | tostring),
+            (.self_build.max_lines_changed_per_iteration // 200 | tostring),
+            (.self_build.protected_functions // ["run_orchestration","_handle_shutdown"] | join(",")),
+            (.self_build.require_smoke_test // true | tostring),
+            # journal + preset + agents (3)
+            (.journal.max_runs // 50 | tostring),
+            (.max_plan_preset // false | tostring),
+            (.agents.use_native_definitions // false | tostring),
+            # garden (10)
+            (.garden.enabled // true | tostring),
+            (.garden.seed_ttl_days // 14 | tostring),
+            (.garden.sprout_ttl_days // 30 | tostring),
+            (.garden.sprout_threshold // 2 | tostring),
+            (.garden.bloom_threshold // 3 | tostring),
+            (.garden.bloom_priority_threshold // 40 | tostring),
+            (.garden.signal_seed_threshold // 0.7 | tostring),
+            (.garden.max_active_ideas // 50 | tostring),
+            (.garden.auto_seed_from_metrics // true | tostring),
+            (.garden.auto_seed_from_signals // true | tostring),
+            # stigmergy (6)
+            (.stigmergy.enabled // true | tostring),
+            (.stigmergy.initial_strength // 0.3 | tostring),
+            (.stigmergy.reinforce_increment // 0.15 | tostring),
+            (.stigmergy.decay_floor // 0.05 | tostring),
+            (.stigmergy.match_threshold // 0.6 | tostring),
+            (.stigmergy.max_signals // 100 | tostring),
+            # quorum (10)
+            (.quorum.enabled // true | tostring),
+            (.quorum.voters // ["conservative","ambitious","efficiency","quality","advocate"] | join(",")),
+            (.quorum.thresholds.seed_promotion // 3 | tostring),
+            (.quorum.thresholds.bloom_implementation // 3 | tostring),
+            (.quorum.thresholds.constitutional_amendment // 4 | tostring),
+            (.quorum.thresholds.emergency_override // 5 | tostring),
+            (.quorum.max_tokens_per_voter // 500 | tostring),
+            (.quorum.max_cost_per_cycle_usd // 1.00 | tostring),
+            (.quorum.rejection_cooldown_cycles // 5 | tostring),
+            (.quorum.model // "sonnet"),
+            # metrics (4)
+            (.metrics.enabled // true | tostring),
+            (.metrics.trend_window // 5 | tostring),
+            (.metrics.degradation_alert_threshold // 3 | tostring),
+            (.metrics.snapshot_retention // 100 | tostring),
+            # evolution (10)
+            (.evolution.enabled // false | tostring),
+            (.evolution.max_cycles // 0 | tostring),
+            (.evolution.max_cost_per_cycle_usd // 5.00 | tostring),
+            (.evolution.convergence_threshold // 5 | tostring),
+            (.evolution.idle_garden_threshold // 3 | tostring),
+            (.evolution.branch_prefix // "automaton/evolve-"),
+            (.evolution.auto_merge // true | tostring),
+            (.evolution.reflect_model // "sonnet"),
+            (.evolution.ideate_model // "sonnet"),
+            (.evolution.observe_model // "sonnet"),
+            # safety (8)
+            (.safety.max_total_lines // 15000 | tostring),
+            (.safety.max_total_functions // 300 | tostring),
+            (.safety.min_test_pass_rate // 0.80 | tostring),
+            (.safety.max_consecutive_failures // 3 | tostring),
+            (.safety.max_consecutive_regressions // 2 | tostring),
+            (.safety.preserve_failed_branches // true | tostring),
+            (.safety.preflight_enabled // true | tostring),
+            (.safety.sandbox_testing_enabled // true | tostring),
+            # notifications (4)
+            (.notifications.webhook_url // ""),
+            (.notifications.command // ""),
+            (.notifications.events // [] | join(",")),
+            (.notifications.timeout_seconds // 5 | tostring),
+            # work_log (2)
+            (.work_log.enabled // true | tostring),
+            (.work_log.log_level // "normal"),
+            # debt_tracking (3)
+            (.debt_tracking.enabled // true | tostring),
+            (.debt_tracking.threshold // 20 | tostring),
+            (.debt_tracking.markers // ["TODO","FIXME","HACK","DEBT","WORKAROUND","TEMPORARY"] | join(" ")),
+            # guardrails (1)
+            (.guardrails_mode // "warn")
+        ] | .[]' "$config_file") || {
+            echo "Error: Failed to parse config file: $config_file" >&2
+            return 1
+        }
+
+        # Read newline-separated values into an array (handles empty strings correctly)
+        local _cv=()
+        while IFS= read -r _line; do
+            _cv+=("$_line")
+        done <<< "$_cfg"
+        local _i=0
+
         # -- models --
-        MODEL_PRIMARY=$(jq -r '.models.primary // "opus"' "$config_file")
-        MODEL_RESEARCH=$(jq -r '.models.research // "sonnet"' "$config_file")
-        MODEL_PLANNING=$(jq -r '.models.planning // "opus"' "$config_file")
-        MODEL_BUILDING=$(jq -r '.models.building // "sonnet"' "$config_file")
-        MODEL_REVIEW=$(jq -r '.models.review // "opus"' "$config_file")
-        MODEL_SUBAGENT_DEFAULT=$(jq -r '.models.subagent_default // "sonnet"' "$config_file")
+        MODEL_PRIMARY="${_cv[$_i]}"; ((_i++ , 1))
+        MODEL_RESEARCH="${_cv[$_i]}"; ((_i++ , 1))
+        MODEL_PLANNING="${_cv[$_i]}"; ((_i++ , 1))
+        MODEL_BUILDING="${_cv[$_i]}"; ((_i++ , 1))
+        MODEL_REVIEW="${_cv[$_i]}"; ((_i++ , 1))
+        MODEL_SUBAGENT_DEFAULT="${_cv[$_i]}"; ((_i++ , 1))
 
         # -- budget --
-        BUDGET_MAX_TOKENS=$(jq -r '.budget.max_total_tokens // 10000000' "$config_file")
-        BUDGET_MAX_USD=$(jq -r '.budget.max_cost_usd // 50' "$config_file")
-        BUDGET_PHASE_RESEARCH=$(jq -r '.budget.per_phase.research // 500000' "$config_file")
-        BUDGET_PHASE_PLAN=$(jq -r '.budget.per_phase.plan // 1000000' "$config_file")
-        BUDGET_PHASE_BUILD=$(jq -r '.budget.per_phase.build // 7000000' "$config_file")
-        BUDGET_PHASE_REVIEW=$(jq -r '.budget.per_phase.review // 1500000' "$config_file")
-        BUDGET_PER_ITERATION=$(jq -r '.budget.per_iteration // 500000' "$config_file")
+        BUDGET_MAX_TOKENS="${_cv[$_i]}"; ((_i++ , 1))
+        BUDGET_MAX_USD="${_cv[$_i]}"; ((_i++ , 1))
+        BUDGET_PHASE_RESEARCH="${_cv[$_i]}"; ((_i++ , 1))
+        BUDGET_PHASE_PLAN="${_cv[$_i]}"; ((_i++ , 1))
+        BUDGET_PHASE_BUILD="${_cv[$_i]}"; ((_i++ , 1))
+        BUDGET_PHASE_REVIEW="${_cv[$_i]}"; ((_i++ , 1))
+        BUDGET_PER_ITERATION="${_cv[$_i]}"; ((_i++ , 1))
+        BUDGET_MODE="${_cv[$_i]}"; ((_i++ , 1))
+        BUDGET_WEEKLY_ALLOWANCE="${_cv[$_i]}"; ((_i++ , 1))
+        BUDGET_ALLOWANCE_RESET_DAY="${_cv[$_i]}"; ((_i++ , 1))
+        BUDGET_RESERVE_PERCENTAGE="${_cv[$_i]}"; ((_i++ , 1))
 
         # -- rate_limits --
-        RATE_TOKENS_PER_MINUTE=$(jq -r '.rate_limits.tokens_per_minute // 80000' "$config_file")
-        RATE_REQUESTS_PER_MINUTE=$(jq -r '.rate_limits.requests_per_minute // 50' "$config_file")
-        RATE_COOLDOWN_SECONDS=$(jq -r '.rate_limits.cooldown_seconds // 60' "$config_file")
-        RATE_BACKOFF_MULTIPLIER=$(jq -r '.rate_limits.backoff_multiplier // 2' "$config_file")
-        RATE_MAX_BACKOFF_SECONDS=$(jq -r '.rate_limits.max_backoff_seconds // 300' "$config_file")
-        RATE_LIMIT_PRESET=$(jq -r '.rate_limits.preset // "auto"' "$config_file")
+        RATE_TOKENS_PER_MINUTE="${_cv[$_i]}"; ((_i++ , 1))
+        RATE_REQUESTS_PER_MINUTE="${_cv[$_i]}"; ((_i++ , 1))
+        RATE_COOLDOWN_SECONDS="${_cv[$_i]}"; ((_i++ , 1))
+        RATE_BACKOFF_MULTIPLIER="${_cv[$_i]}"; ((_i++ , 1))
+        RATE_MAX_BACKOFF_SECONDS="${_cv[$_i]}"; ((_i++ , 1))
+        RATE_MAX_RETRIES="${_cv[$_i]}"; ((_i++ , 1))
+        RATE_EXTENDED_PAUSE_SECONDS="${_cv[$_i]}"; ((_i++ , 1))
+        RATE_LIMIT_PRESET="${_cv[$_i]}"; ((_i++ , 1))
 
         # -- execution --
-        EXEC_MAX_ITER_RESEARCH=$(jq -r '.execution.max_iterations.research // 3' "$config_file")
-        EXEC_MAX_ITER_PLAN=$(jq -r '.execution.max_iterations.plan // 2' "$config_file")
-        EXEC_MAX_ITER_BUILD=$(jq -r '.execution.max_iterations.build // 0' "$config_file")
-        EXEC_MAX_ITER_REVIEW=$(jq -r '.execution.max_iterations.review // 2' "$config_file")
-        EXEC_PARALLEL_BUILDERS=$(jq -r '.execution.parallel_builders // 1' "$config_file")
-        EXEC_STALL_THRESHOLD=$(jq -r '.execution.stall_threshold // 3' "$config_file")
-        EXEC_MAX_CONSECUTIVE_FAILURES=$(jq -r '.execution.max_consecutive_failures // 3' "$config_file")
-        EXEC_RETRY_DELAY_SECONDS=$(jq -r '.execution.retry_delay_seconds // 10' "$config_file")
-        EXEC_PHASE_TIMEOUT_RESEARCH=$(jq -r '.execution.phase_timeout_seconds.research // 0' "$config_file")
-        EXEC_PHASE_TIMEOUT_PLAN=$(jq -r '.execution.phase_timeout_seconds.plan // 0' "$config_file")
-        EXEC_PHASE_TIMEOUT_BUILD=$(jq -r '.execution.phase_timeout_seconds.build // 0' "$config_file")
-        EXEC_PHASE_TIMEOUT_REVIEW=$(jq -r '.execution.phase_timeout_seconds.review // 0' "$config_file")
+        EXEC_MAX_ITER_RESEARCH="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_MAX_ITER_PLAN="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_MAX_ITER_BUILD="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_MAX_ITER_REVIEW="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_PARALLEL_BUILDERS="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_STALL_THRESHOLD="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_MAX_CONSECUTIVE_FAILURES="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_RETRY_DELAY_SECONDS="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_PHASE_TIMEOUT_RESEARCH="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_PHASE_TIMEOUT_PLAN="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_PHASE_TIMEOUT_BUILD="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_PHASE_TIMEOUT_REVIEW="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_TEST_FIRST_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_TEST_SCAFFOLD_ITERATIONS="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_TEST_FRAMEWORK="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_BOOTSTRAP_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- test-first build strategy (spec-36) --
-        EXEC_TEST_FIRST_ENABLED=$(jq -r '.execution.test_first_enabled // true' "$config_file")
-        EXEC_TEST_SCAFFOLD_ITERATIONS=$(jq -r '.execution.test_scaffold_iterations // 2' "$config_file")
-        EXEC_TEST_FRAMEWORK=$(jq -r '.execution.test_framework // "assertions"' "$config_file")
-
-        # -- bootstrap (spec-37) --
-        EXEC_BOOTSTRAP_ENABLED=$(jq -r '.execution.bootstrap_enabled // true' "$config_file")
-        EXEC_BOOTSTRAP_SCRIPT=$(jq -r '.execution.bootstrap_script // ".automaton/init.sh"' "$config_file")
-        EXEC_BOOTSTRAP_TIMEOUT_MS=$(jq -r '.execution.bootstrap_timeout_ms // 2000' "$config_file")
-
-        # -- output truncation (spec-49) --
-        OUTPUT_MAX_LINES=$(jq -r '.execution.output_max_lines // 200' "$config_file")
-        OUTPUT_HEAD_LINES=$(jq -r '.execution.output_head_lines // 50' "$config_file")
-        OUTPUT_TAIL_LINES=$(jq -r '.execution.output_tail_lines // 150' "$config_file")
-
-        # -- QA validation loop (spec-46) --
-        QA_ENABLED=$(jq -r '.execution.qa_enabled // true' "$config_file")
-        QA_MAX_ITERATIONS=$(jq -r '.execution.qa_max_iterations // 5' "$config_file")
-        QA_BLIND_VALIDATION=$(jq -r '.execution.qa_blind_validation // false' "$config_file")
-        QA_MODEL=$(jq -r '.execution.qa_model // "sonnet"' "$config_file")
-
-        # -- blind validation (spec-54) --
-        FLAG_BLIND_VALIDATION=$(jq -r '.flags.blind_validation // false' "$config_file")
-        BLIND_VALIDATION_MAX_DIFF_LINES=$(jq -r '.blind_validation.max_diff_lines // 500' "$config_file")
-
-        # -- steelman critique (spec-53) --
-        FLAG_STEELMAN_CRITIQUE=$(jq -r '.flags.steelman_critique // false' "$config_file")
-
-        # -- critique (spec-47) --
-        CRITIQUE_AUTO_PREFLIGHT=$(jq -r '.critique.auto_preflight // false' "$config_file")
-        CRITIQUE_BLOCK_ON_ERROR=$(jq -r '.critique.block_on_error // true' "$config_file")
-        CRITIQUE_MAX_TOKEN_ESTIMATE=$(jq -r '.critique.max_token_estimate // 80000' "$config_file")
-
-        # -- git --
-        GIT_AUTO_PUSH=$(jq -r '.git.auto_push // true' "$config_file")
-        GIT_AUTO_COMMIT=$(jq -r '.git.auto_commit // true' "$config_file")
-        GIT_BRANCH_PREFIX=$(jq -r '.git.branch_prefix // "automaton/"' "$config_file")
+        # -- bootstrap + output + qa --
+        EXEC_BOOTSTRAP_SCRIPT="${_cv[$_i]}"; ((_i++ , 1))
+        EXEC_BOOTSTRAP_TIMEOUT_MS="${_cv[$_i]}"; ((_i++ , 1))
+        OUTPUT_MAX_LINES="${_cv[$_i]}"; ((_i++ , 1))
+        OUTPUT_HEAD_LINES="${_cv[$_i]}"; ((_i++ , 1))
+        OUTPUT_TAIL_LINES="${_cv[$_i]}"; ((_i++ , 1))
+        QA_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        QA_MAX_ITERATIONS="${_cv[$_i]}"; ((_i++ , 1))
+        QA_BLIND_VALIDATION="${_cv[$_i]}"; ((_i++ , 1))
+        QA_MODEL="${_cv[$_i]}"; ((_i++ , 1))
 
         # -- flags --
-        FLAG_DANGEROUSLY_SKIP_PERMISSIONS=$(jq -r '.flags.dangerously_skip_permissions // true' "$config_file")
-        FLAG_VERBOSE=$(jq -r '.flags.verbose // true' "$config_file")
-        FLAG_SKIP_RESEARCH=$(jq -r '.flags.skip_research // false' "$config_file")
-        FLAG_SKIP_REVIEW=$(jq -r '.flags.skip_review // false' "$config_file")
+        FLAG_BLIND_VALIDATION="${_cv[$_i]}"; ((_i++ , 1))
+        BLIND_VALIDATION_MAX_DIFF_LINES="${_cv[$_i]}"; ((_i++ , 1))
+        FLAG_STEELMAN_CRITIQUE="${_cv[$_i]}"; ((_i++ , 1))
+        FLAG_DANGEROUSLY_SKIP_PERMISSIONS="${_cv[$_i]}"; ((_i++ , 1))
+        FLAG_VERBOSE="${_cv[$_i]}"; ((_i++ , 1))
+        FLAG_SKIP_RESEARCH="${_cv[$_i]}"; ((_i++ , 1))
+        FLAG_SKIP_REVIEW="${_cv[$_i]}"; ((_i++ , 1))
+
+        # -- critique --
+        CRITIQUE_AUTO_PREFLIGHT="${_cv[$_i]}"; ((_i++ , 1))
+        CRITIQUE_BLOCK_ON_ERROR="${_cv[$_i]}"; ((_i++ , 1))
+        CRITIQUE_MAX_TOKEN_ESTIMATE="${_cv[$_i]}"; ((_i++ , 1))
+
+        # -- git --
+        GIT_AUTO_PUSH="${_cv[$_i]}"; ((_i++ , 1))
+        GIT_AUTO_COMMIT="${_cv[$_i]}"; ((_i++ , 1))
+        GIT_BRANCH_PREFIX="${_cv[$_i]}"; ((_i++ , 1))
 
         # -- parallel --
-        PARALLEL_ENABLED=$(jq -r '.parallel.enabled // false' "$config_file")
-        PARALLEL_MODE=$(jq -r '.parallel.mode // "automaton"' "$config_file")
-        MAX_BUILDERS=$(jq -r '.parallel.max_builders // 3' "$config_file")
-        TMUX_SESSION_NAME=$(jq -r '.parallel.tmux_session_name // "automaton"' "$config_file")
-        PARALLEL_STAGGER_SECONDS=$(jq -r '.parallel.stagger_seconds // 15' "$config_file")
-        WAVE_TIMEOUT_SECONDS=$(jq -r '.parallel.wave_timeout_seconds // 600' "$config_file")
-        PARALLEL_DASHBOARD=$(jq -r '.parallel.dashboard // true' "$config_file")
-        PARALLEL_TEAMMATE_DISPLAY=$(jq -r '.parallel.teammate_display // "in-process"' "$config_file")
+        PARALLEL_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        PARALLEL_MODE="${_cv[$_i]}"; ((_i++ , 1))
+        MAX_BUILDERS="${_cv[$_i]}"; ((_i++ , 1))
+        TMUX_SESSION_NAME="${_cv[$_i]}"; ((_i++ , 1))
+        PARALLEL_STAGGER_SECONDS="${_cv[$_i]}"; ((_i++ , 1))
+        WAVE_TIMEOUT_SECONDS="${_cv[$_i]}"; ((_i++ , 1))
+        PARALLEL_DASHBOARD="${_cv[$_i]}"; ((_i++ , 1))
+        PARALLEL_TEAMMATE_DISPLAY="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- budget mode (spec-23) --
-        BUDGET_MODE=$(jq -r '.budget.mode // "api"' "$config_file")
-        BUDGET_WEEKLY_ALLOWANCE=$(jq -r '.budget.weekly_allowance_tokens // 45000000' "$config_file")
-        BUDGET_ALLOWANCE_RESET_DAY=$(jq -r '.budget.allowance_reset_day // "monday"' "$config_file")
-        BUDGET_RESERVE_PERCENTAGE=$(jq -r '.budget.reserve_percentage // 20' "$config_file")
+        # -- self_build --
+        SELF_BUILD_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        SELF_BUILD_MAX_FILES="${_cv[$_i]}"; ((_i++ , 1))
+        SELF_BUILD_MAX_LINES="${_cv[$_i]}"; ((_i++ , 1))
+        SELF_BUILD_PROTECTED_FUNCTIONS="${_cv[$_i]}"; ((_i++ , 1))
+        SELF_BUILD_REQUIRE_SMOKE="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- self_build (spec-22) --
-        SELF_BUILD_ENABLED=$(jq -r '.self_build.enabled // false' "$config_file")
-        SELF_BUILD_MAX_FILES=$(jq -r '.self_build.max_files_per_iteration // 3' "$config_file")
-        SELF_BUILD_MAX_LINES=$(jq -r '.self_build.max_lines_changed_per_iteration // 200' "$config_file")
-        SELF_BUILD_PROTECTED_FUNCTIONS=$(jq -r '.self_build.protected_functions // ["run_orchestration","_handle_shutdown"] | join(",")' "$config_file")
-        SELF_BUILD_REQUIRE_SMOKE=$(jq -r '.self_build.require_smoke_test // true' "$config_file")
+        # -- journal + preset + agents --
+        JOURNAL_MAX_RUNS="${_cv[$_i]}"; ((_i++ , 1))
+        MAX_PLAN_PRESET="${_cv[$_i]}"; ((_i++ , 1))
+        AGENTS_USE_NATIVE_DEFINITIONS="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- journal (spec-26) --
-        JOURNAL_MAX_RUNS=$(jq -r '.journal.max_runs // 50' "$config_file")
+        # -- garden --
+        GARDEN_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        GARDEN_SEED_TTL_DAYS="${_cv[$_i]}"; ((_i++ , 1))
+        GARDEN_SPROUT_TTL_DAYS="${_cv[$_i]}"; ((_i++ , 1))
+        GARDEN_SPROUT_THRESHOLD="${_cv[$_i]}"; ((_i++ , 1))
+        GARDEN_BLOOM_THRESHOLD="${_cv[$_i]}"; ((_i++ , 1))
+        GARDEN_BLOOM_PRIORITY_THRESHOLD="${_cv[$_i]}"; ((_i++ , 1))
+        GARDEN_SIGNAL_SEED_THRESHOLD="${_cv[$_i]}"; ((_i++ , 1))
+        GARDEN_MAX_ACTIVE_IDEAS="${_cv[$_i]}"; ((_i++ , 1))
+        GARDEN_AUTO_SEED_METRICS="${_cv[$_i]}"; ((_i++ , 1))
+        GARDEN_AUTO_SEED_SIGNALS="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- max_plan_preset (spec-35) --
-        MAX_PLAN_PRESET=$(jq -r '.max_plan_preset // false' "$config_file")
+        # -- stigmergy --
+        STIGMERGY_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        STIGMERGY_INITIAL_STRENGTH="${_cv[$_i]}"; ((_i++ , 1))
+        STIGMERGY_REINFORCE_INCREMENT="${_cv[$_i]}"; ((_i++ , 1))
+        STIGMERGY_DECAY_FLOOR="${_cv[$_i]}"; ((_i++ , 1))
+        STIGMERGY_MATCH_THRESHOLD="${_cv[$_i]}"; ((_i++ , 1))
+        STIGMERGY_MAX_SIGNALS="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- agents (spec-27) --
-        AGENTS_USE_NATIVE_DEFINITIONS=$(jq -r '.agents.use_native_definitions // false' "$config_file")
+        # -- quorum --
+        QUORUM_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        QUORUM_VOTERS="${_cv[$_i]}"; ((_i++ , 1))
+        QUORUM_THRESHOLD_SEED="${_cv[$_i]}"; ((_i++ , 1))
+        QUORUM_THRESHOLD_BLOOM="${_cv[$_i]}"; ((_i++ , 1))
+        QUORUM_THRESHOLD_AMENDMENT="${_cv[$_i]}"; ((_i++ , 1))
+        QUORUM_THRESHOLD_EMERGENCY="${_cv[$_i]}"; ((_i++ , 1))
+        QUORUM_MAX_TOKENS_PER_VOTER="${_cv[$_i]}"; ((_i++ , 1))
+        QUORUM_MAX_COST_PER_CYCLE="${_cv[$_i]}"; ((_i++ , 1))
+        QUORUM_REJECTION_COOLDOWN="${_cv[$_i]}"; ((_i++ , 1))
+        QUORUM_MODEL="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- garden (spec-38) --
-        GARDEN_ENABLED=$(jq -r '.garden.enabled // true' "$config_file")
-        GARDEN_SEED_TTL_DAYS=$(jq -r '.garden.seed_ttl_days // 14' "$config_file")
-        GARDEN_SPROUT_TTL_DAYS=$(jq -r '.garden.sprout_ttl_days // 30' "$config_file")
-        GARDEN_SPROUT_THRESHOLD=$(jq -r '.garden.sprout_threshold // 2' "$config_file")
-        GARDEN_BLOOM_THRESHOLD=$(jq -r '.garden.bloom_threshold // 3' "$config_file")
-        GARDEN_BLOOM_PRIORITY_THRESHOLD=$(jq -r '.garden.bloom_priority_threshold // 40' "$config_file")
-        GARDEN_SIGNAL_SEED_THRESHOLD=$(jq -r '.garden.signal_seed_threshold // 0.7' "$config_file")
-        GARDEN_MAX_ACTIVE_IDEAS=$(jq -r '.garden.max_active_ideas // 50' "$config_file")
-        GARDEN_AUTO_SEED_METRICS=$(jq -r '.garden.auto_seed_from_metrics // true' "$config_file")
-        GARDEN_AUTO_SEED_SIGNALS=$(jq -r '.garden.auto_seed_from_signals // true' "$config_file")
+        # -- metrics --
+        METRICS_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        METRICS_TREND_WINDOW="${_cv[$_i]}"; ((_i++ , 1))
+        METRICS_DEGRADATION_ALERT_THRESHOLD="${_cv[$_i]}"; ((_i++ , 1))
+        METRICS_SNAPSHOT_RETENTION="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- stigmergy (spec-42) --
-        STIGMERGY_ENABLED=$(jq -r '.stigmergy.enabled // true' "$config_file")
-        STIGMERGY_INITIAL_STRENGTH=$(jq -r '.stigmergy.initial_strength // 0.3' "$config_file")
-        STIGMERGY_REINFORCE_INCREMENT=$(jq -r '.stigmergy.reinforce_increment // 0.15' "$config_file")
-        STIGMERGY_DECAY_FLOOR=$(jq -r '.stigmergy.decay_floor // 0.05' "$config_file")
-        STIGMERGY_MATCH_THRESHOLD=$(jq -r '.stigmergy.match_threshold // 0.6' "$config_file")
-        STIGMERGY_MAX_SIGNALS=$(jq -r '.stigmergy.max_signals // 100' "$config_file")
+        # -- evolution --
+        EVOLVE_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        EVOLVE_MAX_CYCLES="${_cv[$_i]}"; ((_i++ , 1))
+        EVOLVE_MAX_COST_PER_CYCLE="${_cv[$_i]}"; ((_i++ , 1))
+        EVOLVE_CONVERGENCE_THRESHOLD="${_cv[$_i]}"; ((_i++ , 1))
+        EVOLVE_IDLE_GARDEN_THRESHOLD="${_cv[$_i]}"; ((_i++ , 1))
+        EVOLVE_BRANCH_PREFIX="${_cv[$_i]}"; ((_i++ , 1))
+        EVOLVE_AUTO_MERGE="${_cv[$_i]}"; ((_i++ , 1))
+        EVOLVE_REFLECT_MODEL="${_cv[$_i]}"; ((_i++ , 1))
+        EVOLVE_IDEATE_MODEL="${_cv[$_i]}"; ((_i++ , 1))
+        EVOLVE_OBSERVE_MODEL="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- quorum (spec-39) --
-        QUORUM_ENABLED=$(jq -r '.quorum.enabled // true' "$config_file")
-        QUORUM_VOTERS=$(jq -r '.quorum.voters // ["conservative","ambitious","efficiency","quality","advocate"] | join(",")' "$config_file")
-        QUORUM_THRESHOLD_SEED=$(jq -r '.quorum.thresholds.seed_promotion // 3' "$config_file")
-        QUORUM_THRESHOLD_BLOOM=$(jq -r '.quorum.thresholds.bloom_implementation // 3' "$config_file")
-        QUORUM_THRESHOLD_AMENDMENT=$(jq -r '.quorum.thresholds.constitutional_amendment // 4' "$config_file")
-        QUORUM_THRESHOLD_EMERGENCY=$(jq -r '.quorum.thresholds.emergency_override // 5' "$config_file")
-        QUORUM_MAX_TOKENS_PER_VOTER=$(jq -r '.quorum.max_tokens_per_voter // 500' "$config_file")
-        QUORUM_MAX_COST_PER_CYCLE=$(jq -r '.quorum.max_cost_per_cycle_usd // 1.00' "$config_file")
-        QUORUM_REJECTION_COOLDOWN=$(jq -r '.quorum.rejection_cooldown_cycles // 5' "$config_file")
-        QUORUM_MODEL=$(jq -r '.quorum.model // "sonnet"' "$config_file")
+        # -- safety --
+        SAFETY_MAX_TOTAL_LINES="${_cv[$_i]}"; ((_i++ , 1))
+        SAFETY_MAX_TOTAL_FUNCTIONS="${_cv[$_i]}"; ((_i++ , 1))
+        SAFETY_MIN_TEST_PASS_RATE="${_cv[$_i]}"; ((_i++ , 1))
+        SAFETY_MAX_CONSECUTIVE_FAILURES="${_cv[$_i]}"; ((_i++ , 1))
+        SAFETY_MAX_CONSECUTIVE_REGRESSIONS="${_cv[$_i]}"; ((_i++ , 1))
+        SAFETY_PRESERVE_FAILED_BRANCHES="${_cv[$_i]}"; ((_i++ , 1))
+        SAFETY_PREFLIGHT_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        SAFETY_SANDBOX_TESTING_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- metrics (spec-43) --
-        METRICS_ENABLED=$(jq -r '.metrics.enabled // true' "$config_file")
-        METRICS_TREND_WINDOW=$(jq -r '.metrics.trend_window // 5' "$config_file")
-        METRICS_DEGRADATION_ALERT_THRESHOLD=$(jq -r '.metrics.degradation_alert_threshold // 3' "$config_file")
-        METRICS_SNAPSHOT_RETENTION=$(jq -r '.metrics.snapshot_retention // 100' "$config_file")
+        # -- notifications --
+        NOTIFY_WEBHOOK_URL="${_cv[$_i]}"; ((_i++ , 1))
+        NOTIFY_COMMAND="${_cv[$_i]}"; ((_i++ , 1))
+        NOTIFY_EVENTS="${_cv[$_i]}"; ((_i++ , 1))
+        NOTIFY_TIMEOUT="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- evolution (spec-41) --
-        EVOLVE_ENABLED=$(jq -r '.evolution.enabled // false' "$config_file")
-        EVOLVE_MAX_CYCLES=$(jq -r '.evolution.max_cycles // 0' "$config_file")
-        EVOLVE_MAX_COST_PER_CYCLE=$(jq -r '.evolution.max_cost_per_cycle_usd // 5.00' "$config_file")
-        EVOLVE_CONVERGENCE_THRESHOLD=$(jq -r '.evolution.convergence_threshold // 5' "$config_file")
-        EVOLVE_IDLE_GARDEN_THRESHOLD=$(jq -r '.evolution.idle_garden_threshold // 3' "$config_file")
-        EVOLVE_BRANCH_PREFIX=$(jq -r '.evolution.branch_prefix // "automaton/evolve-"' "$config_file")
-        EVOLVE_AUTO_MERGE=$(jq -r '.evolution.auto_merge // true' "$config_file")
-        EVOLVE_REFLECT_MODEL=$(jq -r '.evolution.reflect_model // "sonnet"' "$config_file")
-        EVOLVE_IDEATE_MODEL=$(jq -r '.evolution.ideate_model // "sonnet"' "$config_file")
-        EVOLVE_OBSERVE_MODEL=$(jq -r '.evolution.observe_model // "sonnet"' "$config_file")
+        # -- work_log --
+        WORK_LOG_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        WORK_LOG_LEVEL="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- safety (spec-45) --
-        SAFETY_MAX_TOTAL_LINES=$(jq -r '.safety.max_total_lines // 15000' "$config_file")
-        SAFETY_MAX_TOTAL_FUNCTIONS=$(jq -r '.safety.max_total_functions // 300' "$config_file")
-        SAFETY_MIN_TEST_PASS_RATE=$(jq -r '.safety.min_test_pass_rate // 0.80' "$config_file")
-        SAFETY_MAX_CONSECUTIVE_FAILURES=$(jq -r '.safety.max_consecutive_failures // 3' "$config_file")
-        SAFETY_MAX_CONSECUTIVE_REGRESSIONS=$(jq -r '.safety.max_consecutive_regressions // 2' "$config_file")
-        SAFETY_PRESERVE_FAILED_BRANCHES=$(jq -r '.safety.preserve_failed_branches // true' "$config_file")
-        SAFETY_PREFLIGHT_ENABLED=$(jq -r '.safety.preflight_enabled // true' "$config_file")
-        SAFETY_SANDBOX_TESTING_ENABLED=$(jq -r '.safety.sandbox_testing_enabled // true' "$config_file")
+        # -- debt_tracking --
+        DEBT_TRACKING_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        DEBT_TRACKING_THRESHOLD="${_cv[$_i]}"; ((_i++ , 1))
+        DEBT_TRACKING_MARKERS="${_cv[$_i]}"; ((_i++ , 1))
 
-        # -- notifications (spec-52) --
-        NOTIFY_WEBHOOK_URL=$(jq -r '.notifications.webhook_url // ""' "$config_file")
-        NOTIFY_COMMAND=$(jq -r '.notifications.command // ""' "$config_file")
-        NOTIFY_EVENTS=$(jq -r '.notifications.events // [] | join(",")' "$config_file")
-        NOTIFY_TIMEOUT=$(jq -r '.notifications.timeout_seconds // 5' "$config_file")
-
-        # -- work_log (spec-55) --
-        WORK_LOG_ENABLED=$(jq -r '.work_log.enabled // true' "$config_file")
-        WORK_LOG_LEVEL=$(jq -r '.work_log.log_level // "normal"' "$config_file")
-
-        # -- debt_tracking (spec-56) --
-        DEBT_TRACKING_ENABLED=$(jq -r '.debt_tracking.enabled // true' "$config_file")
-        DEBT_TRACKING_THRESHOLD=$(jq -r '.debt_tracking.threshold // 20' "$config_file")
-        DEBT_TRACKING_MARKERS=$(jq -r '.debt_tracking.markers // ["TODO","FIXME","HACK","DEBT","WORKAROUND","TEMPORARY"] | join(" ")' "$config_file")
-
-        # -- guardrails (spec-58) --
-        GUARDRAILS_MODE=$(jq -r '.guardrails_mode // "warn"' "$config_file")
+        # -- guardrails --
+        GUARDRAILS_MODE="${_cv[$_i]}"; ((_i++ , 1))
         GUARDRAILS_SIZE_CEILING=18000
     else
         CONFIG_FILE_USED="(defaults)"
@@ -235,6 +395,8 @@ load_config() {
         RATE_COOLDOWN_SECONDS=60
         RATE_BACKOFF_MULTIPLIER=2
         RATE_MAX_BACKOFF_SECONDS=300
+        RATE_MAX_RETRIES=5
+        RATE_EXTENDED_PAUSE_SECONDS=600
         RATE_LIMIT_PRESET="auto"
 
         # -- execution --
@@ -293,6 +455,8 @@ load_config() {
 
         # -- parallel --
         PARALLEL_ENABLED="false"
+        PARALLEL_MODE="automaton"
+        PARALLEL_TEAMMATE_DISPLAY="in-process"
         MAX_BUILDERS=3
         TMUX_SESSION_NAME="automaton"
         PARALLEL_STAGGER_SECONDS=15
@@ -484,6 +648,16 @@ TYPECHECKS
 .execution.qa_max_iterations|>=|1|
 .blind_validation.max_diff_lines|>|0|
 RANGECHECKS
+
+    # --- Enum validation: budget.mode ---
+    local budget_mode_val
+    budget_mode_val=$(jq -r '.budget.mode // empty' "$config_file" 2>/dev/null)
+    if [ -n "$budget_mode_val" ]; then
+        case "$budget_mode_val" in
+            api|allowance) ;;
+            *) CONFIG_ERRORS+=("CONFIG ERROR: budget.mode must be one of api|allowance (got: \"$budget_mode_val\")") ;;
+        esac
+    fi
 
     # --- Enum validation: model names ---
     local model_val
@@ -854,7 +1028,7 @@ setup_wizard() {
         read -r _confirm
         case "$(echo "$_confirm" | tr '[:upper:]' '[:lower:]')" in
             n|no)
-                ((_decline_count++))
+                ((_decline_count++ , 1))
                 if [ "$_decline_count" -ge 2 ]; then
                     printf '\nSetup cancelled. Edit automaton.config.json manually or run --setup again.\n'
                     return 1

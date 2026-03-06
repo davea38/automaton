@@ -7,7 +7,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: ARG_EVOLVE variable exists and defaults to false ---
 grep_result=$(grep -c '^ARG_EVOLVE=false' "$script_file" || true)

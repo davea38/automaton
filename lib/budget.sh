@@ -201,7 +201,7 @@ _display_weekly_summary() {
     local tasks_completed=0
     local plan_file="${PLAN_FILE:-IMPLEMENTATION_PLAN.md}"
     if [ -f "$plan_file" ]; then
-        tasks_completed=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null || echo 0)
+        tasks_completed=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null) || tasks_completed=0
     fi
 
     # Estimate API-equivalent cost from budget-history.json run entries within the week

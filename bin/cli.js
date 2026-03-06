@@ -249,9 +249,8 @@ createDirectories();
 
 console.log('');
 
-// Make automaton.sh executable
+// Make executable scripts
 makeExecutable('automaton.sh');
-
 // Update .gitignore
 updateGitignore();
 

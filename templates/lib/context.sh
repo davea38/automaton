@@ -33,7 +33,7 @@ _run_bootstrap() {
     fi
 
     local manifest="" stderr_file
-    stderr_file=$(mktemp)
+    stderr_file=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file for bootstrap"; return 1; }
     if command -v timeout &>/dev/null; then
         manifest=$(timeout "${timeout_seconds}s" "$script_path" "." "$phase" "$iteration" 2>"$stderr_file") || {
             local stderr_output

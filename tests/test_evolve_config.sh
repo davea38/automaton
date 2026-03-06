@@ -8,7 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
 config_file="$SCRIPT_DIR/../automaton.config.json"
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: automaton.config.json contains evolution.enabled ---
 # Note: jq's // treats false as falsy, so use 'type' to confirm the key exists
@@ -51,45 +50,21 @@ assert_equals "sonnet" "$val" "evolution.ideate_model defaults to sonnet"
 val=$(jq -r '.evolution.observe_model // "missing"' "$config_file")
 assert_equals "sonnet" "$val" "evolution.observe_model defaults to sonnet"
 
-# --- Test 11: automaton.sh reads EVOLVE_ENABLED from config ---
-grep_result=$(grep -c 'EVOLVE_ENABLED.*jq.*evolution.enabled' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads EVOLVE_ENABLED from evolution.enabled config"
-
-# --- Test 12: automaton.sh reads EVOLVE_MAX_CYCLES ---
-grep_result=$(grep -c 'EVOLVE_MAX_CYCLES.*jq.*evolution.max_cycles' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads EVOLVE_MAX_CYCLES"
-
-# --- Test 13: automaton.sh reads EVOLVE_MAX_COST_PER_CYCLE ---
-grep_result=$(grep -c 'EVOLVE_MAX_COST_PER_CYCLE.*jq.*evolution.max_cost_per_cycle_usd' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads EVOLVE_MAX_COST_PER_CYCLE"
-
-# --- Test 14: automaton.sh reads EVOLVE_CONVERGENCE_THRESHOLD ---
-grep_result=$(grep -c 'EVOLVE_CONVERGENCE_THRESHOLD.*jq.*evolution.convergence_threshold' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads EVOLVE_CONVERGENCE_THRESHOLD"
-
-# --- Test 15: automaton.sh reads EVOLVE_IDLE_GARDEN_THRESHOLD ---
-grep_result=$(grep -c 'EVOLVE_IDLE_GARDEN_THRESHOLD.*jq.*evolution.idle_garden_threshold' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads EVOLVE_IDLE_GARDEN_THRESHOLD"
-
-# --- Test 16: automaton.sh reads EVOLVE_BRANCH_PREFIX ---
-grep_result=$(grep -c 'EVOLVE_BRANCH_PREFIX.*jq.*evolution.branch_prefix' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads EVOLVE_BRANCH_PREFIX"
-
-# --- Test 17: automaton.sh reads EVOLVE_AUTO_MERGE ---
-grep_result=$(grep -c 'EVOLVE_AUTO_MERGE.*jq.*evolution.auto_merge' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads EVOLVE_AUTO_MERGE"
-
-# --- Test 18: automaton.sh reads EVOLVE_REFLECT_MODEL ---
-grep_result=$(grep -c 'EVOLVE_REFLECT_MODEL.*jq.*evolution.reflect_model' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads EVOLVE_REFLECT_MODEL"
-
-# --- Test 19: automaton.sh reads EVOLVE_IDEATE_MODEL ---
-grep_result=$(grep -c 'EVOLVE_IDEATE_MODEL.*jq.*evolution.ideate_model' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads EVOLVE_IDEATE_MODEL"
-
-# --- Test 20: automaton.sh reads EVOLVE_OBSERVE_MODEL ---
-grep_result=$(grep -c 'EVOLVE_OBSERVE_MODEL.*jq.*evolution.observe_model' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads EVOLVE_OBSERVE_MODEL"
+# --- Test 11-20: load_config() sets EVOLVE_* variables from config ---
+(
+    source "$_PROJECT_DIR/lib/config.sh"
+    CONFIG_FILE="$config_file" load_config
+    assert_equals "false" "$EVOLVE_ENABLED" "load_config sets EVOLVE_ENABLED"
+    assert_equals "0" "$EVOLVE_MAX_CYCLES" "load_config sets EVOLVE_MAX_CYCLES"
+    assert_equals "5.00" "$EVOLVE_MAX_COST_PER_CYCLE" "load_config sets EVOLVE_MAX_COST_PER_CYCLE"
+    assert_equals "5" "$EVOLVE_CONVERGENCE_THRESHOLD" "load_config sets EVOLVE_CONVERGENCE_THRESHOLD"
+    assert_equals "3" "$EVOLVE_IDLE_GARDEN_THRESHOLD" "load_config sets EVOLVE_IDLE_GARDEN_THRESHOLD"
+    assert_equals "automaton/evolve-" "$EVOLVE_BRANCH_PREFIX" "load_config sets EVOLVE_BRANCH_PREFIX"
+    assert_equals "true" "$EVOLVE_AUTO_MERGE" "load_config sets EVOLVE_AUTO_MERGE"
+    assert_equals "sonnet" "$EVOLVE_REFLECT_MODEL" "load_config sets EVOLVE_REFLECT_MODEL"
+    assert_equals "sonnet" "$EVOLVE_IDEATE_MODEL" "load_config sets EVOLVE_IDEATE_MODEL"
+    assert_equals "sonnet" "$EVOLVE_OBSERVE_MODEL" "load_config sets EVOLVE_OBSERVE_MODEL"
+)
 
 # --- Test 21: automaton.sh has EVOLVE_ENABLED default in else branch ---
 grep_result=$(grep -c 'EVOLVE_ENABLED="false"' "$script_file" || true)

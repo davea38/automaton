@@ -7,7 +7,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
 TMPDIR="${TMPDIR:-/tmp}"
 test_dir="$TMPDIR/test_output_truncation_$$"
 mkdir -p "$test_dir"

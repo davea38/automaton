@@ -96,7 +96,7 @@ gate_plan_validity() {
 
     # Check: at least 5 unchecked tasks
     local unchecked
-    unchecked=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    unchecked=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null) || unchecked=0
     if [ "$unchecked" -lt 5 ]; then
         log "ORCHESTRATOR" "  FAIL: Only $unchecked unchecked tasks (minimum 5)"
         pass=false
@@ -112,7 +112,7 @@ gate_plan_validity() {
 
     # Check: tasks reference specs (heuristic, warning only)
     local spec_refs
-    spec_refs=$(grep -ci 'spec' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    spec_refs=$(grep -ci 'spec' IMPLEMENTATION_PLAN.md 2>/dev/null) || spec_refs=0
     if [ "$spec_refs" -eq 0 ]; then
         log "ORCHESTRATOR" "  WARN: No spec references found in plan"
         # Warning only, don't fail
@@ -134,7 +134,7 @@ gate_build_completion() {
 
     # Check: all tasks complete
     local unchecked
-    unchecked=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    unchecked=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null) || unchecked=0
     if [ "$unchecked" -gt 0 ]; then
         log "ORCHESTRATOR" "  FAIL: $unchecked tasks still incomplete"
         pass=false
@@ -170,7 +170,7 @@ gate_review_pass() {
 
     # Check: no new unchecked tasks were added by reviewer
     local unchecked
-    unchecked=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    unchecked=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null) || unchecked=0
     if [ "$unchecked" -gt 0 ]; then
         log "ORCHESTRATOR" "  FAIL: Review created $unchecked new tasks"
         pass=false
@@ -228,7 +228,7 @@ check_phase_timeout() {
 _qa_run_tests() {
     local test_cmd="${1:-bash -n automaton.sh}"
     local output exit_code=0
-    output=$(eval "$test_cmd" 2>&1) || exit_code=$?
+    output=$(bash -c "$test_cmd" 2>&1) || exit_code=$?
     # Truncate output to avoid huge JSON values
     local truncated_output
     truncated_output=$(echo "$output" | head -n 100)
@@ -907,13 +907,13 @@ phase_critique() {
 
     # Count specs analyzed
     local specs_analyzed
-    specs_analyzed=$(echo "$spec_payload" | grep -c '^--- spec-' || echo 0)
+    specs_analyzed=$(echo "$spec_payload" | grep -c '^--- spec-') || specs_analyzed=0
 
     log "CRITIQUE" "Analyzing $specs_analyzed spec files"
 
     # Build the critique prompt (written to temp file to avoid heredoc extraction issues)
     local prompt_file
-    prompt_file=$(mktemp)
+    prompt_file=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file"; return 1; }
     printf '%s\n' \
         "You are a spec quality reviewer. Analyze the following specification files and identify issues across these 6 dimensions:" \
         "" \
@@ -1038,7 +1038,7 @@ ${diff_output}"
 
     # --- Assemble prompt (criteria + test results + diff only) ---
     local prompt_file
-    prompt_file=$(mktemp)
+    prompt_file=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file"; return 1; }
     cat > "$prompt_file" <<PROMPT
 You are a blind validator. You have NOT seen the implementation plan, builder's reasoning, or commit messages. Evaluate the changes ONLY against the acceptance criteria below.
 
@@ -1127,7 +1127,7 @@ run_steelman_critique() {
 
     # --- Build adversarial prompt ---
     local prompt_file
-    prompt_file=$(mktemp)
+    prompt_file=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file"; return 1; }
     cat > "$prompt_file" <<'PROMPT'
 You are a skeptical technical reviewer. Your job is to argue AGAINST the implementation plan below. Do NOT rewrite the plan or produce code. Instead, produce a critique document with exactly these 5 sections:
 

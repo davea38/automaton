@@ -27,7 +27,7 @@ _display_garden() {
     local now_epoch
     now_epoch=$(date +%s)
 
-    for f in $idea_files; do
+    while IFS= read -r f; do
         [ -f "$f" ] || continue
         local stage
         stage=$(jq -r '.stage' "$f")
@@ -76,7 +76,7 @@ _display_garden() {
             --arg age "${age_days}d" \
             --argjson sort_order "$sort_order" \
             '. + [{"id": $id, "stage": $stage, "priority": $priority, "title": $title, "age": $age, "sort_order": $sort_order}]')
-    done
+    done <<< "$idea_files"
 
     if [ "$total_active" -eq 0 ]; then
         echo "AUTOMATON GARDEN — 0 ideas"

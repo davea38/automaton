@@ -8,7 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
 config_file="$SCRIPT_DIR/../automaton.config.json"
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: automaton.config.json contains safety.max_total_lines ---
 val=$(jq -r '.safety.max_total_lines // "missing"' "$config_file")
@@ -42,37 +41,19 @@ assert_equals "true" "$val" "safety.preflight_enabled defaults to true"
 val=$(jq -r '.safety.sandbox_testing_enabled // "missing"' "$config_file")
 assert_equals "true" "$val" "safety.sandbox_testing_enabled defaults to true"
 
-# --- Test 9: automaton.sh reads SAFETY_MAX_TOTAL_LINES from config ---
-grep_result=$(grep -c 'SAFETY_MAX_TOTAL_LINES.*jq.*safety.max_total_lines' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads SAFETY_MAX_TOTAL_LINES from safety.max_total_lines config"
-
-# --- Test 10: automaton.sh reads SAFETY_MAX_TOTAL_FUNCTIONS ---
-grep_result=$(grep -c 'SAFETY_MAX_TOTAL_FUNCTIONS.*jq.*safety.max_total_functions' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads SAFETY_MAX_TOTAL_FUNCTIONS"
-
-# --- Test 11: automaton.sh reads SAFETY_MIN_TEST_PASS_RATE ---
-grep_result=$(grep -c 'SAFETY_MIN_TEST_PASS_RATE.*jq.*safety.min_test_pass_rate' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads SAFETY_MIN_TEST_PASS_RATE"
-
-# --- Test 12: automaton.sh reads SAFETY_MAX_CONSECUTIVE_FAILURES ---
-grep_result=$(grep -c 'SAFETY_MAX_CONSECUTIVE_FAILURES.*jq.*safety.max_consecutive_failures' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads SAFETY_MAX_CONSECUTIVE_FAILURES"
-
-# --- Test 13: automaton.sh reads SAFETY_MAX_CONSECUTIVE_REGRESSIONS ---
-grep_result=$(grep -c 'SAFETY_MAX_CONSECUTIVE_REGRESSIONS.*jq.*safety.max_consecutive_regressions' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads SAFETY_MAX_CONSECUTIVE_REGRESSIONS"
-
-# --- Test 14: automaton.sh reads SAFETY_PRESERVE_FAILED_BRANCHES ---
-grep_result=$(grep -c 'SAFETY_PRESERVE_FAILED_BRANCHES.*jq.*safety.preserve_failed_branches' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads SAFETY_PRESERVE_FAILED_BRANCHES"
-
-# --- Test 15: automaton.sh reads SAFETY_PREFLIGHT_ENABLED ---
-grep_result=$(grep -c 'SAFETY_PREFLIGHT_ENABLED.*jq.*safety.preflight_enabled' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads SAFETY_PREFLIGHT_ENABLED"
-
-# --- Test 16: automaton.sh reads SAFETY_SANDBOX_TESTING_ENABLED ---
-grep_result=$(grep -c 'SAFETY_SANDBOX_TESTING_ENABLED.*jq.*safety.sandbox_testing_enabled' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads SAFETY_SANDBOX_TESTING_ENABLED"
+# --- Test 9-16: load_config() sets SAFETY_* variables from config ---
+(
+    source "$_PROJECT_DIR/lib/config.sh"
+    CONFIG_FILE="$config_file" load_config
+    assert_equals "15000" "$SAFETY_MAX_TOTAL_LINES" "load_config sets SAFETY_MAX_TOTAL_LINES"
+    assert_equals "300" "$SAFETY_MAX_TOTAL_FUNCTIONS" "load_config sets SAFETY_MAX_TOTAL_FUNCTIONS"
+    assert_equals "0.8" "${SAFETY_MIN_TEST_PASS_RATE%0}" "load_config sets SAFETY_MIN_TEST_PASS_RATE"
+    assert_equals "3" "$SAFETY_MAX_CONSECUTIVE_FAILURES" "load_config sets SAFETY_MAX_CONSECUTIVE_FAILURES"
+    assert_equals "2" "$SAFETY_MAX_CONSECUTIVE_REGRESSIONS" "load_config sets SAFETY_MAX_CONSECUTIVE_REGRESSIONS"
+    assert_equals "true" "$SAFETY_PRESERVE_FAILED_BRANCHES" "load_config sets SAFETY_PRESERVE_FAILED_BRANCHES"
+    assert_equals "true" "$SAFETY_PREFLIGHT_ENABLED" "load_config sets SAFETY_PREFLIGHT_ENABLED"
+    assert_equals "true" "$SAFETY_SANDBOX_TESTING_ENABLED" "load_config sets SAFETY_SANDBOX_TESTING_ENABLED"
+)
 
 # --- Test 17: automaton.sh has SAFETY_MAX_TOTAL_LINES default in else branch ---
 grep_result=$(grep -c 'SAFETY_MAX_TOTAL_LINES=15000' "$script_file" || true)

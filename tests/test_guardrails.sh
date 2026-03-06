@@ -6,7 +6,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
 config_file="$SCRIPT_DIR/../automaton.config.json"
 TMPDIR="${TMPDIR:-/tmp}"
 test_dir="$TMPDIR/test_guardrails_$$"

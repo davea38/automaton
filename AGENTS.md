@@ -19,5 +19,5 @@
 ## Learnings
 
 - System deps: claude CLI, jq, git (checked at startup)
-- Existing templates: loop.sh, PROMPT_plan.md, PROMPT_build.md, AGENTS.md, IMPLEMENTATION_PLAN.md, CLAUDE.md
-- automaton.sh will be the main orchestrator (replacing loop.sh for multi-phase runs)
+- Existing templates: PROMPT_plan.md, PROMPT_build.md, AGENTS.md, IMPLEMENTATION_PLAN.md, CLAUDE.md
+- automaton.sh is the main orchestrator for multi-phase runs

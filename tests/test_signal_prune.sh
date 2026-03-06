@@ -7,7 +7,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: _signal_prune function exists in automaton.sh ---
 grep_result=$(grep -c '^_signal_prune()' "$script_file" || true)

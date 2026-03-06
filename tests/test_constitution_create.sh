@@ -8,7 +8,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # Create a temp directory to act as AUTOMATON_DIR
 AUTOMATON_DIR="$(mktemp -d)"

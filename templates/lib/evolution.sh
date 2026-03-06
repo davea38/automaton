@@ -600,7 +600,7 @@ _evolve_implement() {
     if [ -n "$diff_stat" ]; then
         files_changed=$(echo "$diff_stat" | tail -1 | grep -oP '\d+ files?' | grep -oP '\d+' || echo 0)
         lines_changed=$(echo "$diff_stat" | tail -1 | grep -oP '\d+ insertion|deletion' | grep -oP '\d+' | paste -sd+ - | bc 2>/dev/null || echo 0)
-        tests_added=$(git diff "$WORKING_BRANCH"...HEAD --name-only 2>/dev/null | grep -c '^tests/' || echo 0)
+        tests_added=$(git diff "$WORKING_BRANCH"...HEAD --name-only 2>/dev/null | grep -c '^tests/') || tests_added=0
     fi
 
     # 5. Run syntax check

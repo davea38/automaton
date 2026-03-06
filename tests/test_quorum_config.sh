@@ -9,7 +9,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
 config_file="$SCRIPT_DIR/../automaton.config.json"
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: automaton.config.json contains quorum.enabled ---
 val=$(jq -r '.quorum.enabled // "missing"' "$config_file")
@@ -63,45 +62,21 @@ assert_equals "5" "$val" "quorum.rejection_cooldown_cycles defaults to 5"
 val=$(jq -r '.quorum.model // "missing"' "$config_file")
 assert_equals "sonnet" "$val" "quorum.model defaults to sonnet"
 
-# --- Test 16: automaton.sh reads QUORUM_ENABLED from config ---
-grep_result=$(grep -c 'QUORUM_ENABLED.*jq.*quorum.enabled' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads QUORUM_ENABLED from quorum.enabled config"
-
-# --- Test 17: automaton.sh reads QUORUM_VOTERS ---
-grep_result=$(grep -c 'QUORUM_VOTERS.*jq.*quorum.voters' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads QUORUM_VOTERS"
-
-# --- Test 18: automaton.sh reads QUORUM_THRESHOLD_SEED ---
-grep_result=$(grep -c 'QUORUM_THRESHOLD_SEED.*jq.*quorum.thresholds.seed_promotion' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads QUORUM_THRESHOLD_SEED"
-
-# --- Test 19: automaton.sh reads QUORUM_THRESHOLD_BLOOM ---
-grep_result=$(grep -c 'QUORUM_THRESHOLD_BLOOM.*jq.*quorum.thresholds.bloom_implementation' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads QUORUM_THRESHOLD_BLOOM"
-
-# --- Test 20: automaton.sh reads QUORUM_THRESHOLD_AMENDMENT ---
-grep_result=$(grep -c 'QUORUM_THRESHOLD_AMENDMENT.*jq.*quorum.thresholds.constitutional_amendment' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads QUORUM_THRESHOLD_AMENDMENT"
-
-# --- Test 21: automaton.sh reads QUORUM_THRESHOLD_EMERGENCY ---
-grep_result=$(grep -c 'QUORUM_THRESHOLD_EMERGENCY.*jq.*quorum.thresholds.emergency_override' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads QUORUM_THRESHOLD_EMERGENCY"
-
-# --- Test 22: automaton.sh reads QUORUM_MAX_TOKENS_PER_VOTER ---
-grep_result=$(grep -c 'QUORUM_MAX_TOKENS_PER_VOTER.*jq.*quorum.max_tokens_per_voter' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads QUORUM_MAX_TOKENS_PER_VOTER"
-
-# --- Test 23: automaton.sh reads QUORUM_MAX_COST_PER_CYCLE ---
-grep_result=$(grep -c 'QUORUM_MAX_COST_PER_CYCLE.*jq.*quorum.max_cost_per_cycle_usd' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads QUORUM_MAX_COST_PER_CYCLE"
-
-# --- Test 24: automaton.sh reads QUORUM_REJECTION_COOLDOWN ---
-grep_result=$(grep -c 'QUORUM_REJECTION_COOLDOWN.*jq.*quorum.rejection_cooldown_cycles' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads QUORUM_REJECTION_COOLDOWN"
-
-# --- Test 25: automaton.sh reads QUORUM_MODEL ---
-grep_result=$(grep -c 'QUORUM_MODEL.*jq.*quorum.model' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads QUORUM_MODEL"
+# --- Test 16-25: load_config() sets QUORUM_* variables from config ---
+(
+    source "$_PROJECT_DIR/lib/config.sh"
+    CONFIG_FILE="$config_file" load_config
+    assert_equals "true" "$QUORUM_ENABLED" "load_config sets QUORUM_ENABLED"
+    assert_equals "conservative,ambitious,efficiency,quality,advocate" "$QUORUM_VOTERS" "load_config sets QUORUM_VOTERS"
+    assert_equals "3" "$QUORUM_THRESHOLD_SEED" "load_config sets QUORUM_THRESHOLD_SEED"
+    assert_equals "3" "$QUORUM_THRESHOLD_BLOOM" "load_config sets QUORUM_THRESHOLD_BLOOM"
+    assert_equals "4" "$QUORUM_THRESHOLD_AMENDMENT" "load_config sets QUORUM_THRESHOLD_AMENDMENT"
+    assert_equals "5" "$QUORUM_THRESHOLD_EMERGENCY" "load_config sets QUORUM_THRESHOLD_EMERGENCY"
+    assert_equals "500" "$QUORUM_MAX_TOKENS_PER_VOTER" "load_config sets QUORUM_MAX_TOKENS_PER_VOTER"
+    assert_equals "1" "$QUORUM_MAX_COST_PER_CYCLE" "load_config sets QUORUM_MAX_COST_PER_CYCLE"
+    assert_equals "5" "$QUORUM_REJECTION_COOLDOWN" "load_config sets QUORUM_REJECTION_COOLDOWN"
+    assert_equals "sonnet" "$QUORUM_MODEL" "load_config sets QUORUM_MODEL"
+)
 
 # --- Test 26: automaton.sh has QUORUM_ defaults in the else branch ---
 grep_result=$(grep -c 'QUORUM_ENABLED="true"' "$script_file" || true)

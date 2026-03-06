@@ -8,7 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
 config_file="$SCRIPT_DIR/../automaton.config.json"
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: automaton.config.json contains metrics.enabled ---
 val=$(jq -r '.metrics.enabled // "missing"' "$config_file")
@@ -26,21 +25,15 @@ assert_equals "3" "$val" "metrics.degradation_alert_threshold defaults to 3"
 val=$(jq -r '.metrics.snapshot_retention // "missing"' "$config_file")
 assert_equals "100" "$val" "metrics.snapshot_retention defaults to 100"
 
-# --- Test 5: automaton.sh reads METRICS_ENABLED from config ---
-grep_result=$(grep -c 'METRICS_ENABLED.*jq.*metrics.enabled' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads METRICS_ENABLED from metrics.enabled config"
-
-# --- Test 6: automaton.sh reads METRICS_TREND_WINDOW ---
-grep_result=$(grep -c 'METRICS_TREND_WINDOW.*jq.*metrics.trend_window' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads METRICS_TREND_WINDOW"
-
-# --- Test 7: automaton.sh reads METRICS_DEGRADATION_ALERT_THRESHOLD ---
-grep_result=$(grep -c 'METRICS_DEGRADATION_ALERT_THRESHOLD.*jq.*metrics.degradation_alert_threshold' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads METRICS_DEGRADATION_ALERT_THRESHOLD"
-
-# --- Test 8: automaton.sh reads METRICS_SNAPSHOT_RETENTION ---
-grep_result=$(grep -c 'METRICS_SNAPSHOT_RETENTION.*jq.*metrics.snapshot_retention' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads METRICS_SNAPSHOT_RETENTION"
+# --- Test 5-8: load_config() sets METRICS_* variables from config ---
+(
+    source "$_PROJECT_DIR/lib/config.sh"
+    CONFIG_FILE="$config_file" load_config
+    assert_equals "true" "$METRICS_ENABLED" "load_config sets METRICS_ENABLED"
+    assert_equals "5" "$METRICS_TREND_WINDOW" "load_config sets METRICS_TREND_WINDOW"
+    assert_equals "3" "$METRICS_DEGRADATION_ALERT_THRESHOLD" "load_config sets METRICS_DEGRADATION_ALERT_THRESHOLD"
+    assert_equals "100" "$METRICS_SNAPSHOT_RETENTION" "load_config sets METRICS_SNAPSHOT_RETENTION"
+)
 
 # --- Test 9: automaton.sh has METRICS_ENABLED default in else branch ---
 grep_result=$(grep -c 'METRICS_ENABLED="true"' "$script_file" || true)

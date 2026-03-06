@@ -76,7 +76,7 @@ spawn_builders() {
         # Spawn a tmux window running the builder wrapper
         # The wrapper reads its assignment, invokes claude, and writes results
         tmux new-window -t "$session" -n "builder-$i" \
-            "cd $worktree && bash ${project_root}/.automaton/wave/builder-wrapper.sh $i $wave $project_root; exit"
+            "cd \"$worktree\" && bash \"${project_root}/.automaton/wave/builder-wrapper.sh\" $i $wave \"$project_root\"; exit"
 
         log "CONDUCTOR" "Wave $wave: spawned builder-$i (worktree: $worktree)"
 
@@ -207,7 +207,7 @@ prepare_parallel_plan_prompt() {
         return 0
     fi
 
-    PARALLEL_PLAN_PROMPT=$(mktemp "${TMPDIR:-/tmp}/automaton-plan-XXXXXX.md")
+    PARALLEL_PLAN_PROMPT=$(mktemp "${TMPDIR:-/tmp}/automaton-plan-XXXXXX.md") || { log "CONDUCTOR" "Failed to create temp file"; return 1; }
     cat PROMPT_plan.md > "$PARALLEL_PLAN_PROMPT"
 
     cat >> "$PARALLEL_PLAN_PROMPT" <<'PLAN_EXT'
@@ -278,7 +278,7 @@ build_conflict_graph() {
                 files: (.[2] | split(", ") | map(select(. != "")))
             }
         )
-    ' > "$tasks_file"
+    ' > "${tasks_file}.tmp" && mv "${tasks_file}.tmp" "$tasks_file"
 
     log "CONDUCTOR" "Conflict graph built: $(jq length "$tasks_file") incomplete tasks"
 }
@@ -296,10 +296,13 @@ tasks_conflict() {
         return 0  # conflict
     fi
 
-    # Check for any shared file
+    # Check for any shared file (use arrays to handle filenames with spaces)
+    local -a arr1 arr2
+    IFS=',' read -ra arr1 <<< "$task1_files"
+    IFS=',' read -ra arr2 <<< "$task2_files"
     local f1 f2
-    for f1 in $(echo "$task1_files" | tr ',' ' '); do
-        for f2 in $(echo "$task2_files" | tr ',' ' '); do
+    for f1 in "${arr1[@]}"; do
+        for f2 in "${arr2[@]}"; do
             if [ "$f1" = "$f2" ]; then
                 return 0  # conflict
             fi
@@ -386,7 +389,7 @@ log_partition_quality() {
     local total
     local annotated
 
-    total=$(grep -c '^\- \[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    total=$(grep -c '^\- \[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null) || total=0
     if [ "$total" -eq 0 ]; then
         log "CONDUCTOR" "Task annotations: 0/0 (no incomplete tasks)"
         return 0
@@ -394,7 +397,7 @@ log_partition_quality() {
 
     # Count annotation lines that follow a [ ] task line
     # We count <!-- files: lines in the plan as proxy for annotated tasks
-    annotated=$(grep -c '<!-- files:' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    annotated=$(grep -c '<!-- files:' IMPLEMENTATION_PLAN.md 2>/dev/null) || annotated=0
     local coverage=$((annotated * 100 / total))
 
     log "CONDUCTOR" "Task annotations: $annotated/$total ($coverage% coverage)"
@@ -739,7 +742,7 @@ files_owned=$(echo "$assignment" | jq -r '.files_owned | join(", ")')
 # All builders share an identical static prompt prefix (everything before
 # <dynamic_context>) so the cache entry created by builder-1 is reused by
 # builders 2..N, saving 90% on input tokens for subsequent builders.
-PROMPT_FILE=$(mktemp)
+PROMPT_FILE=$(mktemp) || { echo "Failed to create temp file" >&2; exit 1; }
 BUILD_PROMPT="$PROJECT_ROOT/PROMPT_build.md"
 
 # Static prefix: everything up to and including <dynamic_context>
@@ -779,7 +782,7 @@ fi
 
 # ---- Run Claude agent in the worktree ----
 set +e
-_tmp_output=$(mktemp)
+_tmp_output=$(mktemp) || { echo "Failed to create temp file" >&2; exit 1; }
 claude "${claude_args[@]}" < "$PROMPT_FILE" > "$_tmp_output" 2>&1
 exit_code=$?
 set -e
@@ -1309,16 +1312,16 @@ handle_wave_rate_limit() {
     local tmp="${rate_file}.tmp"
     jq --arg until "$backoff_until" \
        '.backoff_until = $until | .last_rate_limit = (now | todate)' \
-       "$rate_file" > "$tmp"
-    mv "$tmp" "$rate_file"
+       "$rate_file" > "$tmp" && mv "$tmp" "$rate_file" \
+       || log "CONDUCTOR" "WARNING: Failed to update rate state for backoff"
 
     # Wait for the backoff period
     log "CONDUCTOR" "Rate limit backoff: waiting ${backoff}s"
     sleep "$backoff"
 
     # Clear backoff
-    jq '.backoff_until = null' "$rate_file" > "$tmp"
-    mv "$tmp" "$rate_file"
+    jq '.backoff_until = null' "$rate_file" > "$tmp" && mv "$tmp" "$rate_file" \
+       || log "CONDUCTOR" "WARNING: Failed to clear backoff state"
 
     log "CONDUCTOR" "Rate limit backoff complete."
 }
@@ -1434,8 +1437,8 @@ aggregate_wave_budget() {
     jq --argjson hist "$rate_history" \
        --arg ws "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
        '.window_start = $ws | .history = $hist | .window_tokens = ($hist | map(.tokens) | add // 0) | .window_requests = ($hist | length)' \
-       "$rate_file" > "$tmp"
-    mv "$tmp" "$rate_file"
+       "$rate_file" > "$tmp" && mv "$tmp" "$rate_file" \
+       || log "CONDUCTOR" "WARNING: Failed to update rate history"
 
     log "CONDUCTOR" "Wave $wave: budget aggregated from $builder_count builders"
 }
@@ -1453,7 +1456,7 @@ verify_wave() {
 
     # Check 1: Build check (if BUILD_COMMAND configured)
     if [ -n "${BUILD_COMMAND:-}" ]; then
-        if ! eval "$BUILD_COMMAND" >/dev/null 2>&1; then
+        if ! bash -c "$BUILD_COMMAND" >/dev/null 2>&1; then
             log "CONDUCTOR" "Wave $wave: post-merge build failed"
             pass=false
         fi
@@ -1473,7 +1476,7 @@ verify_wave() {
 
     # Check 3: Plan integrity (completed count didn't decrease)
     local completed_after
-    completed_after=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    completed_after=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null) || completed_after=0
     if [ "$completed_after" -lt "${COMPLETED_BEFORE_WAVE:-0}" ]; then
         log "CONDUCTOR" "Wave $wave: plan corruption detected post-merge ($completed_after < $COMPLETED_BEFORE_WAVE)"
         pass=false
@@ -1709,7 +1712,7 @@ update_wave_state() {
 # rounding and re-queued tasks. (spec-21)
 estimate_remaining_waves() {
     local remaining_tasks
-    remaining_tasks=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    remaining_tasks=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null) || remaining_tasks=0
 
     if [ "$remaining_tasks" -eq 0 ]; then
         echo "0"
@@ -1837,8 +1840,8 @@ write_dashboard() {
 
     # Task counts from IMPLEMENTATION_PLAN.md
     local total_tasks completed_tasks
-    total_tasks=$(grep -c '\[ \]\|\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
-    completed_tasks=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    total_tasks=$(grep -c '\[ \]\|\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null) || total_tasks=0
+    completed_tasks=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null) || completed_tasks=0
 
     # Remaining waves
     local remaining_waves=0
@@ -2590,7 +2593,7 @@ run_agent_teams_build() {
     local agent_exit_code=0
 
     local _tmp_output
-    _tmp_output=$(mktemp)
+    _tmp_output=$(mktemp) || { log "CONDUCTOR" "Failed to create temp file"; return 1; }
     echo "$dynamic_context" | claude "${cmd_args[@]}" > "$_tmp_output" 2>&1 || agent_exit_code=$?
     agent_result=$(truncate_output "$_tmp_output" "agent_teams" "${CURRENT_ITERATION:-0}")
     rm -f "$_tmp_output"
@@ -2696,7 +2699,7 @@ run_parallel_build() {
 
         if [ "$selected_count" -eq 0 ]; then
             local remaining
-            remaining=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+            remaining=$(grep -c '\[ \]' IMPLEMENTATION_PLAN.md 2>/dev/null) || remaining=0
             if [ "$remaining" -eq 0 ]; then
                 log "CONDUCTOR" "All tasks complete."
                 break
@@ -2734,7 +2737,7 @@ run_parallel_build() {
         generate_builder_wrapper
 
         # Capture pre-wave plan state for verify_wave integrity check
-        COMPLETED_BEFORE_WAVE=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+        COMPLETED_BEFORE_WAVE=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null) || COMPLETED_BEFORE_WAVE=0
 
         # --- Step 6: Spawn builders (staggered starts) ---
         local wave_start_epoch

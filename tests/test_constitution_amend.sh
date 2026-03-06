@@ -11,7 +11,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: _constitution_amend function exists ---
 grep_result=$(grep -c '^_constitution_amend()' "$script_file" || true)

@@ -384,7 +384,7 @@ _constitution_amend() {
         modify)
             # Replace article body text (between this article header+protection line and the next article)
             local tmpfile
-            tmpfile=$(mktemp)
+            tmpfile=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file"; return 1; }
             awk -v art="### Article ${article}:" -v newtext="$new_text" '
                 $0 ~ art { print; in_article=1; next }
                 in_article && /^\*\*Protection:/ { print; in_article=2; next }
@@ -399,7 +399,7 @@ _constitution_amend() {
         protection_change)
             # Update the **Protection: level** line for the article
             local tmpfile
-            tmpfile=$(mktemp)
+            tmpfile=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file"; return 1; }
             awk -v art="### Article ${article}:" -v newprot="$new_text" '
                 $0 ~ art { print; in_article=1; next }
                 in_article && /^\*\*Protection:/ { print "**Protection: " newprot "**"; in_article=0; next }
@@ -410,7 +410,7 @@ _constitution_amend() {
         remove)
             # Remove the entire article section
             local tmpfile
-            tmpfile=$(mktemp)
+            tmpfile=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file"; return 1; }
             awk -v art="### Article ${article}:" '
                 $0 ~ art { skip=1; next }
                 skip && /^### Article / { skip=0; print; next }

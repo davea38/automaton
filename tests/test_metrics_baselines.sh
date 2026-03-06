@@ -7,7 +7,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: _metrics_set_baselines function exists ---
 grep_result=$(grep -c '^_metrics_set_baselines()' "$script_file" || true)

@@ -8,7 +8,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
 config_file="$SCRIPT_DIR/../automaton.config.json"
-script_file="$SCRIPT_DIR/../automaton.sh"
 TMPDIR="${TMPDIR:-/tmp}"
 test_dir="$TMPDIR/test_qa_config_$$"
 mkdir -p "$test_dir"

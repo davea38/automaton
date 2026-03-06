@@ -13,6 +13,12 @@ log() {
     echo "$line"
 }
 
+# Ensures core .automaton/ subdirectories exist.
+_ensure_automaton_dirs() {
+    mkdir -p "$AUTOMATON_DIR/agents" "$AUTOMATON_DIR/worktrees" "$AUTOMATON_DIR/inbox" \
+             "$AUTOMATON_DIR/run-summaries"
+}
+
 # ---------------------------------------------------------------------------
 # State Management
 # ---------------------------------------------------------------------------
@@ -34,12 +40,16 @@ write_state() {
     # Build optional wave fields for parallel mode
     local wave_fields=""
     if [ "${PARALLEL_ENABLED:-false}" = "true" ]; then
-        wave_fields=$(cat <<WAVE
-  "wave_number": ${wave_number:-0},
-  "wave_history": ${wave_history:-[]},
-  "consecutive_wave_failures": ${consecutive_wave_failures:-0},
-WAVE
-)
+        local _wn="${wave_number:-0}"
+        local _wh="${wave_history:-[]}"
+        local _cwf="${consecutive_wave_failures:-0}"
+        # Validate wave_history is valid JSON before interpolation
+        if ! echo "$_wh" | jq empty 2>/dev/null; then
+            _wh="[]"
+        fi
+        wave_fields="  \"wave_number\": ${_wn},
+  \"wave_history\": ${_wh},
+  \"consecutive_wave_failures\": ${_cwf},"
     fi
 
     cat > "$tmp" <<EOF
@@ -74,27 +84,51 @@ read_state() {
         recover_state_from_persistent
         return $?
     fi
-    local state
-    state=$(cat "$state_file")
-    current_phase=$(echo "$state" | jq -r '.phase')
-    iteration=$(echo "$state" | jq '.iteration')
-    phase_iteration=$(echo "$state" | jq '.phase_iteration')
-    stall_count=$(echo "$state" | jq '.stall_count')
+    # Single jq invocation extracts all state values as newline-separated fields.
+    # This replaces 13+ individual jq calls with one process spawn.
+    local _st
+    _st=$(jq -r '[
+        .phase,
+        (.iteration | tostring),
+        (.phase_iteration | tostring),
+        (.stall_count | tostring),
+        (.corruption_count | tostring),
+        (.replan_count | tostring),
+        ((.test_failure_count // 0) | tostring),
+        (.build_sub_phase // "implementation"),
+        ((.scaffold_iterations_done // 0) | tostring),
+        .started_at,
+        (.resumed_from // "null" | tostring),
+        (.phase_history | tojson),
+        ((.wave_number // 0) | tostring),
+        ((.wave_history // []) | tojson),
+        ((.consecutive_wave_failures // 0) | tostring)
+    ] | .[]' "$state_file")
+
+    local IFS=$'\n'
+    local _fields
+    mapfile -t _fields <<< "$_st"
+    unset IFS
+
+    current_phase="${_fields[0]}"
+    iteration="${_fields[1]}"
+    phase_iteration="${_fields[2]}"
+    stall_count="${_fields[3]}"
     consecutive_failures=0
-    corruption_count=$(echo "$state" | jq '.corruption_count')
-    replan_count=$(echo "$state" | jq '.replan_count')
-    test_failure_count=$(echo "$state" | jq '.test_failure_count // 0')
-    build_sub_phase=$(echo "$state" | jq -r '.build_sub_phase // "implementation"')
-    scaffold_iterations_done=$(echo "$state" | jq '.scaffold_iterations_done // 0')
-    started_at=$(echo "$state" | jq -r '.started_at')
-    resumed_from=$(echo "$state" | jq -r '.last_iteration_at')
-    phase_history=$(echo "$state" | jq -c '.phase_history')
+    corruption_count="${_fields[4]}"
+    replan_count="${_fields[5]}"
+    test_failure_count="${_fields[6]}"
+    build_sub_phase="${_fields[7]}"
+    scaffold_iterations_done="${_fields[8]}"
+    started_at="${_fields[9]}"
+    resumed_from="${_fields[10]}"
+    phase_history="${_fields[11]}"
 
     # Restore wave state for parallel mode resume
     if [ "${PARALLEL_ENABLED:-false}" = "true" ]; then
-        wave_number=$(echo "$state" | jq '.wave_number // 0')
-        wave_history=$(echo "$state" | jq -c '.wave_history // []')
-        consecutive_wave_failures=$(echo "$state" | jq '.consecutive_wave_failures // 0')
+        wave_number="${_fields[12]}"
+        wave_history="${_fields[13]}"
+        consecutive_wave_failures="${_fields[14]}"
     fi
 }
 
@@ -156,7 +190,7 @@ recover_state_from_persistent() {
     if [ "$summary_exit" = "0" ] && [ "$last_completed" = "review" ]; then
         local remaining=0
         if [ -f "$plan_file" ]; then
-            remaining=$(grep -c '^\- \[ \]' "$plan_file" 2>/dev/null || echo 0)
+            remaining=$(grep -c '^\- \[ \]' "$plan_file" 2>/dev/null) || remaining=0
         fi
         if [ "$remaining" = "0" ]; then
             echo "Previous run completed successfully with no remaining tasks. Run without --resume to start fresh."
@@ -196,8 +230,7 @@ recover_state_from_persistent() {
     fi
 
     # --- Ensure directory structure exists ---
-    mkdir -p "$AUTOMATON_DIR/agents" "$AUTOMATON_DIR/worktrees" "$AUTOMATON_DIR/inbox" \
-             "$AUTOMATON_DIR/run-summaries"
+    _ensure_automaton_dirs
 
     # --- Write reconstructed state ---
     write_state
@@ -233,8 +266,8 @@ recover_state_from_persistent() {
     local task_info=""
     if [ -f "$plan_file" ]; then
         local done remaining
-        done=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null || echo 0)
-        remaining=$(grep -c '^\- \[ \]' "$plan_file" 2>/dev/null || echo 0)
+        done=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null) || done=0
+        remaining=$(grep -c '^\- \[ \]' "$plan_file" 2>/dev/null) || remaining=0
         task_info="tasks=${done} done/${remaining} remaining"
     fi
 
@@ -320,8 +353,8 @@ generate_context() {
     if [ -f "$plan_file" ]; then
         local next_task total_tasks done_tasks
         next_task=$(grep -m1 '^\- \[ \]' "$plan_file" | sed 's/^- \[ \] //' || echo "")
-        total_tasks=$(grep -c '^\- \[' "$plan_file" 2>/dev/null || echo 0)
-        done_tasks=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null || echo 0)
+        total_tasks=$(grep -c '^\- \[' "$plan_file" 2>/dev/null) || total_tasks=0
+        done_tasks=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null) || done_tasks=0
         manifest=$(echo "$manifest" | jq \
             --arg next "$next_task" \
             --argjson total "$total_tasks" \
@@ -392,8 +425,7 @@ BOOTSTRAP_SCRIPT
 # First-run initialization: create .automaton/ structure, write initial state,
 # initialize budget tracking, and create an empty session log.
 initialize() {
-    mkdir -p "$AUTOMATON_DIR/agents" "$AUTOMATON_DIR/worktrees" "$AUTOMATON_DIR/inbox" \
-             "$AUTOMATON_DIR/run-summaries"
+    _ensure_automaton_dirs
 
     # Create parallel-mode directories and files when parallel is enabled
     if [ "${PARALLEL_ENABLED:-false}" = "true" ]; then
@@ -625,7 +657,7 @@ send_notification() {
          AUTOMATON_PHASE="$phase" \
          AUTOMATON_STATUS="$status" \
          AUTOMATON_MESSAGE="$message" \
-         eval "$NOTIFY_COMMAND" >/dev/null 2>&1 &)
+         bash -c "$NOTIFY_COMMAND" >/dev/null 2>&1 &)
     fi
 }
 

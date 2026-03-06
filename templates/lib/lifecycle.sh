@@ -15,25 +15,18 @@ self_build_checkpoint() {
     mkdir -p "$backup_dir"
 
     # Build checksums JSON and backup files
-    local json_entries=""
-    local first=true
+    local checksums_json="{}"
     for f in $SELF_BUILD_FILES; do
         if [ -f "$f" ]; then
             local hash
             hash=$(sha256sum "$f" | awk '{print $1}')
             # Backup the file for potential restore
             cp "$f" "$backup_dir/$(echo "$f" | tr '/' '_')"
-            if [ "$first" = "true" ]; then
-                first=false
-            else
-                json_entries="${json_entries},"
-            fi
-            json_entries="${json_entries}\"$f\":\"$hash\""
+            checksums_json=$(echo "$checksums_json" | jq --arg k "$f" --arg v "$hash" '. + {($k): $v}')
         fi
     done
 
-    echo "{${json_entries}}" | jq '.' > "$tmp"
-    mv "$tmp" "$checksums_file"
+    echo "$checksums_json" > "$tmp" && mv "$tmp" "$checksums_file"
 
     log "ORCHESTRATOR" "Self-build checkpoint: checksums saved for orchestrator files"
 }
@@ -216,7 +209,7 @@ self_build_check_scope() {
     fi
 
     # Check protected functions
-    if git diff HEAD~1 -- automaton.sh 2>/dev/null | grep -qE '^\+.*^(run_orchestration|_handle_shutdown)\(' 2>/dev/null; then
+    if git diff HEAD~1 -- automaton.sh 2>/dev/null | grep -qE '^\+.*(run_orchestration|_handle_shutdown)\(' 2>/dev/null; then
         local protected
         IFS=',' read -ra protected <<< "$SELF_BUILD_PROTECTED_FUNCTIONS"
         for func in "${protected[@]}"; do
@@ -806,7 +799,7 @@ calculate_test_coverage() {
     local testable_tasks=$((tasks_with_tests + tasks_without_tests))
     local coverage_ratio="0.00"
     if [ "$testable_tasks" -gt 0 ]; then
-        coverage_ratio=$(awk "BEGIN { printf \"%.2f\", $tasks_with_tests / $testable_tasks }")
+        coverage_ratio=$(awk -v tw="$tasks_with_tests" -v tt="$testable_tasks" 'BEGIN { printf "%.2f", tw / tt }')
     fi
 
     jq -n \
@@ -857,8 +850,8 @@ write_run_summary() {
     local tasks_completed=0 tasks_remaining=0
     local plan_file="${PLAN_FILE:-IMPLEMENTATION_PLAN.md}"
     if [ -f "$plan_file" ]; then
-        tasks_completed=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null || echo 0)
-        tasks_remaining=$(grep -c '^\- \[ \]' "$plan_file" 2>/dev/null || echo 0)
+        tasks_completed=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null) || tasks_completed=0
+        tasks_remaining=$(grep -c '^\- \[ \]' "$plan_file" 2>/dev/null) || tasks_remaining=0
     fi
 
     # Token usage from budget.json
@@ -1303,7 +1296,7 @@ _check_convergence() {
     local recent_runs
     recent_runs=$(ls -1d "$journal_dir"/run-* 2>/dev/null | sort -t- -k2 -n | tail -3)
     local run_count
-    run_count=$(echo "$recent_runs" | grep -c . || echo 0)
+    run_count=$(echo "$recent_runs" | grep -c .) || run_count=0
 
     if [ "$run_count" -lt 3 ]; then
         return 0
@@ -1492,7 +1485,10 @@ attempt_focused_fix() {
     # Override max iterations for the focused build to keep it tight
     EXEC_MAX_ITER_BUILD=3
 
-    log "ORCHESTRATOR" "Focused fix: created targeted task list with $(echo "$unchecked_tasks" | grep -c '\[ \]' 2>/dev/null || echo 0) review issues and $(echo "$failing_tests" | grep -c . 2>/dev/null || echo 0) failing tests. Max 3 build iterations."
+    local _review_issues _failing_count
+    _review_issues=$(echo "$unchecked_tasks" | grep -c '\[ \]' 2>/dev/null) || _review_issues=0
+    _failing_count=$(echo "$failing_tests" | grep -c . 2>/dev/null) || _failing_count=0
+    log "ORCHESTRATOR" "Focused fix: created targeted task list with $_review_issues review issues and $_failing_count failing tests. Max 3 build iterations."
 
     # Commit the focused fix plan
     git add "$plan_file" 2>/dev/null || true
@@ -1580,8 +1576,8 @@ generate_progress_txt() {
     # Task counts
     local tasks_completed=0 tasks_remaining=0 tasks_total=0
     if [ -f "$plan_file" ]; then
-        tasks_completed=$(grep -c '\[x\]' "$plan_file" 2>/dev/null || echo 0)
-        tasks_remaining=$(grep -c '\[ \]' "$plan_file" 2>/dev/null || echo 0)
+        tasks_completed=$(grep -c '\[x\]' "$plan_file" 2>/dev/null) || tasks_completed=0
+        tasks_remaining=$(grep -c '\[ \]' "$plan_file" 2>/dev/null) || tasks_remaining=0
         tasks_total=$((tasks_completed + tasks_remaining))
     fi
 

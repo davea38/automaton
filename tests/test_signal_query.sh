@@ -7,7 +7,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1-4: All four query functions exist in automaton.sh ---
 for func in _signal_get_strong _signal_get_by_type _signal_get_active _signal_get_unlinked; do

@@ -30,17 +30,17 @@ cat > "$tmpconfig" <<'TMPEOF'
 }
 TMPEOF
 
-# Extract PARALLEL_MODE by grepping the load_config function for the jq line
-grep_result=$(grep -c 'PARALLEL_MODE.*jq.*parallel.mode' "$SCRIPT_DIR/../automaton.sh" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads PARALLEL_MODE from parallel.mode config"
-
-# --- Test 4: automaton.sh reads PARALLEL_TEAMMATE_DISPLAY from config ---
-grep_result=$(grep -c 'PARALLEL_TEAMMATE_DISPLAY.*jq.*parallel.teammate_display' "$SCRIPT_DIR/../automaton.sh" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads PARALLEL_TEAMMATE_DISPLAY from parallel.teammate_display config"
+# Verify load_config() sets PARALLEL_MODE and PARALLEL_TEAMMATE_DISPLAY from config
+(
+    source "$_PROJECT_DIR/lib/config.sh"
+    CONFIG_FILE="$tmpconfig" load_config
+    assert_equals "agent-teams" "$PARALLEL_MODE" "load_config sets PARALLEL_MODE from parallel.mode config"
+    assert_equals "tmux" "$PARALLEL_TEAMMATE_DISPLAY" "load_config sets PARALLEL_TEAMMATE_DISPLAY from parallel.teammate_display config"
+)
 
 # --- Test 5: tmux/worktree deps only required for automaton mode, not agent-teams ---
 # The dependency check should reference PARALLEL_MODE to skip tmux check for agent-teams
-grep_result=$(grep -c 'PARALLEL_MODE.*automaton' "$SCRIPT_DIR/../automaton.sh" || true)
+grep_result=$(grep -c 'PARALLEL_MODE.*automaton' "$script_file" || true)
 if [ "$grep_result" -ge 1 ]; then
     echo "PASS: automaton.sh checks PARALLEL_MODE for dependency gating"
     ((_TEST_PASS_COUNT++))
@@ -50,7 +50,7 @@ else
 fi
 
 # --- Test 6: agent-teams mode validates CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS ---
-grep_result=$(grep -c 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' "$SCRIPT_DIR/../automaton.sh" || true)
+grep_result=$(grep -c 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS' "$script_file" || true)
 if [ "$grep_result" -ge 1 ]; then
     echo "PASS: automaton.sh references CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS env var"
     ((_TEST_PASS_COUNT++))

@@ -37,7 +37,7 @@ IDXEOF
     # Build tags JSON array from CSV
     local tags_json="[]"
     if [ -n "$tags_csv" ]; then
-        tags_json=$(echo "$tags_csv" | tr ',' '\n' | jq -R . | jq -s .)
+        tags_json=$(echo "$tags_csv" | tr ',' '\n' | jq -R . | jq -s .) || tags_json="[]"
     fi
 
     # Create the idea JSON file with complete schema
@@ -290,7 +290,7 @@ _garden_recompute_priorities() {
         local evidence_count
         evidence_count=$(jq '.evidence | length' "$f")
         local evidence_weight
-        evidence_weight=$(awk "BEGIN { v = $evidence_count / $GARDEN_BLOOM_THRESHOLD; print (v > 1.0 ? 1.0 : v) }")
+        evidence_weight=$(awk -v ec="$evidence_count" -v bt="$GARDEN_BLOOM_THRESHOLD" 'BEGIN { v = ec / bt; print (v > 1.0 ? 1.0 : v) }')
 
         # 2. signal_strength: max strength of related signals
         local signal_strength=0
@@ -320,7 +320,7 @@ _garden_recompute_priorities() {
             extracted_val=$(echo "$origin_source" | grep -oE '[0-9]+\.?[0-9]*' | tail -1 || true)
             if [ -n "$extracted_val" ]; then
                 # Normalize: cap at 1.0 (values like 0.25 become 0.25, values > 1 become 1.0)
-                metric_severity=$(awk "BEGIN { v = $extracted_val; print (v > 1.0 ? 1.0 : v) }")
+                metric_severity=$(awk -v ev="$extracted_val" 'BEGIN { v = ev; print (v > 1.0 ? 1.0 : v) }')
             else
                 # Metric origin but no extractable value — assign a moderate default
                 metric_severity="0.5"
@@ -335,7 +335,7 @@ _garden_recompute_priorities() {
         local days_old
         days_old=$(( (now_epoch - created_epoch) / 86400 ))
         local age_bonus
-        age_bonus=$(awk "BEGIN { v = $days_old / 30.0; print (v > 1.0 ? 1.0 : v) }")
+        age_bonus=$(awk -v d="$days_old" 'BEGIN { v = d / 30.0; print (v > 1.0 ? 1.0 : v) }')
 
         # 5. human_boost: 1.0 if origin.type == "human", else 0
         local human_boost=0
@@ -345,13 +345,13 @@ _garden_recompute_priorities() {
 
         # Compute final priority: integer 0-100
         local priority
-        priority=$(awk "BEGIN {
-            p = ($evidence_weight * 30) + ($signal_strength * 25) + ($metric_severity * 25) + ($age_bonus * 10) + ($human_boost * 10);
+        priority=$(awk -v ew="$evidence_weight" -v ss="$signal_strength" -v ms="$metric_severity" -v ab="$age_bonus" -v hb="$human_boost" 'BEGIN {
+            p = (ew * 30) + (ss * 25) + (ms * 25) + (ab * 10) + (hb * 10);
             p = int(p + 0.5);
             if (p > 100) p = 100;
             if (p < 0) p = 0;
             print p
-        }")
+        }')
 
         # Update the idea file
         local tmp_file="${f}.tmp"

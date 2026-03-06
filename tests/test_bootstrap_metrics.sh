@@ -63,10 +63,10 @@ extract_function() {
         if(found && depth==0) exit
     }" "$file"
 }
-eval "$(extract_function _bootstrap_record_time "$PROJECT_ROOT/automaton.sh")"
-eval "$(extract_function _bootstrap_estimate_tokens_saved "$PROJECT_ROOT/automaton.sh")"
-eval "$(extract_function _run_bootstrap "$PROJECT_ROOT/automaton.sh")"
-eval "$(extract_function _format_bootstrap_for_context "$PROJECT_ROOT/automaton.sh")"
+eval "$(extract_function _bootstrap_record_time "$script_file")"
+eval "$(extract_function _bootstrap_estimate_tokens_saved "$script_file")"
+eval "$(extract_function _run_bootstrap "$script_file")"
+eval "$(extract_function _format_bootstrap_for_context "$script_file")"
 
 # Helper: read metrics back from file (mirrors run_agent behavior)
 read_bootstrap_metrics() {

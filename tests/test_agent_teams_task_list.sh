@@ -35,7 +35,7 @@ cat > "$TMPDIR/test_plan.md" <<'EOF'
 EOF
 
 # --- Test 1: Function exists in automaton.sh ---
-grep_result=$(grep -c 'populate_agent_teams_task_list' "$SCRIPT_DIR/../automaton.sh" || true)
+grep_result=$(grep -c 'populate_agent_teams_task_list' "$script_file" || true)
 if [ "$grep_result" -ge 1 ]; then
     echo "PASS: automaton.sh contains populate_agent_teams_task_list function"
     ((_TEST_PASS_COUNT++))
@@ -71,7 +71,7 @@ JSON
     log() { :; }
 
     # Source just the function from automaton.sh
-    eval "$(sed -n '/^populate_agent_teams_task_list()/,/^}/p' "$SCRIPT_DIR/../automaton.sh")"
+    eval "$(sed -n '/^populate_agent_teams_task_list()/,/^}/p' "$script_file")"
 
     # Run the function
     populate_agent_teams_task_list

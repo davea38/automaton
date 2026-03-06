@@ -33,7 +33,7 @@ val=$(jq -r '.execution.bootstrap_timeout_ms' "$PROJECT_ROOT/templates/automaton
 assert_equals "2000" "$val" "template config has bootstrap_timeout_ms=2000"
 
 # --- Test 7: automaton.sh reads bootstrap_enabled from config ---
-grep -q 'bootstrap_enabled' "$PROJECT_ROOT/automaton.sh"
+grep -q 'bootstrap_enabled' "$script_file"
 assert_exit_code 0 $? "automaton.sh references bootstrap_enabled"
 
 # --- Test 8: Both config files are valid JSON ---

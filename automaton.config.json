@@ -39,7 +39,7 @@
       "review": 2
     },
     "parallel_builders": 1,
-    "stall_threshold": 3,
+    "stall_threshold": 2,
     "max_consecutive_failures": 3,
     "retry_delay_seconds": 10,
     "phase_timeout_seconds": {

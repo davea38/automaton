@@ -427,3 +427,9 @@ The codebase was refactored from a monolithic `automaton.sh` (14,767 lines) into
 - [x] Sync `templates/automaton.config.json` with root config including all spec 38-59 config sections (WHY: the template config is missing garden, stigmergy, quorum, metrics, evolution, safety, qa, critique, notifications, work_log, debt_tracking, guardrails, and wizard-related fields) <!-- test: none -->
 
 - [x] Sync all `templates/PROMPT_*.md` files with root versions (WHY: prompt templates may be stale after specs 46-59 added QA, evolution, and wizard prompt content) <!-- test: none -->
+- [x] Fix: automaton.sh smoke test (--dry-run) failed — root cause was `((_i++))` returning exit code 1 under `set -e` when `_i=0` (bash post-increment returns old value). Fixed by using `((_i++ , 1))` pattern across all 138 occurrences in `lib/config.sh` <!-- test: tests/test_dry_run.sh -->
+- [ ] Fix: automaton.sh smoke test (--dry-run) failed after iteration 1
+- [ ] Fix: automaton.sh smoke test (--dry-run) failed after iteration 1
+- [ ] Fix: automaton.sh smoke test (--dry-run) failed after iteration 1
+- [ ] Fix: automaton.sh smoke test (--dry-run) failed after iteration 1
+- [ ] Fix: automaton.sh smoke test (--dry-run) failed after iteration 1

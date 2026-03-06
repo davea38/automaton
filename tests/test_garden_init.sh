@@ -7,7 +7,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: initialize() creates garden directory when GARDEN_ENABLED=true ---
 grep_result=$(grep -c 'mkdir -p.*garden' "$script_file" || true)
@@ -96,8 +95,11 @@ assert_equals "0" "$val" "_index.json recent_activity is empty"
 
 # --- Test 9: initialize() writes _index.json in the GARDEN_ENABLED block ---
 # Verify the code path: the _index.json creation should happen inside the garden init block
-# by checking that 'index.json' appears within a few lines of 'mkdir.*garden'
-init_block=$(sed -n '/GARDEN_ENABLED.*true/,/fi/p' "$script_file" | head -20)
+# by checking that 'index.json' appears within the GARDEN_ENABLED block inside initialize()
+# Use awk to grab 120 lines from initialize() to cover the full function body
+# (sed '/^}/p' stops too early due to heredocs containing ^} lines)
+init_func=$(awk '/^initialize\(\)/{p=1} p{print; if(++c>=120) exit}' "$script_file")
+init_block=$(echo "$init_func" | sed -n '/GARDEN_ENABLED.*true/,/fi/p' | head -20)
 if echo "$init_block" | grep -q '_index.json'; then
     echo "PASS: _index.json created inside GARDEN_ENABLED block in initialize()"
     ((_TEST_PASS_COUNT++))
@@ -110,7 +112,7 @@ fi
 # Verify by checking that all _index.json creation paths are guarded
 # The initialize function should only create _index.json when GARDEN_ENABLED=true
 # We check that there is no unconditional _index.json creation in initialize
-init_func=$(sed -n '/^initialize()/,/^}/p' "$script_file")
+init_func=$(awk '/^initialize\(\)/{p=1} p{print; if(++c>=120) exit}' "$script_file")
 # Count _index.json mentions that are NOT inside the GARDEN_ENABLED block
 outside_guard=$(echo "$init_func" | sed -n '1,/GARDEN_ENABLED/p' | grep -c '_index.json' || true)
 assert_equals "0" "$outside_guard" "_index.json not created outside GARDEN_ENABLED guard"

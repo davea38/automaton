@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
 # --- Test 1: setup_agent_teams_environment function exists ---
-grep_result=$(grep -c 'setup_agent_teams_environment()' "$SCRIPT_DIR/../automaton.sh" || true)
+grep_result=$(grep -c 'setup_agent_teams_environment()' "$script_file" || true)
 if [ "$grep_result" -ge 1 ]; then
     echo "PASS: automaton.sh contains setup_agent_teams_environment function"
     ((_TEST_PASS_COUNT++))
@@ -18,7 +18,7 @@ else
 fi
 
 # --- Test 2: Function sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS ---
-func_body=$(sed -n '/^setup_agent_teams_environment()/,/^}/p' "$SCRIPT_DIR/../automaton.sh")
+func_body=$(sed -n '/^setup_agent_teams_environment()/,/^}/p' "$script_file")
 if echo "$func_body" | grep -q 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'; then
     echo "PASS: setup_agent_teams_environment sets CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"
     ((_TEST_PASS_COUNT++))
@@ -47,7 +47,7 @@ fi
 
 # --- Test 5: Function is called from startup section (parallel deps check) ---
 # It should be called where parallel mode dependencies are checked
-startup_section=$(sed -n '/Check parallel-mode dependencies/,/Signal Handlers/p' "$SCRIPT_DIR/../automaton.sh")
+startup_section=$(sed -n '/Check parallel-mode dependencies/,/Signal Handlers/p' "$script_file")
 if echo "$startup_section" | grep -q 'setup_agent_teams_environment'; then
     echo "PASS: setup_agent_teams_environment is called during startup parallel checks"
     ((_TEST_PASS_COUNT++))
@@ -76,7 +76,7 @@ else
 fi
 
 # --- Test 8: run_agent_teams_build still exports the flag as redundant safety ---
-build_func=$(sed -n '/^run_agent_teams_build()/,/^[^ ]/p' "$SCRIPT_DIR/../automaton.sh")
+build_func=$(sed -n '/^run_agent_teams_build()/,/^[^ ]/p' "$script_file")
 if echo "$build_func" | grep -q 'CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS'; then
     echo "PASS: run_agent_teams_build still exports env var as safety net"
     ((_TEST_PASS_COUNT++))

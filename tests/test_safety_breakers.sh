@@ -1,190 +1,154 @@
 #!/usr/bin/env bash
-# tests/test_safety_breakers.sh — Tests for spec-45 §2 circuit breaker functions
-# Verifies _safety_check_breakers(), _safety_update_breaker(),
-# _safety_any_breaker_tripped(), and _safety_reset_breakers() in automaton.sh.
+# tests/test_safety_breakers.sh — Functional tests for spec-45 §2 circuit breakers
+# Actually invokes breaker functions and verifies JSON state changes.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
+# Set up isolated test directory
+TEST_DIR=$(mktemp -d "${TMPDIR:-/tmp}/automaton-breakers-XXXXXX")
+trap 'rm -rf "$TEST_DIR"' EXIT
 
-# --- Test 1: automaton.sh defines _safety_check_breakers function ---
-grep_result=$(grep -c '^_safety_check_breakers()' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh defines _safety_check_breakers()"
+AUTOMATON_DIR="$TEST_DIR/.automaton"
+mkdir -p "$AUTOMATON_DIR"
+_BREAKERS_FILE="$AUTOMATON_DIR/circuit-breakers.json"
 
-# --- Test 2: automaton.sh defines _safety_update_breaker function ---
-grep_result=$(grep -c '^_safety_update_breaker()' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh defines _safety_update_breaker()"
+# Mock log and _metrics_get_latest
+LOG_OUTPUT=""
+log() { LOG_OUTPUT+="[$1] $2"$'\n'; }
+_metrics_get_latest() { echo ""; }
 
-# --- Test 3: automaton.sh defines _safety_any_breaker_tripped function ---
-grep_result=$(grep -c '^_safety_any_breaker_tripped()' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh defines _safety_any_breaker_tripped()"
+# Safety config defaults
+SAFETY_MAX_CONSECUTIVE_FAILURES=3
+SAFETY_MAX_CONSECUTIVE_REGRESSIONS=2
+SAFETY_MAX_TOTAL_LINES=15000
+SAFETY_MAX_TOTAL_FUNCTIONS=300
+SAFETY_MIN_TEST_PASS_RATE=0.80
 
-# --- Test 4: automaton.sh defines _safety_reset_breakers function ---
-grep_result=$(grep -c '^_safety_reset_breakers()' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh defines _safety_reset_breakers()"
+# Extract breaker functions from lib/safety.sh
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+source_funcs() {
+    local file="$PROJECT_DIR/lib/safety.sh"
+    # We need these specific functions - extract them carefully
+    eval "$(awk '
+        /^_safety_init_breakers_file\(\)|^_safety_ensure_breakers_file\(\)|^_safety_check_breakers\(\)|^_safety_update_breaker\(\)|^_safety_any_breaker_tripped\(\)|^_safety_reset_breakers\(\)/ { found=1; depth=0 }
+        found {
+            for(i=1;i<=length($0);i++){
+                c=substr($0,i,1)
+                if(c=="{") depth++
+                if(c=="}") depth--
+            }
+            print
+            if(found && depth==0) { found=0; print "" }
+        }
+    ' "$file")"
+}
+source_funcs
 
-# --- Test 5: _safety_check_breakers references budget_ceiling breaker ---
-grep_result=$(grep -c 'budget_ceiling' "$script_file" || true)
-if [ "$grep_result" -ge 1 ]; then
-    echo "PASS: automaton.sh references budget_ceiling breaker"
+# ============================================================
+# Test _safety_init_breakers_file
+# ============================================================
+
+_safety_init_breakers_file
+assert_file_exists "$_BREAKERS_FILE" "init creates breakers file"
+
+content=$(cat "$_BREAKERS_FILE")
+assert_json_valid "$content" "breakers file is valid JSON"
+assert_json_field "$content" '.budget_ceiling.tripped' "false" "budget_ceiling starts un-tripped"
+assert_json_field "$content" '.error_cascade.tripped' "false" "error_cascade starts un-tripped"
+assert_json_field "$content" '.error_cascade.consecutive_failures' "0" "error_cascade starts at 0 failures"
+assert_json_field "$content" '.regression_cascade.consecutive_regressions' "0" "regression_cascade starts at 0"
+assert_json_field "$content" '.test_degradation.tripped' "false" "test_degradation starts un-tripped"
+
+# ============================================================
+# Test _safety_update_breaker — error_cascade increments
+# ============================================================
+
+LOG_OUTPUT=""
+_safety_update_breaker "error_cascade"
+failures=$(jq -r '.error_cascade.consecutive_failures' "$_BREAKERS_FILE")
+assert_equals "1" "$failures" "first error_cascade update sets failures=1"
+
+tripped=$(jq -r '.error_cascade.tripped' "$_BREAKERS_FILE")
+assert_equals "false" "$tripped" "1 failure does not trip error_cascade (threshold=3)"
+
+_safety_update_breaker "error_cascade"
+_safety_update_breaker "error_cascade"
+tripped=$(jq -r '.error_cascade.tripped' "$_BREAKERS_FILE")
+assert_equals "true" "$tripped" "3 failures trips error_cascade"
+assert_contains "$LOG_OUTPUT" "BREAKER TRIPPED: error_cascade" "trip logged"
+
+# ============================================================
+# Test _safety_any_breaker_tripped
+# ============================================================
+
+if _safety_any_breaker_tripped; then
+    echo "PASS: _safety_any_breaker_tripped returns 0 when breaker is tripped"
     ((_TEST_PASS_COUNT++))
 else
-    echo "FAIL: automaton.sh should reference budget_ceiling breaker" >&2
+    echo "FAIL: _safety_any_breaker_tripped should return 0 when a breaker is tripped" >&2
     ((_TEST_FAIL_COUNT++))
 fi
 
-# --- Test 6: _safety_check_breakers references error_cascade breaker ---
-grep_result=$(grep -c 'error_cascade' "$script_file" || true)
-if [ "$grep_result" -ge 1 ]; then
-    echo "PASS: automaton.sh references error_cascade breaker"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should reference error_cascade breaker" >&2
+# ============================================================
+# Test _safety_reset_breakers
+# ============================================================
+
+_safety_reset_breakers
+tripped=$(jq -r '.error_cascade.tripped' "$_BREAKERS_FILE")
+assert_equals "false" "$tripped" "reset clears error_cascade"
+failures=$(jq -r '.error_cascade.consecutive_failures' "$_BREAKERS_FILE")
+assert_equals "0" "$failures" "reset zeroes failure count"
+
+if _safety_any_breaker_tripped; then
+    echo "FAIL: no breakers should be tripped after reset" >&2
     ((_TEST_FAIL_COUNT++))
+else
+    echo "PASS: no breakers tripped after reset"
+    ((_TEST_PASS_COUNT++))
 fi
 
-# --- Test 7: _safety_check_breakers references regression_cascade breaker ---
-grep_result=$(grep -c 'regression_cascade' "$script_file" || true)
-if [ "$grep_result" -ge 1 ]; then
-    echo "PASS: automaton.sh references regression_cascade breaker"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should reference regression_cascade breaker" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
+# ============================================================
+# Test _safety_update_breaker — budget_ceiling trips immediately
+# ============================================================
 
-# --- Test 8: _safety_check_breakers references complexity_ceiling breaker ---
-grep_result=$(grep -c 'complexity_ceiling' "$script_file" || true)
-if [ "$grep_result" -ge 1 ]; then
-    echo "PASS: automaton.sh references complexity_ceiling breaker"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should reference complexity_ceiling breaker" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
+_safety_reset_breakers
+LOG_OUTPUT=""
+_safety_update_breaker "budget_ceiling"
+tripped=$(jq -r '.budget_ceiling.tripped' "$_BREAKERS_FILE")
+assert_equals "true" "$tripped" "budget_ceiling trips on first update"
+assert_contains "$LOG_OUTPUT" "BREAKER TRIPPED: budget_ceiling" "budget trip logged"
 
-# --- Test 9: _safety_check_breakers references test_degradation breaker ---
-grep_result=$(grep -c 'test_degradation' "$script_file" || true)
-if [ "$grep_result" -ge 1 ]; then
-    echo "PASS: automaton.sh references test_degradation breaker"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should reference test_degradation breaker" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
+# ============================================================
+# Test _safety_update_breaker — regression_cascade
+# ============================================================
 
-# --- Test 10: _safety_check_breakers references circuit-breakers.json ---
-grep_result=$(grep -c 'circuit-breakers.json' "$script_file" || true)
-if [ "$grep_result" -ge 2 ]; then
-    echo "PASS: automaton.sh references circuit-breakers.json in multiple places"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should reference circuit-breakers.json in multiple places (breaker functions)" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
+_safety_reset_breakers
+_safety_update_breaker "regression_cascade"
+tripped=$(jq -r '.regression_cascade.tripped' "$_BREAKERS_FILE")
+assert_equals "false" "$tripped" "1 regression does not trip (threshold=2)"
 
-# --- Test 11: _safety_update_breaker handles consecutive_failures for error_cascade ---
-grep_result=$(grep -c 'consecutive_failures' "$script_file" || true)
-if [ "$grep_result" -ge 1 ]; then
-    echo "PASS: automaton.sh tracks consecutive_failures"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should track consecutive_failures for error_cascade" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
+_safety_update_breaker "regression_cascade"
+tripped=$(jq -r '.regression_cascade.tripped' "$_BREAKERS_FILE")
+assert_equals "true" "$tripped" "2 regressions trips regression_cascade"
 
-# --- Test 12: _safety_update_breaker handles consecutive_regressions for regression_cascade ---
-grep_result=$(grep -c 'consecutive_regressions' "$script_file" || true)
-if [ "$grep_result" -ge 1 ]; then
-    echo "PASS: automaton.sh tracks consecutive_regressions"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should track consecutive_regressions for regression_cascade" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
+# ============================================================
+# Test _safety_update_breaker — unknown breaker returns error
+# ============================================================
 
-# --- Test 13: _safety_reset_breakers resets all breakers ---
-# Verify reset writes a fresh state with all 5 breakers set to tripped=false
-grep_result=$(grep -c 'tripped.*false' "$script_file" || true)
-if [ "$grep_result" -ge 1 ]; then
-    echo "PASS: automaton.sh resets breakers to tripped=false"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should reset breakers to tripped=false" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
+rc=0
+_safety_update_breaker "nonexistent_breaker" || rc=$?
+assert_equals "1" "$rc" "unknown breaker name returns 1"
 
-# --- Test 14: _safety_check_breakers uses SAFETY_MAX_TOTAL_LINES ---
-grep_result=$(grep -c 'SAFETY_MAX_TOTAL_LINES' "$script_file" || true)
-if [ "$grep_result" -ge 3 ]; then
-    echo "PASS: automaton.sh uses SAFETY_MAX_TOTAL_LINES (config + default + breaker check)"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should use SAFETY_MAX_TOTAL_LINES in breaker check" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
+# ============================================================
+# Test _safety_update_breaker — trip_count increments
+# ============================================================
 
-# --- Test 15: _safety_check_breakers uses SAFETY_MAX_TOTAL_FUNCTIONS ---
-grep_result=$(grep -c 'SAFETY_MAX_TOTAL_FUNCTIONS' "$script_file" || true)
-if [ "$grep_result" -ge 3 ]; then
-    echo "PASS: automaton.sh uses SAFETY_MAX_TOTAL_FUNCTIONS (config + default + breaker check)"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should use SAFETY_MAX_TOTAL_FUNCTIONS in breaker check" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
-
-# --- Test 16: _safety_check_breakers uses SAFETY_MIN_TEST_PASS_RATE ---
-grep_result=$(grep -c 'SAFETY_MIN_TEST_PASS_RATE' "$script_file" || true)
-if [ "$grep_result" -ge 3 ]; then
-    echo "PASS: automaton.sh uses SAFETY_MIN_TEST_PASS_RATE (config + default + breaker check)"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should use SAFETY_MIN_TEST_PASS_RATE in breaker check" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
-
-# --- Test 17: _safety_check_breakers uses SAFETY_MAX_CONSECUTIVE_FAILURES ---
-grep_result=$(grep -c 'SAFETY_MAX_CONSECUTIVE_FAILURES' "$script_file" || true)
-if [ "$grep_result" -ge 3 ]; then
-    echo "PASS: automaton.sh uses SAFETY_MAX_CONSECUTIVE_FAILURES (config + default + breaker check)"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should use SAFETY_MAX_CONSECUTIVE_FAILURES in breaker check" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
-
-# --- Test 18: _safety_check_breakers uses SAFETY_MAX_CONSECUTIVE_REGRESSIONS ---
-grep_result=$(grep -c 'SAFETY_MAX_CONSECUTIVE_REGRESSIONS' "$script_file" || true)
-if [ "$grep_result" -ge 3 ]; then
-    echo "PASS: automaton.sh uses SAFETY_MAX_CONSECUTIVE_REGRESSIONS (config + default + breaker check)"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should use SAFETY_MAX_CONSECUTIVE_REGRESSIONS in breaker check" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
-
-# --- Test 19: Circuit breaker section header exists ---
-grep_result=$(grep -c 'Circuit Breakers.*spec-45' "$script_file" || true)
-if [ "$grep_result" -ge 1 ]; then
-    echo "PASS: automaton.sh has Circuit Breakers section header"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: automaton.sh should have Circuit Breakers section header" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
-
-# --- Test 20: _safety_any_breaker_tripped checks for tripped breakers ---
-# It should read the breakers file and check if any have tripped=true
-grep_result=$(grep -A5 '_safety_any_breaker_tripped' "$script_file" | grep -c 'tripped.*true\|select.*tripped' || true)
-if [ "$grep_result" -ge 1 ]; then
-    echo "PASS: _safety_any_breaker_tripped checks for tripped=true"
-    ((_TEST_PASS_COUNT++))
-else
-    echo "FAIL: _safety_any_breaker_tripped should check for tripped=true" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
+_safety_reset_breakers
+_safety_update_breaker "complexity_ceiling"
+_safety_update_breaker "complexity_ceiling"
+count=$(jq -r '.complexity_ceiling.trip_count' "$_BREAKERS_FILE")
+assert_equals "2" "$count" "complexity_ceiling trip_count increments"
 
 test_summary

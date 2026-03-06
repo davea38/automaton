@@ -9,7 +9,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: _signal_link_idea function exists ---
 grep_result=$(grep -c '^_signal_link_idea()' "$script_file" || true)

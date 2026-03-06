@@ -6,7 +6,6 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
-script_file="$SCRIPT_DIR/../automaton.sh"
 TMPDIR="${TMPDIR:-/tmp}"
 test_dir="$TMPDIR/test_setup_wizard_$$"
 mkdir -p "$test_dir"
@@ -38,7 +37,7 @@ assert_exit_code 0 "$rc" "ARG_NO_SETUP default is false"
 
 # --- Test 5: --setup + --no-setup mutual exclusion ---
 rc=0
-output=$(bash "$script_file" --setup --no-setup 2>&1) || rc=$?
+output=$(bash "$automaton_script" --setup --no-setup 2>&1) || rc=$?
 assert_exit_code 1 "$rc" "--setup + --no-setup exits with error code 1"
 assert_contains "$output" "mutually exclusive" "--setup + --no-setup error mentions mutual exclusion"
 
@@ -51,14 +50,14 @@ git init -q
 git commit --allow-empty -m "init" -q
 
 # Run with no config, stdin redirected from /dev/null (non-TTY)
-output=$(bash "$script_file" --no-setup 2>&1) || true
+output=$(bash "$automaton_script" --no-setup 2>&1) || true
 # --no-setup should skip wizard and proceed (may fail on missing config but not hang)
 echo "PASS: --no-setup does not hang on non-TTY"
 ((_TEST_PASS_COUNT++))
 
 # --- Test 7: --setup on non-TTY exits 1 ---
 rc=0
-output=$(echo "" | bash "$script_file" --setup 2>&1) || rc=$?
+output=$(echo "" | bash "$automaton_script" --setup 2>&1) || rc=$?
 assert_exit_code 1 "$rc" "--setup on non-TTY exits 1"
 assert_contains "$output" "interactive" "--setup non-TTY error mentions interactive terminal"
 
@@ -96,7 +95,7 @@ auto_push_val=$(echo "$generated" | jq -r '.git.auto_push')
 assert_equals "true" "$auto_push_val" "generated config has correct git.auto_push"
 
 # --- Test 9: Help text includes --setup and --no-setup ---
-help_output=$(bash "$script_file" --help 2>&1) || true
+help_output=$(bash "$automaton_script" --help 2>&1) || true
 assert_contains "$help_output" "--setup" "help text includes --setup"
 assert_contains "$help_output" "--no-setup" "help text includes --no-setup"
 

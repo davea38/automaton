@@ -9,7 +9,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/test_helpers.sh"
 
 config_file="$SCRIPT_DIR/../automaton.config.json"
-script_file="$SCRIPT_DIR/../automaton.sh"
 
 # --- Test 1: automaton.config.json contains garden.enabled ---
 val=$(jq -r '.garden.enabled // "missing"' "$config_file")
@@ -51,45 +50,21 @@ assert_equals "true" "$val" "garden.auto_seed_from_metrics defaults to true"
 val=$(jq -r '.garden.auto_seed_from_signals // "missing"' "$config_file")
 assert_equals "true" "$val" "garden.auto_seed_from_signals defaults to true"
 
-# --- Test 11: automaton.sh reads GARDEN_ENABLED from config ---
-grep_result=$(grep -c 'GARDEN_ENABLED.*jq.*garden.enabled' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads GARDEN_ENABLED from garden.enabled config"
-
-# --- Test 12: automaton.sh reads GARDEN_SEED_TTL_DAYS ---
-grep_result=$(grep -c 'GARDEN_SEED_TTL_DAYS.*jq.*garden.seed_ttl_days' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads GARDEN_SEED_TTL_DAYS"
-
-# --- Test 13: automaton.sh reads GARDEN_SPROUT_TTL_DAYS ---
-grep_result=$(grep -c 'GARDEN_SPROUT_TTL_DAYS.*jq.*garden.sprout_ttl_days' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads GARDEN_SPROUT_TTL_DAYS"
-
-# --- Test 14: automaton.sh reads GARDEN_SPROUT_THRESHOLD ---
-grep_result=$(grep -c 'GARDEN_SPROUT_THRESHOLD.*jq.*garden.sprout_threshold' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads GARDEN_SPROUT_THRESHOLD"
-
-# --- Test 15: automaton.sh reads GARDEN_BLOOM_THRESHOLD ---
-grep_result=$(grep -c 'GARDEN_BLOOM_THRESHOLD.*jq.*garden.bloom_threshold' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads GARDEN_BLOOM_THRESHOLD"
-
-# --- Test 16: automaton.sh reads GARDEN_BLOOM_PRIORITY_THRESHOLD ---
-grep_result=$(grep -c 'GARDEN_BLOOM_PRIORITY_THRESHOLD.*jq.*garden.bloom_priority_threshold' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads GARDEN_BLOOM_PRIORITY_THRESHOLD"
-
-# --- Test 17: automaton.sh reads GARDEN_SIGNAL_SEED_THRESHOLD ---
-grep_result=$(grep -c 'GARDEN_SIGNAL_SEED_THRESHOLD.*jq.*garden.signal_seed_threshold' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads GARDEN_SIGNAL_SEED_THRESHOLD"
-
-# --- Test 18: automaton.sh reads GARDEN_MAX_ACTIVE_IDEAS ---
-grep_result=$(grep -c 'GARDEN_MAX_ACTIVE_IDEAS.*jq.*garden.max_active_ideas' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads GARDEN_MAX_ACTIVE_IDEAS"
-
-# --- Test 19: automaton.sh reads GARDEN_AUTO_SEED_METRICS ---
-grep_result=$(grep -c 'GARDEN_AUTO_SEED_METRICS.*jq.*garden.auto_seed_from_metrics' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads GARDEN_AUTO_SEED_METRICS"
-
-# --- Test 20: automaton.sh reads GARDEN_AUTO_SEED_SIGNALS ---
-grep_result=$(grep -c 'GARDEN_AUTO_SEED_SIGNALS.*jq.*garden.auto_seed_from_signals' "$script_file" || true)
-assert_equals "1" "$grep_result" "automaton.sh reads GARDEN_AUTO_SEED_SIGNALS"
+# --- Test 11-20: load_config() sets GARDEN_* variables from config ---
+(
+    source "$_PROJECT_DIR/lib/config.sh"
+    CONFIG_FILE="$config_file" load_config
+    assert_equals "true" "$GARDEN_ENABLED" "load_config sets GARDEN_ENABLED"
+    assert_equals "14" "$GARDEN_SEED_TTL_DAYS" "load_config sets GARDEN_SEED_TTL_DAYS"
+    assert_equals "30" "$GARDEN_SPROUT_TTL_DAYS" "load_config sets GARDEN_SPROUT_TTL_DAYS"
+    assert_equals "2" "$GARDEN_SPROUT_THRESHOLD" "load_config sets GARDEN_SPROUT_THRESHOLD"
+    assert_equals "3" "$GARDEN_BLOOM_THRESHOLD" "load_config sets GARDEN_BLOOM_THRESHOLD"
+    assert_equals "40" "$GARDEN_BLOOM_PRIORITY_THRESHOLD" "load_config sets GARDEN_BLOOM_PRIORITY_THRESHOLD"
+    assert_equals "0.7" "$GARDEN_SIGNAL_SEED_THRESHOLD" "load_config sets GARDEN_SIGNAL_SEED_THRESHOLD"
+    assert_equals "50" "$GARDEN_MAX_ACTIVE_IDEAS" "load_config sets GARDEN_MAX_ACTIVE_IDEAS"
+    assert_equals "true" "$GARDEN_AUTO_SEED_METRICS" "load_config sets GARDEN_AUTO_SEED_METRICS"
+    assert_equals "true" "$GARDEN_AUTO_SEED_SIGNALS" "load_config sets GARDEN_AUTO_SEED_SIGNALS"
+)
 
 # --- Test 21: automaton.sh has GARDEN_ defaults in the else branch ---
 grep_result=$(grep -c 'GARDEN_ENABLED="true"' "$script_file" || true)

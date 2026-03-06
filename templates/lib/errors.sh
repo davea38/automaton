@@ -6,8 +6,9 @@
 handle_rate_limit() {
     local delay="$RATE_COOLDOWN_SECONDS"
 
-    for ((attempt = 1; attempt <= 5; attempt++)); do
-        log "ORCHESTRATOR" "Rate limit detected. Backing off ${delay}s (attempt ${attempt}/5)"
+    local max_retries="${RATE_MAX_RETRIES:-5}"
+    for ((attempt = 1; attempt <= max_retries; attempt++)); do
+        log "ORCHESTRATOR" "Rate limit detected. Backing off ${delay}s (attempt ${attempt}/${max_retries})"
         sleep "$delay"
 
         # Retry — the called function sets AGENT_RESULT and AGENT_EXIT_CODE
@@ -29,10 +30,11 @@ handle_rate_limit() {
             'BEGIN { nd = int(d * m); print (nd > cap) ? cap : nd }')
     done
 
-    # All 5 retries exhausted — enter extended pause
-    log "ORCHESTRATOR" "Persistent rate limiting. Pausing for 10 minutes."
+    # All retries exhausted — enter extended pause
+    local extended_pause="${RATE_EXTENDED_PAUSE_SECONDS:-600}"
+    log "ORCHESTRATOR" "Persistent rate limiting. Pausing for ${extended_pause}s."
     write_state
-    sleep 600
+    sleep "$extended_pause"
 
     return 1
 }
@@ -198,7 +200,7 @@ checkpoint_plan() {
     fi
 
     cp IMPLEMENTATION_PLAN.md "$AUTOMATON_DIR/plan_checkpoint.md"
-    PLAN_CHECKPOINT_COMPLETED_COUNT=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    PLAN_CHECKPOINT_COMPLETED_COUNT=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null) || PLAN_CHECKPOINT_COMPLETED_COUNT=0
 }
 
 # Plan corruption guard: verify that the [x] count did not decrease after an
@@ -216,7 +218,7 @@ check_plan_integrity() {
     fi
 
     local completed_after
-    completed_after=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null || echo 0)
+    completed_after=$(grep -c '\[x\]' IMPLEMENTATION_PLAN.md 2>/dev/null) || completed_after=0
 
     if [ "$completed_after" -lt "$PLAN_CHECKPOINT_COMPLETED_COUNT" ]; then
         log "ORCHESTRATOR" "PLAN CORRUPTION: completed count dropped from $PLAN_CHECKPOINT_COMPLETED_COUNT to $completed_after"
