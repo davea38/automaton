@@ -71,7 +71,12 @@
     "dangerously_skip_permissions": true,
     "verbose": true,
     "skip_research": false,
-    "skip_review": false
+    "skip_review": false,
+    "blind_validation": false,
+    "steelman_critique": false
+  },
+  "blind_validation": {
+    "max_diff_lines": 500
   },
   "parallel": {
     "enabled": false,
@@ -87,7 +92,10 @@
     "enabled": false,
     "max_files_per_iteration": 3,
     "max_lines_changed_per_iteration": 200,
-    "protected_functions": ["run_orchestration", "_handle_shutdown"],
+    "protected_functions": [
+      "run_orchestration",
+      "_handle_shutdown"
+    ],
     "require_smoke_test": true
   },
   "journal": {
@@ -95,12 +103,6 @@
   },
   "agents": {
     "use_native_definitions": false
-  },
-  "notifications": {
-    "webhook_url": "",
-    "events": ["run_started", "phase_completed", "run_completed", "run_failed", "escalation"],
-    "command": "",
-    "timeout_seconds": 5
   },
   "garden": {
     "enabled": true,
@@ -113,5 +115,76 @@
     "max_active_ideas": 50,
     "auto_seed_from_metrics": true,
     "auto_seed_from_signals": true
-  }
+  },
+  "stigmergy": {
+    "enabled": true,
+    "initial_strength": 0.3,
+    "reinforce_increment": 0.15,
+    "decay_floor": 0.05,
+    "match_threshold": 0.6,
+    "max_signals": 100
+  },
+  "quorum": {
+    "enabled": true,
+    "voters": ["conservative", "ambitious", "efficiency", "quality", "advocate"],
+    "thresholds": {
+      "seed_promotion": 3,
+      "bloom_implementation": 3,
+      "constitutional_amendment": 4,
+      "emergency_override": 5
+    },
+    "max_tokens_per_voter": 500,
+    "max_cost_per_cycle_usd": 1,
+    "rejection_cooldown_cycles": 5,
+    "model": "sonnet"
+  },
+  "metrics": {
+    "enabled": true,
+    "trend_window": 5,
+    "degradation_alert_threshold": 3,
+    "snapshot_retention": 100
+  },
+  "evolution": {
+    "enabled": false,
+    "max_cycles": 0,
+    "max_cost_per_cycle_usd": 5.00,
+    "convergence_threshold": 5,
+    "idle_garden_threshold": 3,
+    "branch_prefix": "automaton/evolve-",
+    "auto_merge": true,
+    "reflect_model": "sonnet",
+    "ideate_model": "sonnet",
+    "observe_model": "sonnet"
+  },
+  "critique": {
+    "auto_preflight": false,
+    "block_on_error": true,
+    "max_token_estimate": 80000
+  },
+  "notifications": {
+    "webhook_url": "",
+    "events": ["run_started", "phase_completed", "run_completed", "run_failed", "escalation"],
+    "command": "",
+    "timeout_seconds": 5
+  },
+  "safety": {
+    "max_total_lines": 15000,
+    "max_total_functions": 300,
+    "min_test_pass_rate": 0.80,
+    "max_consecutive_failures": 3,
+    "max_consecutive_regressions": 2,
+    "preserve_failed_branches": true,
+    "preflight_enabled": true,
+    "sandbox_testing_enabled": true
+  },
+  "work_log": {
+    "enabled": true,
+    "log_level": "normal"
+  },
+  "debt_tracking": {
+    "enabled": true,
+    "threshold": 20,
+    "markers": ["TODO", "FIXME", "HACK", "DEBT", "WORKAROUND", "TEMPORARY"]
+  },
+  "guardrails_mode": "warn"
 }

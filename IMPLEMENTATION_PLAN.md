@@ -424,6 +424,6 @@ The codebase was refactored from a monolithic `automaton.sh` (14,767 lines) into
 
 - [x] Add `lib/` directory copying to the scaffolder in `bin/cli.js` (WHY: `npx automaton` must copy the `lib/` directory alongside `automaton.sh` for the modular architecture to work in scaffolded projects) <!-- test: none -->
 
-- [ ] Sync `templates/automaton.config.json` with root config including all spec 38-59 config sections (WHY: the template config is missing garden, stigmergy, quorum, metrics, evolution, safety, qa, critique, notifications, work_log, debt_tracking, guardrails, and wizard-related fields) <!-- test: none -->
+- [x] Sync `templates/automaton.config.json` with root config including all spec 38-59 config sections (WHY: the template config is missing garden, stigmergy, quorum, metrics, evolution, safety, qa, critique, notifications, work_log, debt_tracking, guardrails, and wizard-related fields) <!-- test: none -->
 
 - [ ] Sync all `templates/PROMPT_*.md` files with root versions (WHY: prompt templates may be stale after specs 46-59 added QA, evolution, and wizard prompt content) <!-- test: none -->
