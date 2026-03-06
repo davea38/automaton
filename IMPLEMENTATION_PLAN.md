@@ -408,7 +408,7 @@ Spec 59 is the last unfinished spec. The `lib/` refactor also created template a
 
 - [x] Create `tests/test_requirements_wizard.sh` with unit tests for `requirements_wizard()`: non-TTY guard returns 1, overwrite confirmation flow, prompt file missing returns 1, Gate 1 re-check after completion (WHY: the function has 4 distinct code paths that need test coverage — TTY check, confirmation, missing file, and post-wizard validation) <!-- test: tests/test_requirements_wizard.sh -->
 
-- [ ] Add `'PROMPT_wizard.md'` to the `TEMPLATE_FILES` array in `bin/cli.js` (WHY: scaffolded projects need the wizard prompt to support the `--wizard` flow; without it, `requirements_wizard()` fails with "PROMPT_wizard.md not found") <!-- test: none -->
+- [x] Add `'PROMPT_wizard.md'` to the `TEMPLATE_FILES` array in `bin/cli.js` (WHY: scaffolded projects need the wizard prompt to support the `--wizard` flow; without it, `requirements_wizard()` fails with "PROMPT_wizard.md not found") <!-- test: none -->
 
 - [ ] Update `bin/cli.js` scaffolder output to remove any "run `claude` first" language and explain that `./automaton.sh` handles everything including requirements gathering (WHY: spec-59 eliminates the manual `claude` step — the scaffolder banner must reflect this) <!-- test: none -->
 

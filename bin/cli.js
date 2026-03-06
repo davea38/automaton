@@ -20,6 +20,7 @@ const TEMPLATE_FILES = [
   'PROMPT_build.md',
   'PROMPT_review.md',
   'PROMPT_self_research.md',
+  'PROMPT_wizard.md',
   'AGENTS.md',
   'IMPLEMENTATION_PLAN.md',
   'CLAUDE.md',
@@ -162,10 +163,11 @@ function printBanner() {
  automaton scaffolded successfully
 
  Next steps:
-   1. Run 'claude' to start the conversation phase
-      (Claude will interview you and write specs)
-   2. When specs are complete, run './automaton.sh'
-      (Research, plan, build, and review run autonomously)
+   1. Run './automaton.sh'
+      (Walks you through requirements, then builds autonomously)
+
+ Power users:
+   Run 'claude' to manually write specs, then './automaton.sh'
 
  Files created:
    automaton.sh          - Master orchestrator
