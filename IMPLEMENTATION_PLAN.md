@@ -418,7 +418,7 @@ The codebase was refactored from a monolithic `automaton.sh` (14,767 lines) into
 
 - [x] Track `lib/` directory in git (WHY: the 17 library modules contain all function implementations — without them in git, the project is non-functional; committed in e367daf) <!-- test: none -->
 
-- [ ] Sync `templates/automaton.sh` with the current modular entry point (WHY: the template is the old 5,249-line monolith; scaffolded projects would get the wrong architecture) <!-- test: none -->
+- [x] Sync `templates/automaton.sh` with the current modular entry point (WHY: the template is the old 5,249-line monolith; scaffolded projects would get the wrong architecture) <!-- test: none -->
 
 - [ ] Copy `lib/` directory to `templates/lib/` (WHY: scaffolded projects need all library modules to function; without them, the modular `automaton.sh` fails on `source` lines 23-39) <!-- test: none -->
 
