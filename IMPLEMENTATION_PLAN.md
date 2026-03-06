@@ -416,7 +416,7 @@ Spec 59 is the last unfinished spec. The `lib/` refactor also created template a
 
 The codebase was refactored from a monolithic `automaton.sh` (14,767 lines) into a modular architecture: `automaton.sh` (1,390 lines) + `lib/` (17 modules, 15,797 lines). Templates and the scaffolder do not reflect this structure.
 
-- [ ] Track `lib/` directory in git (WHY: the 17 library modules contain all function implementations — without them in git, the project is non-functional; currently untracked per `git status`) <!-- test: none -->
+- [x] Track `lib/` directory in git (WHY: the 17 library modules contain all function implementations — without them in git, the project is non-functional; committed in e367daf) <!-- test: none -->
 
 - [ ] Sync `templates/automaton.sh` with the current modular entry point (WHY: the template is the old 5,249-line monolith; scaffolded projects would get the wrong architecture) <!-- test: none -->
 
