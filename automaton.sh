@@ -667,6 +667,9 @@ post_iteration() {
         # Early escalation: 2+ consecutive micro-validation failures → review
         check_micro_escalation || micro_rc=$?
 
+        # Living spec amendments: parse build agent amendment proposals
+        parse_build_amendments "${AGENT_RESULT:-}" || true
+
         # Periodic persistent state checkpoint every 5 build iterations (spec-34)
         if [ "$phase_iteration" -gt 0 ] && [ $((phase_iteration % 5)) -eq 0 ]; then
             commit_persistent_state "build" "$iteration"
@@ -1135,6 +1138,13 @@ run_orchestration() {
                     # Feedback level routing (audit wave 6): extract spec-level issues
                     if parse_feedback_routing "${AGENT_RESULT:-}"; then
                         emit_event "feedback_routing" '{"spec_issues_routed": true}'
+                    fi
+                    # Living spec amendments: evaluate proposals and apply approved ones
+                    if parse_amendment_evaluations "${AGENT_RESULT:-}"; then
+                        emit_event "amendment_evaluation" '{"amendments_evaluated": true}'
+                    fi
+                    if apply_approved_amendments; then
+                        emit_event "amendment_applied" '{"amendments_applied": true}'
                     fi
                     # Blind validation (spec-54): additional independent review pass
                     if [ "${FLAG_BLIND_VALIDATION:-false}" = "true" ]; then
