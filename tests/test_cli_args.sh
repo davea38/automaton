@@ -47,6 +47,7 @@ _test_parse_args() {
     ARG_NO_SETUP=false
     ARG_WIZARD=false
     ARG_NO_WIZARD=false
+    ARG_SCOPE=""
 
     # Parse args using the same while/case from automaton.sh
     while [ $# -gt 0 ]; do
@@ -102,6 +103,9 @@ _test_parse_args() {
             --no-setup) ARG_NO_SETUP=true; shift ;;
             --wizard) ARG_WIZARD=true; shift ;;
             --no-wizard) ARG_NO_WIZARD=true; shift ;;
+            --scope)
+                if [ -z "${2:-}" ]; then echo "Error: --scope requires a directory path argument." >&2; return 1; fi
+                ARG_SCOPE="$2"; shift 2 ;;
             --help|-h) return 0 ;;
             *) echo "Error: Unknown argument: $1" >&2; return 1 ;;
         esac
@@ -236,6 +240,20 @@ output=$(_test_parse_args --water "id1" 2>&1)
 rc=$?
 assert_equals "1" "$rc" "--water with missing evidence returns error"
 
+# --scope with no argument
+output=$(_test_parse_args --scope 2>&1)
+rc=$?
+assert_equals "1" "$rc" "--scope with no arg returns error"
+
+# --scope with valid path
+_test_parse_args --scope /tmp
+assert_equals "/tmp" "$ARG_SCOPE" "--scope /tmp sets ARG_SCOPE"
+
+# --scope combined with --dry-run
+_test_parse_args --scope /tmp --dry-run
+assert_equals "/tmp" "$ARG_SCOPE" "--scope /tmp combined: ARG_SCOPE set"
+assert_equals "true" "$ARG_DRY_RUN" "--scope /tmp combined: ARG_DRY_RUN set"
+
 # Defaults are correct when no args passed
 _test_parse_args
 assert_equals "false" "$ARG_RESUME" "default: ARG_RESUME=false"
@@ -243,5 +261,6 @@ assert_equals "" "$ARG_PLANT" "default: ARG_PLANT empty"
 assert_equals "0" "$ARG_CYCLES" "default: ARG_CYCLES=0"
 assert_equals "false" "$ARG_GARDEN" "default: ARG_GARDEN=false"
 assert_equals "" "$ARG_COMPLEXITY" "default: ARG_COMPLEXITY empty"
+assert_equals "" "$ARG_SCOPE" "default: ARG_SCOPE empty"
 
 test_summary

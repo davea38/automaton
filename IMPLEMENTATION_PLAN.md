@@ -32,13 +32,13 @@ This feature enables directory-scoped agent operations, critical for monorepo su
 
 ### 60.1 Variable Separation & CLI Parsing
 
-- [ ] Add `AUTOMATON_INSTALL_DIR` variable to `automaton.sh` (set to `$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)`) and make `AUTOMATON_DIR` absolute (`$(pwd)/.automaton`) (WHY: scope flag requires decoupling where agents work (`PROJECT_ROOT`) from where state lives (`AUTOMATON_DIR`) and where prompts live (`AUTOMATON_INSTALL_DIR`) — currently these are conflated) <!-- test: tests/test_scope.sh -->
+- [x] Add `AUTOMATON_INSTALL_DIR` variable to `automaton.sh` (set to `$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)`) and make `AUTOMATON_DIR` absolute (`$(pwd)/.automaton`) (WHY: scope flag requires decoupling where agents work (`PROJECT_ROOT`) from where state lives (`AUTOMATON_DIR`) and where prompts live (`AUTOMATON_INSTALL_DIR`) — currently these are conflated) <!-- test: tests/test_scope.sh -->
 
-- [ ] Add `ARG_SCOPE=""` default and `--scope` case branch to CLI argument parsing in `automaton.sh` (WHY: the entry point for the feature — parses the path argument and stores it for resolution) <!-- test: tests/test_cli_args.sh -->
+- [x] Add `ARG_SCOPE=""` default and `--scope` case branch to CLI argument parsing in `automaton.sh` (WHY: the entry point for the feature — parses the path argument and stores it for resolution) <!-- test: tests/test_cli_args.sh -->
 
-- [ ] Implement path resolution block after argument parsing: resolve relative→absolute via `cd "$path" && pwd`, validate directory exists, set `PROJECT_ROOT` (WHY: invalid paths must fail early with clear error messages before any phase dispatch) <!-- test: tests/test_scope.sh -->
+- [x] Implement path resolution block after argument parsing: resolve relative→absolute via `cd "$path" && pwd`, validate directory exists, set `PROJECT_ROOT` (WHY: invalid paths must fail early with clear error messages before any phase dispatch) <!-- test: tests/test_scope.sh -->
 
-- [ ] Add mutual exclusion check: `--scope` + `--self` exits with error (WHY: self-build targets automaton's own directory, so scoping to a subdirectory is contradictory) <!-- test: tests/test_scope.sh -->
+- [x] Add mutual exclusion check: `--scope` + `--self` exits with error (WHY: self-build targets automaton's own directory, so scoping to a subdirectory is contradictory) <!-- test: tests/test_scope.sh -->
 
 ### 60.2 Agent Invocation Changes
 
