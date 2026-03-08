@@ -239,6 +239,17 @@ spec_issue: spec-[ID] | [description of the spec problem] | [proposed amendment 
 
 Only include `<feedback_routing>` when spec-level issues exist. Omit it entirely when all issues are test-level or implementation-level.
 
+**If pending spec amendment proposals exist** (injected in the dynamic context), evaluate each one and output an `<amendment_evaluation>` block:
+
+```
+<amendment_evaluation>
+approve: spec-[ID] | [reason for approving]
+reject: spec-[ID] | [reason for rejecting]
+</amendment_evaluation>
+```
+
+Approve amendments that correctly identify spec problems and propose reasonable fixes. Reject amendments that misunderstand the spec, propose unnecessary changes, or would break other requirements. Only include this block when there are pending proposals to evaluate.
+
 ```xml
 <result status="issues_found">
 Specs verified: [count]

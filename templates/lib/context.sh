@@ -274,6 +274,16 @@ inject_dynamic_context() {
             _inject_delta_review_context
         fi
 
+        # Review-specific context: inject pending spec amendment proposals for evaluation
+        if [ "$current_phase" = "review" ]; then
+            local _amendments_ctx
+            _amendments_ctx=$(get_pending_amendments_context)
+            if [ -n "$_amendments_ctx" ]; then
+                echo "$_amendments_ctx"
+                echo ""
+            fi
+        fi
+
         # Review-specific context: inject QA failure report when available (spec-46.4)
         if [ "$current_phase" = "review" ] && [ -f "$AUTOMATON_DIR/qa/failure-report.md" ]; then
             echo "## QA Failure Report"
