@@ -14,7 +14,7 @@
 
 - Build: N/A (bash scripts, no compilation)
 - Test: `bash -n automaton.sh` (syntax check)
-- Lint: `shellcheck automaton.sh` (if available)
+- Lint: `shellcheck automaton.sh lib/*.sh` (if available)
 
 ## Learnings
 
