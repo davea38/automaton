@@ -174,13 +174,20 @@ regression_risk: [1-5]
 - Output the confidence block and the result signal shown in the Output Format section.
 
 **If non-test checks fail** (lint errors, missing spec coverage, critical quality issues):
-- Append new `[ ]` tasks to `IMPLEMENTATION_PLAN.md` (or `.automaton/backlog.md` in self-build mode) for each failure. Use these formats:
+
+Classify each issue into one of three feedback levels before creating tasks:
+
+- **spec-level**: The spec itself is ambiguous, contradictory, incomplete, or impossible to implement as written. Do NOT create a build fix task — instead, include it in the `<feedback_routing>` block (see Output Format) so the orchestrator can propose a spec amendment.
+- **test-level**: Tests are missing, inadequate, or testing the wrong behavior. Create tasks prefixed with `[ ] Test:`.
+- **implementation-level**: Code bugs, missing features, lint/type errors, quality issues. Create tasks with the standard prefixes below.
+
+For **implementation-level** and **test-level** issues, append `[ ]` tasks to `IMPLEMENTATION_PLAN.md` (or `.automaton/backlog.md` in self-build mode):
   - `[ ] Fix: [test name] failing - [error description]`
   - `[ ] Fix: lint error in [file] - [description]`
   - `[ ] Fix: type error in [file] - [description]`
   - `[ ] Fix: build failure - [description]`
   - `[ ] Missing: [spec requirement] not implemented`
-  - `[ ] Missing test: [task description] has no test file`
+  - `[ ] Test: [task description] - [what test should verify]`
   - `[ ] Quality: [issue description] in [file]`
 - Each new task must be specific and actionable — a builder should be able to pick it up and know exactly what to do.
 - Do NOT output the complete result signal. The orchestrator will detect the absence of the signal and return to the build phase.
@@ -221,10 +228,22 @@ regression_risk: [1-5]
 </confidence>
 ```
 
+**If any spec-level issues were found**, output a `<feedback_routing>` block listing them. Each entry needs the spec ID, a description of the problem, and a proposed amendment:
+
+```
+<feedback_routing>
+spec_issue: spec-[ID] | [description of the spec problem] | [proposed amendment text]
+spec_issue: spec-[ID] | [description of the spec problem] | [proposed amendment text]
+</feedback_routing>
+```
+
+Only include `<feedback_routing>` when spec-level issues exist. Omit it entirely when all issues are test-level or implementation-level.
+
 ```xml
 <result status="issues_found">
 Specs verified: [count]
 Fix tasks added: [count]
+Spec issues routed: [count]
 Critical issues: [list]
 </result>
 ```

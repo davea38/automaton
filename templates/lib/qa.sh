@@ -1454,3 +1454,73 @@ gate_review_confidence() {
     fi
     return 0
 }
+
+# ---------------------------------------------------------------------------
+# Feedback Level Routing (audit wave 6)
+# ---------------------------------------------------------------------------
+
+# Parses spec-level issues from review agent output.
+# Expects a <feedback_routing> block with lines like:
+#   spec_issue: spec-XX | description | proposed amendment
+#
+# Routes spec-level issues to .automaton/spec-amendments.json instead of
+# creating build tasks. This prevents building against flawed specs.
+#
+# Args: $1 = review output text
+# Returns: 0 if spec issues found and routed, 1 if no spec issues found.
+parse_feedback_routing() {
+    local review_output="$1"
+
+    # Extract the <feedback_routing>...</feedback_routing> block
+    local block
+    block=$(echo "$review_output" | sed -n '/<feedback_routing>/,/<\/feedback_routing>/p')
+    if [ -z "$block" ]; then
+        return 1
+    fi
+
+    # Parse spec_issue lines
+    local amendments_file="${AUTOMATON_DIR}/spec-amendments.json"
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")
+
+    # Read existing amendments or start fresh
+    local existing="[]"
+    if [ -f "$amendments_file" ]; then
+        existing=$(jq '.proposals // []' "$amendments_file" 2>/dev/null || echo "[]")
+    fi
+
+    local count=0
+    local new_proposals="$existing"
+
+    while IFS= read -r line; do
+        # Match: spec_issue: spec-XX | description | proposed amendment
+        if [[ "$line" =~ ^[[:space:]]*spec_issue:[[:space:]]*(.+) ]]; then
+            local content="${BASH_REMATCH[1]}"
+            local spec_id description proposed
+
+            # Split on |
+            spec_id=$(echo "$content" | cut -d'|' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            description=$(echo "$content" | cut -d'|' -f2 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            proposed=$(echo "$content" | cut -d'|' -f3- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+
+            if [ -n "$spec_id" ] && [ -n "$description" ]; then
+                new_proposals=$(echo "$new_proposals" | jq --arg sid "$spec_id" \
+                    --arg desc "$description" --arg prop "$proposed" \
+                    --arg ts "$timestamp" --arg status "proposed" \
+                    '. + [{"spec_id": $sid, "description": $desc, "proposed_amendment": $prop, "status": $status, "created_at": $ts}]')
+                count=$((count + 1))
+            fi
+        fi
+    done <<< "$block"
+
+    if [ "$count" -eq 0 ]; then
+        return 1
+    fi
+
+    # Write amendments file
+    jq -n --argjson proposals "$new_proposals" --arg ts "$timestamp" \
+        '{"updated_at": $ts, "proposals": $proposals}' > "$amendments_file"
+
+    log "ORCHESTRATOR" "Feedback routing: $count spec-level issue(s) written to spec-amendments.json"
+    return 0
+}

@@ -138,7 +138,7 @@ From audit finding 07 (VSDD process extraction). Lower priority — implement af
 
 - [x] Add review confidence scoring: review agent rates confidence (1-5) across spec coverage, test quality, code quality, regression risk; all ≥4 = complete, any <3 = create tasks (WHY: completion is currently binary — gradient scoring catches "barely passing" reviews that need more work) <!-- test: tests/test_review_confidence.sh -->
 
-- [ ] Add feedback level routing: review classifies issues as spec-level, test-level, or implementation-level; spec-level issues create spec amendment proposals instead of build tasks (WHY: prevents building against flawed specs — if review finds an ambiguous requirement, fixing the spec is better than working around it) <!-- test: none -->
+- [x] Add feedback level routing: review classifies issues as spec-level, test-level, or implementation-level; spec-level issues create spec amendment proposals instead of build tasks (WHY: prevents building against flawed specs — if review finds an ambiguous requirement, fixing the spec is better than working around it) <!-- test: none -->
 
 - [ ] Implement living spec amendments: build agent proposes spec amendments to `.automaton/spec-amendments.json`, review evaluates, approved amendments update specs (WHY: specs currently freeze after Phase 0 — when builder discovers a requirement is impossible/wrong, the spec should evolve) <!-- test: none -->
 

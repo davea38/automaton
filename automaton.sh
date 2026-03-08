@@ -1132,6 +1132,10 @@ run_orchestration() {
                     else
                         log "ORCHESTRATOR" "No confidence scores in review output (optional — proceeding)"
                     fi
+                    # Feedback level routing (audit wave 6): extract spec-level issues
+                    if parse_feedback_routing "${AGENT_RESULT:-}"; then
+                        emit_event "feedback_routing" '{"spec_issues_routed": true}'
+                    fi
                     # Blind validation (spec-54): additional independent review pass
                     if [ "${FLAG_BLIND_VALIDATION:-false}" = "true" ]; then
                         local blind_spec
