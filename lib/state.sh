@@ -311,7 +311,7 @@ set -euo pipefail
 PROJECT_ROOT="${1:-.}"
 PHASE="${2:-build}"
 ITERATION="${3:-1}"
-AUTOMATON_DIR="$PROJECT_ROOT/.automaton"
+AUTOMATON_DIR="${AUTOMATON_DIR:-$PROJECT_ROOT/.automaton}"
 
 # Dependency check — jq and git are required
 check_dependencies() {
