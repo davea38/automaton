@@ -126,7 +126,7 @@ From audit finding 05 (token waste). Depends on Waves 2+4 for traceability data.
 
 - [x] Split review into tiered passes: (1) Sonnet mechanical pass (tests/lint/typecheck → binary pass/fail), (2) Opus judgment pass only if mechanical passes (WHY: saves Opus tokens on mechanically-failing runs — estimated 40-60% review cost reduction) <!-- test: none -->
 
-- [ ] Implement delta-only review context: include only changed files and related specs via traceability map, not entire codebase (WHY: estimated 30-50% input token reduction — review currently reads everything) <!-- test: none -->
+- [x] Implement delta-only review context: include only changed files and related specs via traceability map, not entire codebase (WHY: estimated 30-50% input token reduction — review currently reads everything) <!-- test: none -->
 
 - [ ] Add QA oscillation detection in `lib/qa.sh`: track failing test sets across iterations, detect if same test fails→fixed→re-fails pattern, escalate instead of retrying (WHY: prevents 2-3 wasted QA cycles when fixes are fighting each other) <!-- test: tests/test_qa_oscillation.sh -->
 

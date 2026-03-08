@@ -122,7 +122,9 @@ This file enables automated regression detection across review iterations. If no
 
 ### Phase 6 — Spec Coverage Analysis
 
-For each spec file in `specs/`:
+**Delta-only context**: The dynamic context below includes the contents of all files changed during the build cycle and any related specs. Start your review from this pre-loaded context — you do NOT need to re-read changed files or related specs that are already included. Only read additional files if you need to verify cross-file dependencies not captured in the delta.
+
+For each spec file in `specs/` (prioritizing specs already included in the delta context):
 1. Read the spec's Requirements and Acceptance Criteria sections.
 2. Search the codebase for the corresponding implementation of each requirement.
 3. Verify each acceptance criterion is actually met by the code, not just claimed in the plan.

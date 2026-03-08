@@ -269,34 +269,9 @@ inject_dynamic_context() {
             fi
         fi
 
-        # Review-specific context: per-task diffs from build iterations (audit wave 4)
+        # Review-specific context: delta-only review with changed files and related specs (audit wave 5)
         if [ "$current_phase" = "review" ]; then
-            local build_files
-            build_files=$(ls "$AUTOMATON_DIR/agents/build-"*.json 2>/dev/null || true)
-            if [ -n "$build_files" ]; then
-                echo "## Per-Task Build Diffs"
-                echo ""
-                echo "Each build iteration's changes (task, commit, diff stat):"
-                echo ""
-                local bfile
-                for bfile in $build_files; do
-                    local b_task b_commit b_diff b_iter
-                    b_iter=$(jq -r '.iteration // "?"' "$bfile" 2>/dev/null || echo "?")
-                    b_task=$(jq -r '.task // "unknown"' "$bfile" 2>/dev/null || echo "unknown")
-                    b_commit=$(jq -r '.git_commit // "none"' "$bfile" 2>/dev/null || echo "none")
-                    b_diff=$(jq -r '.diff_stat // ""' "$bfile" 2>/dev/null || echo "")
-                    echo "### Iteration ${b_iter}: ${b_task}"
-                    echo "Commit: ${b_commit}"
-                    if [ -n "$b_diff" ]; then
-                        echo '```'
-                        echo "$b_diff"
-                        echo '```'
-                    else
-                        echo "_No diff recorded_"
-                    fi
-                    echo ""
-                done
-            fi
+            _inject_delta_review_context
         fi
 
         # Review-specific context: inject QA failure report when available (spec-46.4)
@@ -384,4 +359,167 @@ append_iteration_memory() {
     line_info=$(git diff --stat HEAD~1 2>/dev/null | tail -1 | sed 's/^ *//' || echo "no changes")
 
     echo "[BUILD $phase_iteration] $files_summary: $line_info" >> "$memory_file"
+}
+
+# Injects delta-only review context: per-task diffs, changed file contents,
+# and related specs via traceability map. Replaces full-codebase review with
+# focused context containing only what changed during the build cycle.
+# WHY: Estimated 30-50% input token reduction — review previously had to read
+# the entire codebase; now it receives only changed files and their related specs.
+_inject_delta_review_context() {
+    local build_files
+    build_files=$(ls "$AUTOMATON_DIR/agents/build-"*.json 2>/dev/null || true)
+
+    # --- Per-task build diffs (preserved from audit wave 4) ---
+    if [ -n "$build_files" ]; then
+        echo "## Per-Task Build Diffs"
+        echo ""
+        echo "Each build iteration's changes (task, commit, diff stat):"
+        echo ""
+        local bfile
+        for bfile in $build_files; do
+            local b_task b_commit b_diff b_iter
+            b_iter=$(jq -r '.iteration // "?"' "$bfile" 2>/dev/null || echo "?")
+            b_task=$(jq -r '.task // "unknown"' "$bfile" 2>/dev/null || echo "unknown")
+            b_commit=$(jq -r '.git_commit // "none"' "$bfile" 2>/dev/null || echo "none")
+            b_diff=$(jq -r '.diff_stat // ""' "$bfile" 2>/dev/null || echo "")
+            echo "### Iteration ${b_iter}: ${b_task}"
+            echo "Commit: ${b_commit}"
+            if [ -n "$b_diff" ]; then
+                echo '```'
+                echo "$b_diff"
+                echo '```'
+            else
+                echo "_No diff recorded_"
+            fi
+            echo ""
+        done
+    fi
+
+    # --- Delta-only: collect all changed files across build iterations ---
+    local all_changed_files=""
+    if [ -n "$build_files" ]; then
+        for bfile in $build_files; do
+            local iter_files
+            iter_files=$(jq -r '.files_changed[]? // empty' "$bfile" 2>/dev/null || true)
+            if [ -n "$iter_files" ]; then
+                all_changed_files="${all_changed_files}${iter_files}"$'\n'
+            fi
+        done
+    fi
+
+    # Deduplicate and filter to existing files
+    local unique_files=""
+    if [ -n "$all_changed_files" ]; then
+        unique_files=$(echo "$all_changed_files" | sort -u | while read -r f; do
+            [ -n "$f" ] && [ -f "$f" ] && echo "$f"
+        done)
+    fi
+
+    # --- Emit changed file contents (truncated for large files) ---
+    if [ -n "$unique_files" ]; then
+        local file_count
+        file_count=$(echo "$unique_files" | wc -l | tr -d ' ')
+        echo "## Changed Files (${file_count} files)"
+        echo ""
+        echo "Contents of files modified during the build cycle. Review these for correctness."
+        echo "You do NOT need to read these files separately — they are included below."
+        echo ""
+        local max_lines=200
+        echo "$unique_files" | while read -r filepath; do
+            [ -z "$filepath" ] && continue
+            local line_count
+            line_count=$(wc -l < "$filepath" 2>/dev/null || echo "0")
+            line_count=$(echo "$line_count" | tr -d ' ')
+            echo "### \`${filepath}\` (${line_count} lines)"
+            echo '```'
+            if [ "$line_count" -le "$max_lines" ]; then
+                cat "$filepath"
+            else
+                head -n "$max_lines" "$filepath"
+                echo ""
+                echo "... [truncated — ${line_count} total lines, showing first ${max_lines}]"
+            fi
+            echo '```'
+            echo ""
+        done
+    fi
+
+    # --- Related specs via traceability map ---
+    local traceability_file="$AUTOMATON_DIR/traceability.json"
+    local related_specs=""
+    if [ -f "$traceability_file" ] && [ -n "$unique_files" ]; then
+        # Extract spec references from traceability evidence fields that mention changed files
+        related_specs=$(echo "$unique_files" | while read -r filepath; do
+            [ -z "$filepath" ] && continue
+            jq -r --arg f "$filepath" \
+                '.criteria[]? | select(.evidence | test($f)) | .id | split("-")[1]' \
+                "$traceability_file" 2>/dev/null || true
+        done | sort -u)
+    fi
+
+    # Also extract spec numbers from changed file paths (e.g., test_scope.sh → spec-60)
+    # and from plan task annotations
+    if [ -n "$unique_files" ] && [ -d "specs" ]; then
+        local spec_from_files
+        spec_from_files=$(echo "$unique_files" | while read -r filepath; do
+            [ -z "$filepath" ] && continue
+            # Match spec numbers referenced in the file's first few lines
+            head -n 5 "$filepath" 2>/dev/null | grep -oP 'spec-\d+' | grep -oP '\d+' || true
+        done | sort -u)
+        if [ -n "$spec_from_files" ]; then
+            related_specs=$(printf '%s\n%s' "$related_specs" "$spec_from_files" | sort -u | grep -v '^$')
+        fi
+    fi
+
+    # Emit related spec contents
+    if [ -n "$related_specs" ]; then
+        echo "## Related Specs"
+        echo ""
+        echo "Specs linked to changed files via traceability map or file references."
+        echo "You do NOT need to read these spec files separately — they are included below."
+        echo ""
+        echo "$related_specs" | while read -r spec_num; do
+            [ -z "$spec_num" ] && continue
+            local spec_file
+            # Find spec file matching the number
+            spec_file=$(ls "specs/spec-${spec_num}"*.md 2>/dev/null | head -1)
+            if [ -n "$spec_file" ] && [ -f "$spec_file" ]; then
+                local spec_lines
+                spec_lines=$(wc -l < "$spec_file" | tr -d ' ')
+                echo "### \`${spec_file}\`"
+                echo '```'
+                if [ "$spec_lines" -le 150 ]; then
+                    cat "$spec_file"
+                else
+                    head -n 150 "$spec_file"
+                    echo ""
+                    echo "... [truncated — ${spec_lines} total lines, showing first 150]"
+                fi
+                echo '```'
+                echo ""
+            fi
+        done
+    fi
+
+    # --- Traceability summary if available ---
+    if [ -f "$traceability_file" ]; then
+        echo "## Previous Traceability Results"
+        echo ""
+        local t_pass t_partial t_fail
+        t_pass=$(jq -r '.summary.pass // 0' "$traceability_file" 2>/dev/null || echo "0")
+        t_partial=$(jq -r '.summary.partial // 0' "$traceability_file" 2>/dev/null || echo "0")
+        t_fail=$(jq -r '.summary.fail // 0' "$traceability_file" 2>/dev/null || echo "0")
+        echo "Last traceability check: ${t_pass} pass, ${t_partial} partial, ${t_fail} fail"
+        echo ""
+        # Show failed/partial criteria for focused re-verification
+        local issues
+        issues=$(jq -r '.criteria[]? | select(.status != "pass") | "- **\(.id)** [\(.status)]: \(.evidence)"' \
+            "$traceability_file" 2>/dev/null || true)
+        if [ -n "$issues" ]; then
+            echo "### Items needing re-verification"
+            echo "$issues"
+            echo ""
+        fi
+    fi
 }
