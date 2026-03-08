@@ -44,7 +44,7 @@ This feature enables directory-scoped agent operations, critical for monorepo su
 
 - [x] Update `get_phase_prompt()` in `lib/utilities.sh` to prefix paths with `$AUTOMATON_INSTALL_DIR/` instead of relative paths (WHY: when agent cwd changes to the scoped directory, relative prompt paths break — prompts live alongside automaton.sh, not in the scoped dir) <!-- test: tests/test_scope.sh -->
 
-- [ ] Wrap `claude` invocation in `run_agent()` (`lib/utilities.sh`) with `(cd "$PROJECT_ROOT" && ...)` subshell (WHY: agents must operate within the scoped directory, but the orchestrator must stay at its own cwd to manage state) <!-- test: tests/test_scope.sh -->
+- [x] Wrap `claude` invocation in `run_agent()` (`lib/utilities.sh`) with `(cd "$PROJECT_ROOT" && ...)` subshell (WHY: agents must operate within the scoped directory, but the orchestrator must stay at its own cwd to manage state) <!-- test: tests/test_scope.sh -->
 
 - [ ] Export `AUTOMATON_PROJECT_ROOT="$PROJECT_ROOT"` before agent invocation (WHY: hooks read this environment variable to determine the project root — without it, hooks in scoped mode operate on the wrong directory) <!-- test: tests/test_scope.sh -->
 

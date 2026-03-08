@@ -117,4 +117,17 @@ assert_matches "$(grep 'AUTOMATON_INSTALL_DIR' "$SCRIPT_DIR/../lib/utilities.sh"
 _run_automaton --scope . --dry-run
 assert_equals "0" "$_ra_rc" "--scope . with --dry-run succeeds"
 
+# ============================================================
+# 60.2 — run_agent wraps claude invocation with cd to PROJECT_ROOT
+# ============================================================
+
+# Native agent mode: claude invocation should be wrapped in (cd "$PROJECT_ROOT" ...)
+assert_matches "$(grep -A2 'cd.*PROJECT_ROOT.*&&.*claude' "$SCRIPT_DIR/../lib/utilities.sh" | head -1)" \
+    'cd.*PROJECT_ROOT.*claude' \
+    "run_agent native mode wraps claude with cd to PROJECT_ROOT"
+
+# Legacy mode: both invocations should use the subshell cd pattern
+_cd_count=$(grep -c 'cd.*PROJECT_ROOT.*&&.*claude' "$SCRIPT_DIR/../lib/utilities.sh")
+assert_equals "2" "$_cd_count" "run_agent has cd PROJECT_ROOT wrapper in both native and legacy modes"
+
 test_summary

@@ -524,7 +524,9 @@ run_agent() {
 
         local _tmp_output
         _tmp_output=$(mktemp) || { _stop_progress_spinner "$_spinner_pid"; log "ORCHESTRATOR" "Failed to create temp file"; AGENT_EXIT_CODE=1; return 0; }
-        echo "$dynamic_context" | claude "${cmd_args[@]}" > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
+        # Scope support (spec-60): run agent in PROJECT_ROOT so it operates on
+        # the scoped directory while the orchestrator stays at invocation cwd.
+        echo "$dynamic_context" | (cd "${PROJECT_ROOT:-.}" && claude "${cmd_args[@]}") > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
 
         _stop_progress_spinner "$_spinner_pid"
 
@@ -589,7 +591,9 @@ run_agent() {
     # Error classifiers (is_rate_limit, is_network_error) need stderr to detect failures.
     local _tmp_output
     _tmp_output=$(mktemp) || { _stop_progress_spinner "$_spinner_pid"; log "ORCHESTRATOR" "Failed to create temp file"; AGENT_EXIT_CODE=1; return 0; }
-    cat "$effective_prompt" | claude "${cmd_args[@]}" > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
+    # Scope support (spec-60): run agent in PROJECT_ROOT so it operates on
+    # the scoped directory while the orchestrator stays at invocation cwd.
+    cat "$effective_prompt" | (cd "${PROJECT_ROOT:-.}" && claude "${cmd_args[@]}") > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
 
     _stop_progress_spinner "$_spinner_pid"
 
