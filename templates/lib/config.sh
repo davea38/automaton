@@ -433,6 +433,9 @@ load_config() {
         QA_BLIND_VALIDATION="false"
         QA_MODEL="sonnet"
 
+        # -- tiered review (audit wave 5) --
+        TIERED_REVIEW_ENABLED="true"
+
         # -- critique (spec-47) --
         CRITIQUE_AUTO_PREFLIGHT="false"
         CRITIQUE_BLOCK_ON_ERROR="true"

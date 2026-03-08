@@ -883,6 +883,22 @@ run_orchestration() {
             continue
         fi
 
+        # Tiered review (audit wave 5): run mechanical Sonnet pass first.
+        # If tests/lint/build fail, skip the expensive Opus judgment pass and
+        # return to build with fix tasks already appended by the mechanical agent.
+        if [ "$current_phase" = "review" ] && [ "${TIERED_REVIEW_ENABLED:-true}" = "true" ]; then
+            if ! run_mechanical_review; then
+                review_attempts=$((review_attempts + 1))
+                if [ "$review_attempts" -ge 3 ]; then
+                    escalate "Mechanical review failed after $review_attempts attempts. Human intervention required."
+                fi
+                log "ORCHESTRATOR" "Mechanical review failed ($review_attempts/3). Returning to build."
+                stall_count=0
+                transition_to_phase "build"
+                continue
+            fi
+        fi
+
         log "ORCHESTRATOR" "Phase: $current_phase (max: $([ "$max_iter" -eq 0 ] && echo 'unlimited' || echo "$max_iter"))"
 
         # === Build phase: parallel vs single-builder (spec-14, spec-15, spec-28) ===

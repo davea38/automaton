@@ -361,6 +361,51 @@ check_micro_escalation() {
 }
 
 # ---------------------------------------------------------------------------
+# Tiered Review (audit wave 5)
+# ---------------------------------------------------------------------------
+
+# Runs a mechanical Sonnet review pass (tests/lint/build only).
+# Returns 0 if mechanical checks pass, 1 if they fail.
+# When mechanical checks fail, the Opus judgment pass is skipped entirely,
+# saving significant token cost on mechanically-failing runs.
+#
+# Usage: run_mechanical_review
+# Globals: AGENT_RESULT, AGENT_EXIT_CODE (set by run_agent)
+run_mechanical_review() {
+    local _install_dir="${AUTOMATON_INSTALL_DIR:-.}"
+    local mechanical_prompt="${_install_dir}/PROMPT_review_mechanical.md"
+
+    if [ ! -f "$mechanical_prompt" ]; then
+        log "ORCHESTRATOR" "Mechanical review prompt not found — skipping tiered review"
+        return 0
+    fi
+
+    log "ORCHESTRATOR" "Running mechanical review pass (Sonnet)"
+    emit_event "mechanical_review_start" "{}"
+
+    # Run agent with Sonnet model for cost efficiency
+    run_agent "$mechanical_prompt" "$MODEL_BUILDING"
+
+    if [ "$AGENT_EXIT_CODE" -ne 0 ]; then
+        log "ORCHESTRATOR" "Mechanical review agent failed (exit $AGENT_EXIT_CODE)"
+        emit_event "mechanical_review_end" "{\"result\":\"error\"}"
+        # Agent crash — don't block, let Opus review handle it
+        return 0
+    fi
+
+    # Check if the mechanical review signaled complete (all checks passed)
+    if echo "$AGENT_RESULT" | grep -q '<result status="complete">' 2>/dev/null; then
+        log "ORCHESTRATOR" "Mechanical review PASSED — proceeding to judgment review (Opus)"
+        emit_event "mechanical_review_end" "{\"result\":\"pass\"}"
+        return 0
+    else
+        log "ORCHESTRATOR" "Mechanical review FAILED — skipping Opus judgment review"
+        emit_event "mechanical_review_end" "{\"result\":\"fail\"}"
+        return 1
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # Structured Learnings (spec-34)
 # ---------------------------------------------------------------------------
 
