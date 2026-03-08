@@ -74,7 +74,7 @@ This feature enables directory-scoped agent operations, critical for monorepo su
 
 From audit finding 04-A (bash at scale) and 04-B (shellcheck). No code changes to the orchestrator itself.
 
-- [ ] Create `run_tests.sh` that discovers and runs all `tests/test_*.sh`, counts pass/fail, exits non-zero on failure (WHY: 158 test files exist but no way to run them all at once — this is prerequisite for CI, review gate integration, and self-build validation) <!-- test: none -->
+- [x] Create `run_tests.sh` that discovers and runs all `tests/test_*.sh`, counts pass/fail, exits non-zero on failure (WHY: 158 test files exist but no way to run them all at once — this is prerequisite for CI, review gate integration, and self-build validation) <!-- test: none -->
 
 - [ ] Add `shellcheck automaton.sh lib/*.sh` as a mandatory check in `PROMPT_review.md` (WHY: bash has no type system — shellcheck catches undefined variables, word splitting, and quoting bugs that cause silent failures at 17K lines) <!-- test: none -->
 
