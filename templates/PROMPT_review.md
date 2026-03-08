@@ -89,7 +89,22 @@ Run non-test validation commands from `AGENTS.md`:
 If a command is listed as "N/A" in AGENTS.md, skip it.
 If a command fails to run (not installed, wrong path), note it as an issue but do not block on it.
 
-### Phase 5 — Spec Coverage Analysis
+### Phase 5 — Acceptance Criteria Traceability
+
+For each `AC-XX-Y` item in `IMPLEMENTATION_PLAN.md` (or `.automaton/backlog.md` in self-build mode):
+1. Read the AC description to understand what must be verified.
+2. Search the codebase for the corresponding implementation. Look for the function, endpoint, behavior, or constraint the AC describes.
+3. Rate each AC as one of:
+   - **Pass:** Implementation evidence found — code satisfies the criterion.
+   - **Partial:** Implementation exists but does not fully satisfy the criterion.
+   - **Fail:** No implementation evidence found, or implementation contradicts the criterion.
+4. Record the evidence: file path and line number where the AC is satisfied (or the gap, if not).
+
+If no `AC-XX-Y` items exist in the plan, skip this phase and note that acceptance criteria were not extracted by the planning agent.
+
+**If any AC is rated Fail:** Create a specific fix task for each failed AC (e.g., `[ ] Missing: AC-03-2 — invalid credentials should return 401 but endpoint returns 500`). Do NOT pass the review if critical ACs fail.
+
+### Phase 6 — Spec Coverage Analysis
 
 For each spec file in `specs/`:
 1. Read the spec's Requirements and Acceptance Criteria sections.
@@ -100,16 +115,16 @@ For each spec file in `specs/`:
    - **Partially covered:** Implementation exists but is incomplete or does not fully satisfy the requirement.
    - **Not covered:** No implementation found for this requirement.
 
-### Phase 6 — Code Quality Review
+### Phase 7 — Code Quality Review
 
 Scan the codebase for issues that affect correctness:
 - Missing error handling on external calls (network, file I/O, subprocess)
 - Hardcoded values that should be configurable
 - Security issues (exposed secrets, injection vectors, unsafe permissions)
 
-### Phase 7 — Verdict
+### Phase 8 — Verdict
 
-Evaluate all findings from Phases 1-6.
+Evaluate all findings from Phases 1-7.
 
 **If tests fail:** The review MUST fail. Create fix tasks and do NOT output the complete result signal. Test failures are never acceptable — they must be fixed before the review can pass.
 
@@ -138,6 +153,7 @@ When all checks pass and all spec requirements are covered:
 ```xml
 <result status="complete">
 Specs verified: [count]
+ACs verified: [pass_count]/[total_ac_count] ([ratio]%)
 Tests passed: [yes/no/not applicable]
 Test coverage: [tasks_with_tests]/[total_tasks] ([ratio]%)
 Issues found: [count]

@@ -88,7 +88,7 @@ From audit finding 01 (spec-to-code traceability gap). The #1 gap for hit rate �
 
 - [x] Update `PROMPT_plan.md` (template version) to require acceptance criteria extraction from specs as `AC-XX-Y` items grouped under each spec section in the plan (WHY: without structured acceptance criteria in the plan, the review agent checks "does code work" instead of "does code cover all spec requirements") <!-- test: none -->
 
-- [ ] Add traceability verification pass to `PROMPT_review.md` (template version): "For each AC-XX-Y, verify implementation evidence" before existing code review steps (WHY: creates the feedback loop — review catches requirements that were silently dropped during build) <!-- test: none -->
+- [x] Add traceability verification pass to `PROMPT_review.md` (template version): "For each AC-XX-Y, verify implementation evidence" before existing code review steps (WHY: creates the feedback loop — review catches requirements that were silently dropped during build) <!-- test: none -->
 
 - [ ] Add instruction to `PROMPT_review.md` to generate `.automaton/traceability.json` mapping each AC to pass/fail with evidence (WHY: makes traceability auditable and machine-readable — enables future automated regression detection) <!-- test: none -->
 
