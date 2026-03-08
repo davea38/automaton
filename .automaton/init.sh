@@ -51,9 +51,9 @@ generate_context() {
 
     if [ -f "$plan_file" ]; then
         local next_task total_tasks done_tasks
-        next_task=$(grep -m1 '^\- \[ \]' "$plan_file" | sed 's/^- \[ \] //' || echo "")
-        total_tasks=$(grep -c '^\- \[' "$plan_file" 2>/dev/null || echo 0)
-        done_tasks=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null || echo 0)
+        next_task=$(grep -m1 '^\- \[ \]' "$plan_file" | sed 's/^- \[ \] //' || true)
+        total_tasks=$(grep -c '^\- \[' "$plan_file" 2>/dev/null) || total_tasks=0
+        done_tasks=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null) || done_tasks=0
         manifest=$(echo "$manifest" | jq \
             --arg next "$next_task" \
             --argjson total "$total_tasks" \

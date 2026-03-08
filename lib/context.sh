@@ -17,7 +17,7 @@ _run_bootstrap() {
 
     local script_path="$EXEC_BOOTSTRAP_SCRIPT"
     if [ ! -x "$script_path" ]; then
-        log "ORCHESTRATOR" "Bootstrap script not found or not executable: $script_path"
+        log "ORCHESTRATOR" "Bootstrap script not found or not executable: $script_path" >&2
         return 1
     fi
 
@@ -33,15 +33,17 @@ _run_bootstrap() {
     fi
 
     local manifest="" stderr_file
-    stderr_file=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file for bootstrap"; return 1; }
+    stderr_file=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file for bootstrap" >&2; return 1; }
+    # NOTE: _run_bootstrap runs inside $() in run_agent, so anything on stdout
+    # becomes BOOTSTRAP_MANIFEST. Use >&2 for log calls to avoid polluting it.
     if command -v timeout &>/dev/null; then
         manifest=$(timeout "${timeout_seconds}s" "$script_path" "." "$phase" "$iteration" 2>"$stderr_file") || {
             local stderr_output
             stderr_output=$(cat "$stderr_file")
             rm -f "$stderr_file"
             _bootstrap_record_time "$start_ms"
-            log "ORCHESTRATOR" "Bootstrap failed. Falling back to agent-driven context loading."
-            [ -n "$stderr_output" ] && log "ORCHESTRATOR" "Bootstrap stderr: $stderr_output"
+            log "ORCHESTRATOR" "Bootstrap failed. Falling back to agent-driven context loading." >&2
+            [ -n "$stderr_output" ] && log "ORCHESTRATOR" "Bootstrap stderr: $stderr_output" >&2
             return 1
         }
     else
@@ -50,8 +52,8 @@ _run_bootstrap() {
             stderr_output=$(cat "$stderr_file")
             rm -f "$stderr_file"
             _bootstrap_record_time "$start_ms"
-            log "ORCHESTRATOR" "Bootstrap failed. Falling back to agent-driven context loading."
-            [ -n "$stderr_output" ] && log "ORCHESTRATOR" "Bootstrap stderr: $stderr_output"
+            log "ORCHESTRATOR" "Bootstrap failed. Falling back to agent-driven context loading." >&2
+            [ -n "$stderr_output" ] && log "ORCHESTRATOR" "Bootstrap stderr: $stderr_output" >&2
             return 1
         }
     fi
@@ -60,14 +62,14 @@ _run_bootstrap() {
     # Validate JSON
     if ! echo "$manifest" | jq empty 2>/dev/null; then
         _bootstrap_record_time "$start_ms"
-        log "ORCHESTRATOR" "Bootstrap produced invalid JSON. Falling back to agent-driven context loading."
+        log "ORCHESTRATOR" "Bootstrap produced invalid JSON. Falling back to agent-driven context loading." >&2
         return 1
     fi
 
     # Check for error field in manifest
     if echo "$manifest" | jq -e '.error' &>/dev/null; then
         _bootstrap_record_time "$start_ms"
-        log "ORCHESTRATOR" "Bootstrap error: $(echo "$manifest" | jq -r '.error')"
+        log "ORCHESTRATOR" "Bootstrap error: $(echo "$manifest" | jq -r '.error')" >&2
         return 1
     fi
 
@@ -82,7 +84,7 @@ _run_bootstrap() {
         elapsed_s=$(awk -v ms="$BOOTSTRAP_TIME_MS" 'BEGIN { printf "%.1f", ms / 1000 }')
         local target_s
         target_s=$(awk -v ms="$target_ms" 'BEGIN { printf "%.1f", ms / 1000 }')
-        log "ORCHESTRATOR" "WARNING: Bootstrap took ${elapsed_s}s (target: <${target_s}s). Consider optimizing init.sh."
+        log "ORCHESTRATOR" "WARNING: Bootstrap took ${elapsed_s}s (target: <${target_s}s). Consider optimizing init.sh." >&2
     fi
 
     # Persist metrics to file so they survive the $() subshell boundary.
@@ -147,7 +149,11 @@ _format_bootstrap_for_context() {
     echo "## Bootstrap Manifest"
     echo "<!-- Pre-assembled by init.sh — do NOT re-read these files -->"
     echo '```json'
-    echo "$manifest" | jq .
+    if echo "$manifest" | jq empty 2>/dev/null; then
+        echo "$manifest" | jq .
+    else
+        echo "$manifest"
+    fi
     echo '```'
     echo ""
 }

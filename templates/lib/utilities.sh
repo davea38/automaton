@@ -432,6 +432,37 @@ run_guardrails() {
     return 0
 }
 
+_start_progress_spinner() {
+    local phase="$1" iteration="$2" model="$3"
+    local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+    local i=0 elapsed=0
+    while true; do
+        local c="${spin_chars:$((i % ${#spin_chars})):1}"
+        printf "\r  %s  [%s] %s iter %s  (%s)  %ds elapsed..." "$c" "$model" "$phase" "$iteration" "agent running" "$elapsed" >&2
+        sleep 1
+        elapsed=$((elapsed + 1))
+        i=$((i + 1))
+    done
+}
+
+_stop_progress_spinner() {
+    local pid="$1"
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+        kill "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null || true
+    fi
+    printf "\r\033[K" >&2
+}
+
+_save_agent_log() {
+    local output_file="$1" phase="$2" iteration="$3"
+    local logs_dir="${AUTOMATON_DIR}/logs"
+    mkdir -p "$logs_dir"
+    local log_name="agent_${phase}_iter${iteration}_$(date +%s).log"
+    cp "$output_file" "$logs_dir/$log_name"
+    log "ORCHESTRATOR" "Agent output saved to $logs_dir/$log_name"
+}
+
 run_agent() {
     local prompt_file="$1"
     local model="$2"
@@ -487,11 +518,22 @@ run_agent() {
         AGENT_RESULT=""
         AGENT_EXIT_CODE=0
 
+        # Start progress spinner so the terminal shows activity
+        _start_progress_spinner "$current_phase" "$phase_iteration" "$model" &
+        local _spinner_pid=$!
+
         local _tmp_output
-        _tmp_output=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file"; AGENT_EXIT_CODE=1; return 0; }
+        _tmp_output=$(mktemp) || { _stop_progress_spinner "$_spinner_pid"; log "ORCHESTRATOR" "Failed to create temp file"; AGENT_EXIT_CODE=1; return 0; }
         echo "$dynamic_context" | claude "${cmd_args[@]}" > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
+
+        _stop_progress_spinner "$_spinner_pid"
+
         local _phase_hint="${prompt_file##*/PROMPT_}"
         _phase_hint="${_phase_hint%.md}"
+
+        # Always save agent output to logs for debugging
+        _save_agent_log "$_tmp_output" "$_phase_hint" "${phase_iteration:-0}"
+
         AGENT_RESULT=$(truncate_output "$_tmp_output" "$_phase_hint" "${CURRENT_ITERATION:-0}")
         rm -f "$_tmp_output"
 
@@ -538,14 +580,25 @@ run_agent() {
     AGENT_RESULT=""
     AGENT_EXIT_CODE=0
 
+    # Start progress spinner so the terminal shows activity
+    _start_progress_spinner "$current_phase" "$phase_iteration" "$model" &
+    local _spinner_pid=$!
+
     # Capture stdout (stream-json) and stderr (errors, verbose logs) together.
     # extract_tokens() greps for "type":"result" lines so stderr noise is harmless.
     # Error classifiers (is_rate_limit, is_network_error) need stderr to detect failures.
     local _tmp_output
-    _tmp_output=$(mktemp) || { log "ORCHESTRATOR" "Failed to create temp file"; AGENT_EXIT_CODE=1; return 0; }
+    _tmp_output=$(mktemp) || { _stop_progress_spinner "$_spinner_pid"; log "ORCHESTRATOR" "Failed to create temp file"; AGENT_EXIT_CODE=1; return 0; }
     cat "$effective_prompt" | claude "${cmd_args[@]}" > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
+
+    _stop_progress_spinner "$_spinner_pid"
+
     local _phase_hint="${prompt_file##*/PROMPT_}"
     _phase_hint="${_phase_hint%.md}"
+
+    # Always save agent output to logs for debugging
+    _save_agent_log "$_tmp_output" "$_phase_hint" "${phase_iteration:-0}"
+
     AGENT_RESULT=$(truncate_output "$_tmp_output" "$_phase_hint" "${CURRENT_ITERATION:-0}")
     rm -f "$_tmp_output"
 
