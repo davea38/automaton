@@ -86,7 +86,7 @@ From audit finding 04-A (bash at scale) and 04-B (shellcheck). No code changes t
 
 From audit finding 01 (spec-to-code traceability gap). The #1 gap for hit rate — requirements can be silently dropped without detection.
 
-- [ ] Update `PROMPT_plan.md` (template version) to require acceptance criteria extraction from specs as `AC-XX-Y` items grouped under each spec section in the plan (WHY: without structured acceptance criteria in the plan, the review agent checks "does code work" instead of "does code cover all spec requirements") <!-- test: none -->
+- [x] Update `PROMPT_plan.md` (template version) to require acceptance criteria extraction from specs as `AC-XX-Y` items grouped under each spec section in the plan (WHY: without structured acceptance criteria in the plan, the review agent checks "does code work" instead of "does code cover all spec requirements") <!-- test: none -->
 
 - [ ] Add traceability verification pass to `PROMPT_review.md` (template version): "For each AC-XX-Y, verify implementation evidence" before existing code review steps (WHY: creates the feedback loop — review catches requirements that were silently dropped during build) <!-- test: none -->
 
