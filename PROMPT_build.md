@@ -83,6 +83,12 @@ Before writing any code, study the existing codebase related to this task. Do NO
 
 ### Phase 3 — Implement
 
+Before writing code, search for pre-existing test skeletons related to the current task. Look for test files containing `assert_fail "Not yet implemented"` stubs that correspond to the acceptance criteria you are implementing. When skeletons exist:
+- Read the skeleton tests to understand the expected behavior and interface.
+- Implement production code to make the skeleton tests pass.
+- Do NOT modify skeleton test assertions — they define the contract. Fix your implementation to match the tests, not the other way around.
+- If a skeleton test is genuinely wrong (tests an incorrect assumption from the spec), note it in the plan as a fix-test task instead of changing it.
+
 Implement the task completely. No placeholders. No TODO comments. No partial work. If the task is too large, implement the most critical part and note the remainder in the plan.
 
 ### Phase 4 — Validate
