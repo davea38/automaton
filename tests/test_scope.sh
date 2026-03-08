@@ -130,4 +130,17 @@ assert_matches "$(grep -A2 'cd.*PROJECT_ROOT.*&&.*claude' "$SCRIPT_DIR/../lib/ut
 _cd_count=$(grep -c 'cd.*PROJECT_ROOT.*&&.*claude' "$SCRIPT_DIR/../lib/utilities.sh")
 assert_equals "2" "$_cd_count" "run_agent has cd PROJECT_ROOT wrapper in both native and legacy modes"
 
+# ============================================================
+# 60.2 — AUTOMATON_PROJECT_ROOT exported before agent invocation
+# ============================================================
+
+# Export should appear before both claude invocations
+_export_count=$(grep -c 'export AUTOMATON_PROJECT_ROOT=' "$SCRIPT_DIR/../lib/utilities.sh")
+assert_equals "2" "$_export_count" "AUTOMATON_PROJECT_ROOT exported in both native and legacy modes"
+
+# Export should reference PROJECT_ROOT variable
+assert_matches "$(grep 'export AUTOMATON_PROJECT_ROOT=' "$SCRIPT_DIR/../lib/utilities.sh" | head -1)" \
+    'export AUTOMATON_PROJECT_ROOT=.*PROJECT_ROOT' \
+    "AUTOMATON_PROJECT_ROOT is derived from PROJECT_ROOT"
+
 test_summary

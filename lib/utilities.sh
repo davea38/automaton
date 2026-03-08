@@ -515,6 +515,10 @@ run_agent() {
 
         log "ORCHESTRATOR" "Invoking native agent: name=$agent_name model=$model"
 
+        # Scope support (spec-60): export PROJECT_ROOT so hooks can determine
+        # which directory the agent is operating in.
+        export AUTOMATON_PROJECT_ROOT="${PROJECT_ROOT:-.}"
+
         AGENT_RESULT=""
         AGENT_EXIT_CODE=0
 
@@ -578,6 +582,10 @@ run_agent() {
     fi
 
     log "ORCHESTRATOR" "Invoking agent: model=$model prompt=$effective_prompt"
+
+    # Scope support (spec-60): export PROJECT_ROOT so hooks can determine
+    # which directory the agent is operating in.
+    export AUTOMATON_PROJECT_ROOT="${PROJECT_ROOT:-.}"
 
     AGENT_RESULT=""
     AGENT_EXIT_CODE=0

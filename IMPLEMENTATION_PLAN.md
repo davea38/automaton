@@ -46,7 +46,7 @@ This feature enables directory-scoped agent operations, critical for monorepo su
 
 - [x] Wrap `claude` invocation in `run_agent()` (`lib/utilities.sh`) with `(cd "$PROJECT_ROOT" && ...)` subshell (WHY: agents must operate within the scoped directory, but the orchestrator must stay at its own cwd to manage state) <!-- test: tests/test_scope.sh -->
 
-- [ ] Export `AUTOMATON_PROJECT_ROOT="$PROJECT_ROOT"` before agent invocation (WHY: hooks read this environment variable to determine the project root — without it, hooks in scoped mode operate on the wrong directory) <!-- test: tests/test_scope.sh -->
+- [x] Export `AUTOMATON_PROJECT_ROOT="$PROJECT_ROOT"` before agent invocation (WHY: hooks read this environment variable to determine the project root — without it, hooks in scoped mode operate on the wrong directory) <!-- test: tests/test_scope.sh -->
 
 ### 60.3 Parallel Mode & Bootstrap
 
