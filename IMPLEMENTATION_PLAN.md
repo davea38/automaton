@@ -128,7 +128,7 @@ From audit finding 05 (token waste). Depends on Waves 2+4 for traceability data.
 
 - [x] Implement delta-only review context: include only changed files and related specs via traceability map, not entire codebase (WHY: estimated 30-50% input token reduction — review currently reads everything) <!-- test: none -->
 
-- [ ] Add QA oscillation detection in `lib/qa.sh`: track failing test sets across iterations, detect if same test fails→fixed→re-fails pattern, escalate instead of retrying (WHY: prevents 2-3 wasted QA cycles when fixes are fighting each other) <!-- test: tests/test_qa_oscillation.sh -->
+- [x] Add QA oscillation detection in `lib/qa.sh`: track failing test sets across iterations, detect if same test fails→fixed→re-fails pattern, escalate instead of retrying (WHY: prevents 2-3 wasted QA cycles when fixes are fighting each other) <!-- test: tests/test_qa_oscillation.sh -->
 
 ---
 
