@@ -1524,3 +1524,217 @@ parse_feedback_routing() {
     log "ORCHESTRATOR" "Feedback routing: $count spec-level issue(s) written to spec-amendments.json"
     return 0
 }
+
+# Parses build agent output for spec amendment proposals.
+# Expects a <spec_amendment> block with lines like:
+#   spec_id: spec-XX
+#   description: what's wrong with the spec
+#   proposed: the proposed change
+#
+# Writes proposals to .automaton/spec-amendments.json with status "proposed".
+# Args: $1 = build output text
+# Returns: 0 if amendments found, 1 if none found.
+parse_build_amendments() {
+    local build_output="$1"
+
+    local block
+    block=$(echo "$build_output" | sed -n '/<spec_amendment>/,/<\/spec_amendment>/p')
+    if [ -z "$block" ]; then
+        return 1
+    fi
+
+    local amendments_file="${AUTOMATON_DIR}/spec-amendments.json"
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")
+
+    local existing="[]"
+    if [ -f "$amendments_file" ]; then
+        existing=$(jq '.proposals // []' "$amendments_file" 2>/dev/null || echo "[]")
+    fi
+
+    local count=0
+    local new_proposals="$existing"
+    local current_spec="" current_desc="" current_prop=""
+
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*spec_id:[[:space:]]*(.+) ]]; then
+            current_spec=$(echo "${BASH_REMATCH[1]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        elif [[ "$line" =~ ^[[:space:]]*description:[[:space:]]*(.+) ]]; then
+            current_desc=$(echo "${BASH_REMATCH[1]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        elif [[ "$line" =~ ^[[:space:]]*proposed:[[:space:]]*(.+) ]]; then
+            current_prop=$(echo "${BASH_REMATCH[1]}" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        fi
+
+        if [ -n "$current_spec" ] && [ -n "$current_desc" ] && [ -n "$current_prop" ]; then
+            new_proposals=$(echo "$new_proposals" | jq --arg sid "$current_spec" \
+                --arg desc "$current_desc" --arg prop "$current_prop" \
+                --arg ts "$timestamp" --arg status "proposed" --arg src "build" \
+                '. + [{"spec_id": $sid, "description": $desc, "proposed_amendment": $prop, "status": $status, "source": $src, "created_at": $ts}]')
+            count=$((count + 1))
+            current_spec="" current_desc="" current_prop=""
+        fi
+    done <<< "$block"
+
+    if [ "$count" -eq 0 ]; then
+        return 1
+    fi
+
+    jq -n --argjson proposals "$new_proposals" --arg ts "$timestamp" \
+        '{"updated_at": $ts, "proposals": $proposals}' > "$amendments_file"
+
+    log "ORCHESTRATOR" "Build amendments: $count proposal(s) written to spec-amendments.json"
+    return 0
+}
+
+# Parses review agent output for amendment evaluations.
+# Expects an <amendment_evaluation> block with lines like:
+#   approve: spec-XX | reason
+#   reject: spec-XX | reason
+#
+# Updates status of matching proposals in spec-amendments.json.
+# Args: $1 = review output text
+# Returns: 0 if evaluations found, 1 if none found.
+parse_amendment_evaluations() {
+    local review_output="$1"
+
+    local block
+    block=$(echo "$review_output" | sed -n '/<amendment_evaluation>/,/<\/amendment_evaluation>/p')
+    if [ -z "$block" ]; then
+        return 1
+    fi
+
+    local amendments_file="${AUTOMATON_DIR}/spec-amendments.json"
+    if [ ! -f "$amendments_file" ]; then
+        return 1
+    fi
+
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")
+    local count=0
+
+    while IFS= read -r line; do
+        local action="" spec_id="" reason=""
+        if [[ "$line" =~ ^[[:space:]]*approve:[[:space:]]*(.+) ]]; then
+            action="approved"
+            local content="${BASH_REMATCH[1]}"
+            spec_id=$(echo "$content" | cut -d'|' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            reason=$(echo "$content" | cut -d'|' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        elif [[ "$line" =~ ^[[:space:]]*reject:[[:space:]]*(.+) ]]; then
+            action="rejected"
+            local content="${BASH_REMATCH[1]}"
+            spec_id=$(echo "$content" | cut -d'|' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+            reason=$(echo "$content" | cut -d'|' -f2- | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+        fi
+
+        if [ -n "$action" ] && [ -n "$spec_id" ]; then
+            # Update the first matching proposed amendment for this spec
+            local updated
+            updated=$(jq --arg sid "$spec_id" --arg act "$action" --arg reason "$reason" \
+                --arg ts "$timestamp" \
+                '(.proposals | to_entries | map(select(.value.spec_id == $sid and .value.status == "proposed")) | first // empty) as $match |
+                 if $match then .proposals[$match.key].status = $act | .proposals[$match.key].evaluated_at = $ts | .proposals[$match.key].evaluation_reason = $reason
+                 else . end | .updated_at = $ts' "$amendments_file")
+            if [ -n "$updated" ]; then
+                echo "$updated" > "$amendments_file"
+                count=$((count + 1))
+            fi
+        fi
+    done <<< "$block"
+
+    if [ "$count" -eq 0 ]; then
+        return 1
+    fi
+
+    log "ORCHESTRATOR" "Amendment evaluation: $count proposal(s) evaluated"
+    return 0
+}
+
+# Applies approved amendments to spec files.
+# Reads spec-amendments.json, finds entries with status "approved",
+# appends the proposed amendment text to the corresponding spec file,
+# and marks the amendment as "applied".
+#
+# Returns: 0 if amendments applied, 1 if none to apply.
+apply_approved_amendments() {
+    local amendments_file="${AUTOMATON_DIR}/spec-amendments.json"
+    if [ ! -f "$amendments_file" ]; then
+        return 1
+    fi
+
+    local approved_count
+    approved_count=$(jq '[.proposals[] | select(.status == "approved")] | length' "$amendments_file" 2>/dev/null || echo "0")
+
+    if [ "$approved_count" -eq 0 ]; then
+        return 1
+    fi
+
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")
+    local applied=0
+
+    # Process each approved amendment
+    local indices
+    indices=$(jq -r '[.proposals | to_entries[] | select(.value.status == "approved") | .key] | .[]' "$amendments_file" 2>/dev/null)
+
+    for idx in $indices; do
+        local spec_id proposed_text
+        spec_id=$(jq -r ".proposals[$idx].spec_id" "$amendments_file")
+        proposed_text=$(jq -r ".proposals[$idx].proposed_amendment" "$amendments_file")
+
+        if [ -z "$spec_id" ] || [ -z "$proposed_text" ]; then
+            continue
+        fi
+
+        # Find the spec file
+        local spec_file
+        spec_file=$(find specs/ -name "${spec_id}*.md" -type f 2>/dev/null | head -1)
+
+        if [ -n "$spec_file" ]; then
+            # Append amendment to spec file
+            printf '\n\n## Amendment (%s)\n\n%s\n' "$timestamp" "$proposed_text" >> "$spec_file"
+            log "ORCHESTRATOR" "Applied amendment to $spec_file: $proposed_text"
+            applied=$((applied + 1))
+        else
+            log "ORCHESTRATOR" "WARNING: Spec file not found for $spec_id — amendment not applied to file"
+        fi
+
+        # Mark as applied
+        local updated
+        updated=$(jq --argjson idx "$idx" --arg ts "$timestamp" \
+            '.proposals[$idx].status = "applied" | .proposals[$idx].applied_at = $ts | .updated_at = $ts' \
+            "$amendments_file")
+        echo "$updated" > "$amendments_file"
+    done
+
+    if [ "$applied" -gt 0 ]; then
+        log "ORCHESTRATOR" "Living spec amendments: $applied amendment(s) applied to spec files"
+    fi
+    return 0
+}
+
+# Returns pending amendment proposals as text for injection into review context.
+# Used to give the review agent visibility into proposed amendments.
+# Returns: pending amendments text on stdout, or empty if none.
+get_pending_amendments_context() {
+    local amendments_file="${AUTOMATON_DIR}/spec-amendments.json"
+    if [ ! -f "$amendments_file" ]; then
+        return
+    fi
+
+    local pending_count
+    pending_count=$(jq '[.proposals[] | select(.status == "proposed")] | length' "$amendments_file" 2>/dev/null || echo "0")
+
+    if [ "$pending_count" -eq 0 ]; then
+        return
+    fi
+
+    echo "## Pending Spec Amendment Proposals"
+    echo ""
+    echo "The following spec amendments have been proposed and need your evaluation."
+    echo "For each proposal, output an <amendment_evaluation> block with approve/reject decisions."
+    echo ""
+
+    jq -r '.proposals | to_entries[] | select(.value.status == "proposed") |
+        "### Proposal \(.key + 1): \(.value.spec_id)\n- **Issue:** \(.value.description)\n- **Proposed change:** \(.value.proposed_amendment)\n- **Source:** \(.value.source // "review")\n"' \
+        "$amendments_file" 2>/dev/null
+}
