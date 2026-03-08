@@ -334,6 +334,32 @@ RESEOF
     return 0
 }
 
+# Checks if micro-validation has failed enough consecutive times to force
+# a transition to review phase. Returns 1 if consecutive_failures >= 2.
+#
+# Returns: 0 = no escalation needed, 1 = force transition to review
+check_micro_escalation() {
+    if [ "${MICRO_VALIDATION_ENABLED:-false}" != "true" ]; then
+        return 0
+    fi
+
+    local result_file="${AUTOMATON_DIR:-.automaton}/micro_validation_last.json"
+    if [ ! -f "$result_file" ]; then
+        return 0
+    fi
+
+    local consecutive_failures
+    consecutive_failures=$(jq -r '.consecutive_failures // 0' "$result_file" 2>/dev/null || echo 0)
+
+    if [ "$consecutive_failures" -ge 2 ] 2>/dev/null; then
+        log "ORCHESTRATOR" "Micro-validation: $consecutive_failures consecutive failures — forcing review"
+        emit_event "micro_escalation" "{\"consecutive_failures\":$consecutive_failures}"
+        return 1
+    fi
+
+    return 0
+}
+
 # ---------------------------------------------------------------------------
 # Structured Learnings (spec-34)
 # ---------------------------------------------------------------------------

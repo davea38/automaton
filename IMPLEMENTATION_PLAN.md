@@ -116,7 +116,7 @@ From audit finding 02 (missing incremental verification). Adds per-task validati
 
 - [x] Track `git diff --stat` per iteration in `.automaton/agents/` and provide per-task diffs to review agent (WHY: review currently gets one giant diff — per-task breakdown reduces review context size and improves accuracy) <!-- test: none -->
 
-- [ ] Add early escalation: if micro-validation fails 2 consecutive tasks, force transition to review phase (WHY: extends existing stall detection — continuing to build on top of broken tasks wastes tokens) <!-- test: tests/test_micro_validation.sh -->
+- [x] Add early escalation: if micro-validation fails 2 consecutive tasks, force transition to review phase (WHY: extends existing stall detection — continuing to build on top of broken tasks wastes tokens) <!-- test: tests/test_micro_validation.sh -->
 
 ---
 

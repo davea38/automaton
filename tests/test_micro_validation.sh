@@ -180,4 +180,74 @@ run_micro_validation "pass_now" "tests/t.sh"
 count=$(jq -r '.consecutive_failures' "$AUTOMATON_DIR/micro_validation_last.json")
 assert_equals "0" "$count" "PASS resets consecutive_failures to 0"
 
+# ============================================================
+# Test 10: check_micro_escalation returns 1 when consecutive_failures >= 2
+# ============================================================
+setup_micro_test
+# Write a result file with 2 consecutive failures
+cat > "$AUTOMATON_DIR/micro_validation_last.json" <<'ESCEOF'
+{
+  "task": "failing task",
+  "verdict": "FAIL",
+  "iteration": 2,
+  "consecutive_failures": 2,
+  "timestamp": "2026-01-01T00:00:00Z"
+}
+ESCEOF
+
+check_micro_escalation
+rc=$?
+
+assert_equals "1" "$rc" "check_micro_escalation returns 1 when consecutive_failures >= 2"
+
+# ============================================================
+# Test 11: check_micro_escalation returns 0 when consecutive_failures < 2
+# ============================================================
+setup_micro_test
+cat > "$AUTOMATON_DIR/micro_validation_last.json" <<'ESCEOF2'
+{
+  "task": "one fail",
+  "verdict": "FAIL",
+  "iteration": 1,
+  "consecutive_failures": 1,
+  "timestamp": "2026-01-01T00:00:00Z"
+}
+ESCEOF2
+
+check_micro_escalation
+rc=$?
+
+assert_equals "0" "$rc" "check_micro_escalation returns 0 when consecutive_failures < 2"
+
+# ============================================================
+# Test 12: check_micro_escalation returns 0 when no result file exists
+# ============================================================
+setup_micro_test
+# No micro_validation_last.json exists
+
+check_micro_escalation
+rc=$?
+
+assert_equals "0" "$rc" "check_micro_escalation returns 0 when no result file"
+
+# ============================================================
+# Test 13: check_micro_escalation returns 0 when disabled
+# ============================================================
+setup_micro_test
+MICRO_VALIDATION_ENABLED="false"
+cat > "$AUTOMATON_DIR/micro_validation_last.json" <<'ESCEOF3'
+{
+  "task": "fail",
+  "verdict": "FAIL",
+  "iteration": 3,
+  "consecutive_failures": 3,
+  "timestamp": "2026-01-01T00:00:00Z"
+}
+ESCEOF3
+
+check_micro_escalation
+rc=$?
+
+assert_equals "0" "$rc" "check_micro_escalation returns 0 when disabled"
+
 test_summary

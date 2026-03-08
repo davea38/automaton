@@ -634,6 +634,8 @@ post_iteration() {
 
         # Post-task micro-validation: lightweight Sonnet check (audit wave 4)
         run_micro_validation "$task_desc" "" || micro_rc=$?
+        # Early escalation: 2+ consecutive micro-validation failures → review
+        check_micro_escalation || micro_rc=$?
 
         # Periodic persistent state checkpoint every 5 build iterations (spec-34)
         if [ "$phase_iteration" -gt 0 ] && [ $((phase_iteration % 5)) -eq 0 ]; then
@@ -677,6 +679,10 @@ post_iteration() {
     fi
     if [ "$test_fail_rc" -ne 0 ]; then
         TRANSITION_REASON="test_failure"
+        return 1
+    fi
+    if [ "$micro_rc" -ne 0 ]; then
+        TRANSITION_REASON="micro_validation_failure"
         return 1
     fi
     if [ "$budget_rc" -ne 0 ]; then
