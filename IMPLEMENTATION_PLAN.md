@@ -124,7 +124,7 @@ From audit finding 02 (missing incremental verification). Adds per-task validati
 
 From audit finding 05 (token waste). Depends on Waves 2+4 for traceability data.
 
-- [ ] Split review into tiered passes: (1) Sonnet mechanical pass (tests/lint/typecheck → binary pass/fail), (2) Opus judgment pass only if mechanical passes (WHY: saves Opus tokens on mechanically-failing runs — estimated 40-60% review cost reduction) <!-- test: none -->
+- [x] Split review into tiered passes: (1) Sonnet mechanical pass (tests/lint/typecheck → binary pass/fail), (2) Opus judgment pass only if mechanical passes (WHY: saves Opus tokens on mechanically-failing runs — estimated 40-60% review cost reduction) <!-- test: none -->
 
 - [ ] Implement delta-only review context: include only changed files and related specs via traceability map, not entire codebase (WHY: estimated 30-50% input token reduction — review currently reads everything) <!-- test: none -->
 
