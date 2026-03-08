@@ -52,7 +52,7 @@ This feature enables directory-scoped agent operations, critical for monorepo su
 
 - [x] Update `spawn_builders()` in `lib/parallel.sh` to use `${PROJECT_ROOT:-$(pwd)}` instead of `$(pwd)` (WHY: parallel builders must inherit the scoped directory, not the orchestrator's cwd) <!-- test: tests/test_scope.sh -->
 
-- [ ] Update `generate_builder_wrapper()` in `lib/parallel.sh` to bake in `AUTOMATON_INSTALL_DIR` and absolute `AUTOMATON_DIR` as template placeholders (WHY: standalone wrapper scripts can't inherit shell state — they need hard-coded paths to find prompts and state files) <!-- test: tests/test_scope.sh -->
+- [x] Update `generate_builder_wrapper()` in `lib/parallel.sh` to bake in `AUTOMATON_INSTALL_DIR` and absolute `AUTOMATON_DIR` as template placeholders (WHY: standalone wrapper scripts can't inherit shell state — they need hard-coded paths to find prompts and state files) <!-- test: tests/test_scope.sh -->
 
 - [ ] Update `generate_bootstrap_script()` template in `lib/state.sh` to read `AUTOMATON_DIR` from environment with fallback: `AUTOMATON_DIR="${AUTOMATON_DIR:-$PROJECT_ROOT/.automaton}"` (WHY: backward-compatible — when AUTOMATON_DIR isn't exported, the old derivation still works; when scoped, it uses the correct absolute path) <!-- test: tests/test_scope.sh -->
 

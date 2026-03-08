@@ -727,10 +727,12 @@ SKIP_PERMS_FLAG="__SKIP_PERMS_FLAG__"
 VERBOSE_FLAG="__VERBOSE_FLAG__"
 PER_BUILDER_TPM="__PER_BUILDER_TPM__"
 PER_BUILDER_RPM="__PER_BUILDER_RPM__"
+AUTOMATON_INSTALL_DIR="__AUTOMATON_INSTALL_DIR__"
+AUTOMATON_DIR="__AUTOMATON_DIR__"
 
 # ---- Derived paths ----
-ASSIGNMENTS_FILE="$PROJECT_ROOT/.automaton/wave/assignments.json"
-RESULT_FILE="$PROJECT_ROOT/.automaton/wave/results/builder-${BUILDER_NUM}.json"
+ASSIGNMENTS_FILE="$AUTOMATON_DIR/wave/assignments.json"
+RESULT_FILE="$AUTOMATON_DIR/wave/results/builder-${BUILDER_NUM}.json"
 
 # ---- Read assignment from assignments.json ----
 assignment=$(jq ".assignments[$((BUILDER_NUM - 1))]" "$ASSIGNMENTS_FILE")
@@ -743,7 +745,7 @@ files_owned=$(echo "$assignment" | jq -r '.files_owned | join(", ")')
 # <dynamic_context>) so the cache entry created by builder-1 is reused by
 # builders 2..N, saving 90% on input tokens for subsequent builders.
 PROMPT_FILE=$(mktemp) || { echo "Failed to create temp file" >&2; exit 1; }
-BUILD_PROMPT="$PROJECT_ROOT/PROMPT_build.md"
+BUILD_PROMPT="$AUTOMATON_INSTALL_DIR/PROMPT_build.md"
 
 # Static prefix: everything up to and including <dynamic_context>
 sed -n '1,/<dynamic_context>/p' "$BUILD_PROMPT" > "$PROMPT_FILE"
@@ -794,7 +796,7 @@ _OUT_MAX=200; _OUT_HEAD=50; _OUT_TAIL=150
 if [ "$_total_lines" -le "$_OUT_MAX" ]; then
     AGENT_RESULT=$(cat "$_tmp_output")
 else
-    _logs_dir="$PROJECT_ROOT/.automaton/logs"
+    _logs_dir="$AUTOMATON_DIR/logs"
     mkdir -p "$_logs_dir"
     cp "$_tmp_output" "$_logs_dir/output_build_${BUILDER_NUM}_$(date +%s).log"
     _trunc=$((_total_lines - _OUT_HEAD - _OUT_TAIL))
@@ -870,6 +872,8 @@ WRAPPER
     sed -i "s|__VERBOSE_FLAG__|${verbose_flag}|g" "$wrapper"
     sed -i "s|__PER_BUILDER_TPM__|${PER_BUILDER_TPM:-0}|g" "$wrapper"
     sed -i "s|__PER_BUILDER_RPM__|${PER_BUILDER_RPM:-0}|g" "$wrapper"
+    sed -i "s|__AUTOMATON_INSTALL_DIR__|${AUTOMATON_INSTALL_DIR}|g" "$wrapper"
+    sed -i "s|__AUTOMATON_DIR__|${AUTOMATON_DIR}|g" "$wrapper"
 
     chmod +x "$wrapper"
     log "CONDUCTOR" "Generated builder wrapper: $wrapper"
