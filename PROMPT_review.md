@@ -140,15 +140,38 @@ Scan the codebase for issues that affect correctness:
 - Hardcoded values that should be configurable
 - Security issues (exposed secrets, injection vectors, unsafe permissions)
 
-### Phase 8 — Verdict
+### Phase 8 — Confidence Scoring & Verdict
 
-Evaluate all findings from Phases 1-7.
+Evaluate all findings from Phases 1-7. Rate your confidence across four dimensions on a 1-5 scale:
+
+| Dimension | What it measures | 1 (low) | 5 (high) |
+|-----------|-----------------|---------|----------|
+| **spec_coverage** | How completely specs are implemented | Major requirements missing | All requirements verified with evidence |
+| **test_quality** | Test coverage and meaningfulness | No tests or trivial tests | Comprehensive tests covering edge cases |
+| **code_quality** | Correctness, security, error handling | Critical bugs or security issues | Clean, correct, well-structured code |
+| **regression_risk** | Likelihood of regressions | High coupling, no guards | Isolated changes, good test coverage |
+
+**Always output the confidence block** in your response, even when the review fails:
+
+```
+<confidence>
+spec_coverage: [1-5]
+test_quality: [1-5]
+code_quality: [1-5]
+regression_risk: [1-5]
+</confidence>
+```
+
+**Threshold rules:**
+- All scores ≥ 4: review can pass (output the complete result signal)
+- Any score = 3: borderline — pass with warnings noted
+- Any score < 3: review MUST fail — create specific tasks to address the low-confidence dimension
 
 **If tests fail:** The review MUST fail. Create fix tasks and do NOT output the complete result signal. Test failures are never acceptable — they must be fixed before the review can pass.
 
 **If all checks pass** (all tests pass, spec requirements are covered, no critical issues):
 - Summarize what was verified, including test coverage ratio.
-- Output the result signal shown in the Output Format section.
+- Output the confidence block and the result signal shown in the Output Format section.
 
 **If non-test checks fail** (lint errors, missing spec coverage, critical quality issues):
 - Append new `[ ]` tasks to `IMPLEMENTATION_PLAN.md` (or `.automaton/backlog.md` in self-build mode) for each failure. Use these formats:
@@ -168,6 +191,15 @@ Evaluate all findings from Phases 1-7.
 
 When all checks pass and all spec requirements are covered:
 
+```
+<confidence>
+spec_coverage: [1-5]
+test_quality: [1-5]
+code_quality: [1-5]
+regression_risk: [1-5]
+</confidence>
+```
+
 ```xml
 <result status="complete">
 Specs verified: [count]
@@ -179,6 +211,15 @@ Issues found: [count]
 ```
 
 When checks fail and fix tasks have been appended:
+
+```
+<confidence>
+spec_coverage: [1-5]
+test_quality: [1-5]
+code_quality: [1-5]
+regression_risk: [1-5]
+</confidence>
+```
 
 ```xml
 <result status="issues_found">

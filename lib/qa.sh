@@ -1454,3 +1454,77 @@ red_green_check_progress() {
     emit_event "red_green_check" "{\"baseline\":${baseline_count},\"current\":${current_count},\"verdict\":\"ok\"}"
     return 0
 }
+
+# ---------------------------------------------------------------------------
+# Review Confidence Scoring (audit wave 6)
+# ---------------------------------------------------------------------------
+
+# Parses confidence scores from review agent output.
+# Expects a <confidence> block with four dimensions rated 1-5:
+#   spec_coverage, test_quality, code_quality, regression_risk
+#
+# Outputs JSON with the four scores. Persists to review-confidence.json.
+# Returns: 0 on success, 1 if block missing or scores invalid.
+parse_review_confidence() {
+    local review_output="$1"
+
+    # Extract the <confidence>...</confidence> block
+    local block
+    block=$(echo "$review_output" | sed -n '/<confidence>/,/<\/confidence>/p')
+    if [ -z "$block" ]; then
+        return 1
+    fi
+
+    # Parse each dimension
+    local spec_coverage test_quality code_quality regression_risk
+    spec_coverage=$(echo "$block" | grep -E 'spec_coverage:' | sed 's/.*spec_coverage:[[:space:]]*//' | tr -d '[:space:]')
+    test_quality=$(echo "$block" | grep -E 'test_quality:' | sed 's/.*test_quality:[[:space:]]*//' | tr -d '[:space:]')
+    code_quality=$(echo "$block" | grep -E 'code_quality:' | sed 's/.*code_quality:[[:space:]]*//' | tr -d '[:space:]')
+    regression_risk=$(echo "$block" | grep -E 'regression_risk:' | sed 's/.*regression_risk:[[:space:]]*//' | tr -d '[:space:]')
+
+    # Validate all four are present and in range 1-5
+    local dim
+    for dim in "$spec_coverage" "$test_quality" "$code_quality" "$regression_risk"; do
+        if [ -z "$dim" ] || ! [[ "$dim" =~ ^[1-5]$ ]]; then
+            return 1
+        fi
+    done
+
+    local json
+    json=$(printf '{"spec_coverage":%d,"test_quality":%d,"code_quality":%d,"regression_risk":%d}' \
+        "$spec_coverage" "$test_quality" "$code_quality" "$regression_risk")
+
+    # Persist to state directory
+    local conf_file="${AUTOMATON_DIR}/review-confidence.json"
+    echo "$json" > "$conf_file"
+
+    echo "$json"
+    return 0
+}
+
+# Evaluates confidence scores against thresholds.
+# All scores >= 4 = pass. Any score < 3 = fail (creates tasks).
+# Scores of 3 = borderline pass with warning.
+#
+# Args: $1 = JSON string with the four confidence dimensions
+# Returns: 0 (pass) or 1 (fail — any dimension < 3)
+gate_review_confidence() {
+    local scores_json="$1"
+
+    local fail=false
+    local dim_name dim_val
+    for dim_name in spec_coverage test_quality code_quality regression_risk; do
+        dim_val=$(echo "$scores_json" | jq -r ".${dim_name}")
+        if [ "$dim_val" -lt 3 ] 2>/dev/null; then
+            log "ORCHESTRATOR" "  FAIL: Review confidence $dim_name=$dim_val (below threshold 3)"
+            fail=true
+        elif [ "$dim_val" -lt 4 ] 2>/dev/null; then
+            log "ORCHESTRATOR" "  WARN: Review confidence $dim_name=$dim_val (borderline)"
+        fi
+    done
+
+    if [ "$fail" = "true" ]; then
+        return 1
+    fi
+    return 0
+}

@@ -1118,6 +1118,20 @@ run_orchestration() {
                 # Gate 5: review pass. On fail: back to build.
                 # After 2 failures: attempt focused fix. After 3: terminal escalate.
                 if gate_check "review_pass"; then
+                    # Confidence scoring (audit wave 6): parse and evaluate
+                    local confidence_scores
+                    if confidence_scores=$(parse_review_confidence "${AGENT_RESULT:-}"); then
+                        if ! gate_review_confidence "$confidence_scores"; then
+                            log "ORCHESTRATOR" "Review confidence below threshold — returning to build"
+                            review_attempts=$((review_attempts + 1))
+                            stall_count=0
+                            transition_to_phase "build"
+                            continue 2
+                        fi
+                        emit_event "review_confidence" "$confidence_scores"
+                    else
+                        log "ORCHESTRATOR" "No confidence scores in review output (optional — proceeding)"
+                    fi
                     # Blind validation (spec-54): additional independent review pass
                     if [ "${FLAG_BLIND_VALIDATION:-false}" = "true" ]; then
                         local blind_spec
