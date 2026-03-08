@@ -77,7 +77,47 @@ Tasks:
 
 Consider the correct priority order carefully. Use an Opus subagent to analyze findings, prioritize tasks, and write the final plan.
 
-### Phase 4 — Capture the Why
+### Phase 4 — Generate Test Skeletons
+
+For each spec that has acceptance criteria and a `<!-- test: tests/test_[feature].sh -->` annotation, generate a test skeleton file. This separates test authorship from implementation — the planning agent defines WHAT to test, the build agent writes HOW.
+
+Each AC becomes a test function with `assert_fail "Not yet implemented"`:
+
+```bash
+#!/usr/bin/env bash
+# tests/test_[feature].sh — Generated test skeleton from acceptance criteria
+# DO NOT modify assertion signatures — implement code to make these pass.
+
+set -uo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/test_helpers.sh"
+
+test_ac_03_1_login_returns_jwt() {
+    # AC-03-1: Login endpoint returns JWT within 200ms
+    assert_fail "AC-03-1: Not yet implemented"
+}
+
+test_ac_03_2_invalid_credentials_401() {
+    # AC-03-2: Invalid credentials return 401 with error message
+    assert_fail "AC-03-2: Not yet implemented"
+}
+
+# Run all test functions
+for test_fn in $(declare -F | awk '/test_ac_/ {print $3}'); do
+    "$test_fn" || true
+done
+
+test_summary
+```
+
+Rules for test skeletons:
+- Only generate skeletons for tasks annotated with `<!-- test: ... -->` (not `<!-- test: none -->`).
+- If the test file already exists, do NOT overwrite it — skip skeleton generation for that file.
+- Each `assert_fail` call includes the AC identifier so failures are traceable.
+- Use `test_ac_XX_Y_` prefix for function names (matching the AC numbering).
+- Write the skeleton files to disk using the Write tool.
+
+### Phase 5 — Capture the Why
 
 For each task, add a brief note on WHY it matters (not just what to do). This context helps builders understand the intent behind each task.
 </instructions>

@@ -96,6 +96,13 @@ assert_json_valid() {
     ((_TEST_PASS_COUNT++))
 }
 
+assert_fail() {
+    local msg="${1:-Not yet implemented}"
+    echo "FAIL: $msg" >&2
+    ((_TEST_FAIL_COUNT++))
+    return 1
+}
+
 assert_json_field() {
     local json="$1" field="$2" expected="$3" msg="${4:-JSON field check}"
     local actual
