@@ -602,6 +602,71 @@ _qa_create_fix_tasks() {
     echo "$count"
 }
 
+# Detects QA oscillation: a failure that was fixed in a later iteration reappears.
+# Scans iteration history files for failure IDs that appear in current failures
+# AND appeared in a prior (non-adjacent) iteration but were absent in between.
+# Usage: _qa_detect_oscillation current_iter_num current_failures_json
+# Returns: 0 if oscillation detected (with oscillating IDs on stdout), 1 if not.
+_qa_detect_oscillation() {
+    local current_iter="$1"
+    local current_failures="$2"
+
+    # Need at least 3 iterations to detect a cycle (fail→fix→re-fail)
+    if [ "$current_iter" -lt 3 ]; then
+        return 1
+    fi
+
+    local current_ids
+    current_ids=$(echo "$current_failures" | jq -r '.[].id' 2>/dev/null)
+    if [ -z "$current_ids" ]; then
+        return 1
+    fi
+
+    local oscillating=""
+
+    # For each current failure ID, check if it appeared in any earlier iteration
+    # but was absent in at least one intermediate iteration (the "fixed" gap)
+    while IFS= read -r fid; do
+        local seen_before=false
+        local was_absent=false
+
+        # Walk iterations from 1 to current-1
+        local i=1
+        while [ "$i" -lt "$current_iter" ]; do
+            local iter_file="${AUTOMATON_DIR}/qa/iteration-${i}.json"
+            if [ -f "$iter_file" ]; then
+                local has_id
+                has_id=$(jq -r --arg id "$fid" '.failures[]? | select(.id == $id) | .id' "$iter_file" 2>/dev/null)
+                if [ -n "$has_id" ]; then
+                    if [ "$was_absent" = "true" ]; then
+                        # This shouldn't happen mid-walk since we're reading
+                        # historically, but the pattern check continues
+                        :
+                    fi
+                    seen_before=true
+                else
+                    if [ "$seen_before" = "true" ]; then
+                        was_absent=true
+                    fi
+                fi
+            fi
+            i=$((i + 1))
+        done
+
+        # Oscillation = seen in a prior iter, absent in a later iter, now back
+        if [ "$seen_before" = "true" ] && [ "$was_absent" = "true" ]; then
+            oscillating="${oscillating:+$oscillating,}$fid"
+        fi
+    done <<< "$current_ids"
+
+    if [ -n "$oscillating" ]; then
+        echo "$oscillating"
+        return 0
+    fi
+
+    return 1
+}
+
 # Writes .automaton/qa/failure-report.md listing unresolved failures with types,
 # iteration history, and persistence flags. Called when QA loop exhausts retries.
 # The report is passed as context to Phase 4 review so the reviewer knows exactly
@@ -717,6 +782,15 @@ _qa_run_loop() {
         fi
 
         log "QA" "Iteration ${qa_iter}: ${last_failed} failure(s) found"
+
+        # Step 2b: Oscillation detection — abort if fixes are fighting each other
+        local oscillating_ids=""
+        if oscillating_ids=$(_qa_detect_oscillation "$qa_iter" "$last_failures"); then
+            log "QA" "Oscillation detected: failures cycling — ${oscillating_ids}"
+            log "QA" "Escalating to review instead of retrying"
+            last_verdict="OSCILLATION"
+            break
+        fi
 
         # Step 3: Create fix tasks (only if more iterations remain)
         if [ "$qa_iter" -lt "$max_iter" ]; then
