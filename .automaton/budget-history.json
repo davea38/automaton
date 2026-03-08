@@ -1,4 +1,24 @@
 {
-  "runs": [],
-  "weekly_totals": []
+  "runs": [
+    {
+      "run_id": "run-2026-03-08T20-20-18Z",
+      "mode": "allowance",
+      "tokens_used": 5609,
+      "estimated_cost_usd": 0.38,
+      "cache_hit_ratio": 0.90,
+      "peak_utilization": 2.8,
+      "avg_utilization": 2.8,
+      "phases": {},
+      "bootstrap_tokens_saved": 0,
+      "bootstrap_avg_time_ms": 35
+    }
+  ],
+  "weekly_totals": [
+    {
+      "week_start": "2026-03-02",
+      "week_end": "2026-03-08",
+      "tokens_used": 5609,
+      "runs": 1
+    }
+  ]
 }
