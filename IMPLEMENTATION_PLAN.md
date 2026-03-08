@@ -110,7 +110,7 @@ From audit findings 06 (acceptance test generation) and 07-#2 (red-before-green 
 
 From audit finding 02 (missing incremental verification). Adds per-task validation to catch bugs early instead of reviewing everything at the end.
 
-- [ ] Create micro-validation prompt (~30 lines) for lightweight post-task Sonnet check on specific acceptance criterion (WHY: catches bugs in task N before task N+1 compounds them — prevents 500K+ token cost of failed review → rebuild cycles; estimated net savings 60-80%) <!-- test: none -->
+- [x] Create micro-validation prompt (~30 lines) for lightweight post-task Sonnet check on specific acceptance criterion (WHY: catches bugs in task N before task N+1 compounds them — prevents 500K+ token cost of failed review → rebuild cycles; estimated net savings 60-80%) <!-- test: none -->
 
 - [ ] Implement post-task micro-validation in build loop (`lib/lifecycle.sh`): after each build iteration, run lightweight 2K-token Sonnet check (WHY: batch-and-check is the current anti-pattern — this adds the "verify small" discipline from VSDD) <!-- test: tests/test_micro_validation.sh -->
 
