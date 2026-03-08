@@ -84,6 +84,32 @@ assert_equals "1" "$_ra_rc" "--scope + --self exits 1"
 assert_contains "$_ra_output" "mutually exclusive" "--scope + --self error message"
 
 # ============================================================
+# 60.2 — get_phase_prompt uses AUTOMATON_INSTALL_DIR prefix
+# ============================================================
+
+# get_phase_prompt should prefix paths with AUTOMATON_INSTALL_DIR
+assert_matches "$(grep 'AUTOMATON_INSTALL_DIR' "$SCRIPT_DIR/../lib/utilities.sh" | grep -c 'get_phase_prompt\|_install_dir')" \
+    '^[1-9]' \
+    "get_phase_prompt references AUTOMATON_INSTALL_DIR"
+
+# Verify get_phase_prompt returns absolute paths (not bare filenames)
+# by sourcing utilities and checking output
+(
+    # Set up minimal environment for sourcing
+    AUTOMATON_INSTALL_DIR="/fake/install/dir"
+    ARG_SELF="false"
+    # Source only the function we need
+    eval "$(sed -n '/^get_phase_prompt()/,/^}/p' "$SCRIPT_DIR/../lib/utilities.sh")"
+    result=$(get_phase_prompt "build")
+    if [ "$result" = "/fake/install/dir/PROMPT_build.md" ]; then
+        echo "PASS: get_phase_prompt prefixes with AUTOMATON_INSTALL_DIR"
+    else
+        echo "FAIL: get_phase_prompt returned '$result', expected '/fake/install/dir/PROMPT_build.md'" >&2
+        exit 1
+    fi
+) && ((_TEST_PASS_COUNT++)) || ((_TEST_FAIL_COUNT++))
+
+# ============================================================
 # 60.1 — --scope . is a valid no-op (resolves to cwd)
 # ============================================================
 

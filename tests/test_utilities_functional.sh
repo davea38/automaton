@@ -98,10 +98,11 @@ GUARDRAILS_SIZE_CEILING=18000
 # --- Test: get_phase_prompt returns correct files ---
 
 ARG_SELF="false"
-assert_equals "PROMPT_research.md" "$(get_phase_prompt "research")" "get_phase_prompt research"
-assert_equals "PROMPT_plan.md" "$(get_phase_prompt "plan")" "get_phase_prompt plan"
-assert_equals "PROMPT_build.md" "$(get_phase_prompt "build")" "get_phase_prompt build"
-assert_equals "PROMPT_review.md" "$(get_phase_prompt "review")" "get_phase_prompt review"
+AUTOMATON_INSTALL_DIR="/test/install/dir"
+assert_equals "/test/install/dir/PROMPT_research.md" "$(get_phase_prompt "research")" "get_phase_prompt research"
+assert_equals "/test/install/dir/PROMPT_plan.md" "$(get_phase_prompt "plan")" "get_phase_prompt plan"
+assert_equals "/test/install/dir/PROMPT_build.md" "$(get_phase_prompt "build")" "get_phase_prompt build"
+assert_equals "/test/install/dir/PROMPT_review.md" "$(get_phase_prompt "review")" "get_phase_prompt review"
 
 # --- Test: get_phase_model returns configured models ---
 

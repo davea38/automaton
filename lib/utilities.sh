@@ -608,18 +608,19 @@ run_agent() {
 }
 
 get_phase_prompt() {
+    local _install_dir="${AUTOMATON_INSTALL_DIR:-.}"
     case "$1" in
         research)
             # Self-build mode uses specialized research prompt (spec-25)
-            if [ "${ARG_SELF:-false}" = "true" ] && [ -f "PROMPT_self_research.md" ]; then
-                echo "PROMPT_self_research.md"
+            if [ "${ARG_SELF:-false}" = "true" ] && [ -f "${_install_dir}/PROMPT_self_research.md" ]; then
+                echo "${_install_dir}/PROMPT_self_research.md"
             else
-                echo "PROMPT_research.md"
+                echo "${_install_dir}/PROMPT_research.md"
             fi
             ;;
-        plan)     echo "PROMPT_plan.md" ;;
-        build)    echo "PROMPT_build.md" ;;
-        review)   echo "PROMPT_review.md" ;;
+        plan)     echo "${_install_dir}/PROMPT_plan.md" ;;
+        build)    echo "${_install_dir}/PROMPT_build.md" ;;
+        review)   echo "${_install_dir}/PROMPT_review.md" ;;
     esac
 }
 
