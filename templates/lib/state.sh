@@ -556,7 +556,7 @@ write_agent_history() {
     local cache_create="${9:-0}" cache_read="${10:-0}"
     local cost="${11:-0}" task_desc="${12:-}" status="${13:-unknown}"
     local files_changed="${14:-[]}" git_commit="${15:-null}"
-    local auto_compaction="${16:-false}"
+    local auto_compaction="${16:-false}" diff_stat="${17:-}"
 
     local padded
     padded=$(printf "%03d" "$phase_iteration")
@@ -581,6 +581,7 @@ write_agent_history() {
         --argjson files_changed "$files_changed" \
         --arg git_commit "$git_commit" \
         --argjson auto_compaction_detected "$([ "$auto_compaction" = "true" ] && echo true || echo false)" \
+        --arg diff_stat "$diff_stat" \
         '{
             phase: $phase,
             iteration: $iteration,
@@ -601,7 +602,8 @@ write_agent_history() {
             status: $status,
             files_changed: $files_changed,
             git_commit: (if $git_commit == "null" then null else $git_commit end),
-            auto_compaction_detected: $auto_compaction_detected
+            auto_compaction_detected: $auto_compaction_detected,
+            diff_stat: $diff_stat
         }' > "$filename"
 }
 

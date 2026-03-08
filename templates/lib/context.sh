@@ -269,6 +269,36 @@ inject_dynamic_context() {
             fi
         fi
 
+        # Review-specific context: per-task diffs from build iterations (audit wave 4)
+        if [ "$current_phase" = "review" ]; then
+            local build_files
+            build_files=$(ls "$AUTOMATON_DIR/agents/build-"*.json 2>/dev/null || true)
+            if [ -n "$build_files" ]; then
+                echo "## Per-Task Build Diffs"
+                echo ""
+                echo "Each build iteration's changes (task, commit, diff stat):"
+                echo ""
+                local bfile
+                for bfile in $build_files; do
+                    local b_task b_commit b_diff b_iter
+                    b_iter=$(jq -r '.iteration // "?"' "$bfile" 2>/dev/null || echo "?")
+                    b_task=$(jq -r '.task // "unknown"' "$bfile" 2>/dev/null || echo "unknown")
+                    b_commit=$(jq -r '.git_commit // "none"' "$bfile" 2>/dev/null || echo "none")
+                    b_diff=$(jq -r '.diff_stat // ""' "$bfile" 2>/dev/null || echo "")
+                    echo "### Iteration ${b_iter}: ${b_task}"
+                    echo "Commit: ${b_commit}"
+                    if [ -n "$b_diff" ]; then
+                        echo '```'
+                        echo "$b_diff"
+                        echo '```'
+                    else
+                        echo "_No diff recorded_"
+                    fi
+                    echo ""
+                done
+            fi
+        fi
+
         # Review-specific context: inject QA failure report when available (spec-46.4)
         if [ "$current_phase" = "review" ] && [ -f "$AUTOMATON_DIR/qa/failure-report.md" ]; then
             echo "## QA Failure Report"

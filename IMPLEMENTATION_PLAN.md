@@ -114,7 +114,7 @@ From audit finding 02 (missing incremental verification). Adds per-task validati
 
 - [x] Implement post-task micro-validation in build loop (`lib/lifecycle.sh`): after each build iteration, run lightweight 2K-token Sonnet check (WHY: batch-and-check is the current anti-pattern — this adds the "verify small" discipline from VSDD) <!-- test: tests/test_micro_validation.sh -->
 
-- [ ] Track `git diff --stat` per iteration in `.automaton/agents/` and provide per-task diffs to review agent (WHY: review currently gets one giant diff — per-task breakdown reduces review context size and improves accuracy) <!-- test: none -->
+- [x] Track `git diff --stat` per iteration in `.automaton/agents/` and provide per-task diffs to review agent (WHY: review currently gets one giant diff — per-task breakdown reduces review context size and improves accuracy) <!-- test: none -->
 
 - [ ] Add early escalation: if micro-validation fails 2 consecutive tasks, force transition to review phase (WHY: extends existing stall detection — continuing to build on top of broken tasks wastes tokens) <!-- test: tests/test_micro_validation.sh -->
 

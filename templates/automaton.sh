@@ -648,18 +648,19 @@ post_iteration() {
     generate_progress_txt
 
     # 9. Write per-agent history file
-    local agent_start_ts agent_end_ts files_changed git_commit
+    local agent_start_ts agent_end_ts files_changed git_commit diff_stat
     agent_start_ts=$(date -u -d "@$iter_start_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
     agent_end_ts=$(date -u -d "@$iter_end_epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
     files_changed=$(git diff --name-only HEAD~1 2>/dev/null | jq -R -s 'split("\n") | map(select(. != ""))' 2>/dev/null || echo '[]')
     git_commit=$(git rev-parse --short HEAD 2>/dev/null || echo "null")
+    diff_stat=$(git diff --stat HEAD~1 2>/dev/null || echo "")
 
     write_agent_history "$model" "$prompt_file" "$agent_start_ts" "$agent_end_ts" \
         "$duration" "$AGENT_EXIT_CODE" \
         "$LAST_INPUT_TOKENS" "$LAST_OUTPUT_TOKENS" \
         "$LAST_CACHE_CREATE" "$LAST_CACHE_READ" \
         "$iter_cost" "$task_desc" "$status" "$files_changed" "$git_commit" \
-        "$LAST_AUTO_COMPACTION_DETECTED"
+        "$LAST_AUTO_COMPACTION_DETECTED" "$diff_stat"
 
     # 10. Emit one-line status to stdout
     emit_status_line "$model" "$iter_cost"
