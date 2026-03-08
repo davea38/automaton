@@ -140,7 +140,7 @@ From audit finding 07 (VSDD process extraction). Lower priority — implement af
 
 - [x] Add feedback level routing: review classifies issues as spec-level, test-level, or implementation-level; spec-level issues create spec amendment proposals instead of build tasks (WHY: prevents building against flawed specs — if review finds an ambiguous requirement, fixing the spec is better than working around it) <!-- test: none -->
 
-- [ ] Implement living spec amendments: build agent proposes spec amendments to `.automaton/spec-amendments.json`, review evaluates, approved amendments update specs (WHY: specs currently freeze after Phase 0 — when builder discovers a requirement is impossible/wrong, the spec should evolve) <!-- test: none -->
+- [x] Implement living spec amendments: build agent proposes spec amendments to `.automaton/spec-amendments.json`, review evaluates, approved amendments update specs (WHY: specs currently freeze after Phase 0 — when builder discovers a requirement is impossible/wrong, the spec should evolve) <!-- test: none -->
 
 ---
 
