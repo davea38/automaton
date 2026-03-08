@@ -1012,6 +1012,9 @@ run_orchestration() {
                         run_steelman_critique || true
                     fi
                     transition_to_phase "build"
+                    # Red-before-green gate (audit wave 3): record pre-build test failures
+                    local rg_test_runner="${PROJECT_ROOT:-.}/run_tests.sh"
+                    red_green_record_baseline "$rg_test_runner"
                 else
                     escalate "Plan phase failed to produce a valid implementation plan."
                 fi
@@ -1020,6 +1023,11 @@ run_orchestration() {
             build)
                 # Gate 4: build completion. On fail: continue building (spec-05)
                 if gate_check "build_completion"; then
+                    # Red-before-green gate (audit wave 3): verify failures decreased
+                    local rg_test_runner="${PROJECT_ROOT:-.}/run_tests.sh"
+                    if ! red_green_check_progress "$rg_test_runner"; then
+                        log "ORCHESTRATOR" "WARNING: Red-before-green gate detected regression — proceeding to review for diagnosis"
+                    fi
                     # QA loop (spec-46): validate → fix → rebuild before review
                     if [ "${QA_ENABLED:-true}" = "true" ]; then
                         log "ORCHESTRATOR" "Running QA validation loop before review"

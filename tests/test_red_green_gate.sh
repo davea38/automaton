@@ -11,6 +11,7 @@ setup_test_dir
 
 # --- Helper: create a minimal .automaton dir for state ---
 setup_automaton_dir() {
+    rm -rf "$TEST_DIR/.automaton"
     mkdir -p "$TEST_DIR/.automaton"
     export AUTOMATON_DIR="$TEST_DIR/.automaton"
 }

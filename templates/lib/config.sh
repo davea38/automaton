@@ -417,6 +417,7 @@ load_config() {
         EXEC_TEST_FIRST_ENABLED="true"
         EXEC_TEST_SCAFFOLD_ITERATIONS=2
         EXEC_TEST_FRAMEWORK="assertions"
+        RED_GREEN_GATE_ENABLED="true"
 
         # -- bootstrap (spec-37) --
         EXEC_BOOTSTRAP_ENABLED="true"

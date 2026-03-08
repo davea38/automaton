@@ -1294,3 +1294,89 @@ apply_complexity_routing() {
     esac
     return 0
 }
+
+# --- Red-before-green gate (audit wave 3) ---
+# Records pre-build test failure count so we can verify the build made progress.
+
+# Parse "Failed:  N" from run_tests.sh output.
+# Usage: _count_test_failures_from_output "$output"
+# Returns: integer failure count (0 if not parseable)
+_count_test_failures_from_output() {
+    local output="$1"
+    local count
+    count=$(echo "$output" | grep -oP 'Failed:\s+\K[0-9]+' | head -1)
+    echo "${count:-0}"
+}
+
+# Record test failure baseline before build phase begins.
+# Usage: red_green_record_baseline "/path/to/run_tests.sh"
+red_green_record_baseline() {
+    local test_cmd="${1:-}"
+    if [ "${RED_GREEN_GATE_ENABLED:-false}" != "true" ]; then
+        return 0
+    fi
+    if [ -z "$test_cmd" ] || [ ! -f "$test_cmd" ]; then
+        log "RED_GREEN" "No test runner found — skipping baseline"
+        return 0
+    fi
+
+    local output rc=0
+    output=$(bash "$test_cmd" 2>&1) || rc=$?
+
+    local fail_count
+    fail_count=$(_count_test_failures_from_output "$output")
+
+    local baseline_file="${AUTOMATON_DIR:-.automaton}/red_green_baseline.json"
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
+
+    cat > "$baseline_file" <<BEOF
+{"failure_count":${fail_count},"recorded_at":"${now}"}
+BEOF
+
+    log "RED_GREEN" "Baseline recorded: $fail_count test failures"
+    emit_event "red_green_baseline" "{\"failure_count\":${fail_count}}"
+    return 0
+}
+
+# Check that test failures decreased (or stayed the same) compared to baseline.
+# Usage: red_green_check_progress "/path/to/run_tests.sh"
+# Returns: 0 = progress made (or no baseline), 1 = regression (failures increased)
+red_green_check_progress() {
+    local test_cmd="${1:-}"
+    if [ "${RED_GREEN_GATE_ENABLED:-false}" != "true" ]; then
+        return 0
+    fi
+
+    local baseline_file="${AUTOMATON_DIR:-.automaton}/red_green_baseline.json"
+    if [ ! -f "$baseline_file" ]; then
+        log "RED_GREEN" "No baseline found — skipping progress check"
+        return 0
+    fi
+
+    local baseline_count
+    baseline_count=$(jq -r '.failure_count // 0' "$baseline_file" 2>/dev/null) || baseline_count=0
+
+    if [ -z "$test_cmd" ] || [ ! -f "$test_cmd" ]; then
+        log "RED_GREEN" "No test runner found — skipping progress check"
+        return 0
+    fi
+
+    local output rc=0
+    output=$(bash "$test_cmd" 2>&1) || rc=$?
+
+    local current_count
+    current_count=$(_count_test_failures_from_output "$output")
+
+    local delta=$((current_count - baseline_count))
+
+    if [ "$delta" -gt 0 ]; then
+        log "RED_GREEN" "REGRESSION: failures increased from $baseline_count to $current_count (+$delta)"
+        emit_event "red_green_check" "{\"baseline\":${baseline_count},\"current\":${current_count},\"verdict\":\"regression\"}"
+        return 1
+    fi
+
+    log "RED_GREEN" "Progress: failures $baseline_count → $current_count (delta: $delta)"
+    emit_event "red_green_check" "{\"baseline\":${baseline_count},\"current\":${current_count},\"verdict\":\"ok\"}"
+    return 0
+}

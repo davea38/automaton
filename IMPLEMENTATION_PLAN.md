@@ -100,7 +100,7 @@ From audit findings 06 (acceptance test generation) and 07-#2 (red-before-green 
 
 - [x] Update `PROMPT_plan.md` (template version) to generate test skeleton files from acceptance criteria: each AC becomes a test function with `assert_fail "Not yet implemented"` (WHY: separates test authorship from implementation authorship — prevents confirmation bias where the same agent writes both test and code) <!-- test: none -->
 
-- [ ] Add red-before-green gate in `lib/lifecycle.sh` or `lib/qa.sh`: after plan phase, run test suite and record failure count; after build, verify failure count decreased (WHY: proves implementation actually made progress — if tests pass before AND after, the tests may not be testing the right thing) <!-- test: tests/test_red_green_gate.sh -->
+- [x] Add red-before-green gate in `lib/lifecycle.sh` or `lib/qa.sh`: after plan phase, run test suite and record failure count; after build, verify failure count decreased (WHY: proves implementation actually made progress — if tests pass before AND after, the tests may not be testing the right thing) <!-- test: tests/test_red_green_gate.sh -->
 
 - [ ] Update `PROMPT_build.md` (template version) to instruct: "Find pre-existing test skeletons. Implement code to make them pass. Do NOT modify skeleton test assertions." (WHY: true TDD — tests exist before code, builder has concrete targets instead of writing tests to match what they built) <!-- test: none -->
 
