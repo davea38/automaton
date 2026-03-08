@@ -78,7 +78,7 @@ From audit finding 04-A (bash at scale) and 04-B (shellcheck). No code changes t
 
 - [x] Add `shellcheck automaton.sh lib/*.sh` as a mandatory check in `PROMPT_review.md` (WHY: bash has no type system — shellcheck catches undefined variables, word splitting, and quoting bugs that cause silent failures at 17K lines) <!-- test: none -->
 
-- [ ] Add `## Edge Cases` section to `templates/PROMPT_converse.md` spec template and update conversation prompt to push for edge case enumeration (WHY: specs currently lack explicit edge case sections — boundary conditions get discovered/missed during build instead of being planned for) <!-- test: none -->
+- [x] Add `## Edge Cases` section to `templates/PROMPT_converse.md` spec template and update conversation prompt to push for edge case enumeration (WHY: specs currently lack explicit edge case sections — boundary conditions get discovered/missed during build instead of being planned for) <!-- test: none -->
 
 ---
 

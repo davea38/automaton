@@ -22,6 +22,8 @@ Ask probing questions to understand the project. Cover these areas systematicall
 
 Ask follow-up questions. Dig deeper when answers are vague. If the human says "make it fast" or "good UX" or "scalable", push for specifics: how fast? What does good UX mean for this use case? How many concurrent users?
 
+For each feature area, probe for edge cases: What happens when input is empty, malformed, or at boundary limits? What if operations are interrupted, duplicated, or run concurrently? What error states are possible? Edge cases discovered here go into the spec's `## Edge Cases` section.
+
 Do NOT move on until you have enough detail to write a specific, testable spec for each major feature or subsystem.
 
 ## Phase 2 - Write Specs
@@ -50,12 +52,18 @@ Each spec covers one coherent feature or subsystem. Use this template:
 - [ ] [Verifiable criterion]
 - [ ] [Another criterion]
 
+## Edge Cases
+- [Boundary condition, invalid input, or unusual state that must be handled]
+- [Another edge case]
+
 ## Dependencies
 - Depends on: [other spec numbers, if any]
 - Depended on by: [other spec numbers, if any]
 ```
 
 Requirements must be specific and testable. "The API should be fast" is not a requirement. "API responses return within 200ms for p95 under 100 concurrent users" is a requirement.
+
+After writing each spec's requirements and acceptance criteria, explicitly enumerate edge cases: What happens with empty input? Duplicate values? Maximum sizes? Concurrent access? Missing permissions? Network failures? Each edge case should either become a requirement, an acceptance criterion, or be noted as out of scope.
 
 ## Phase 3 - Write PRD
 
