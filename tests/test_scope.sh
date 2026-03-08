@@ -84,6 +84,31 @@ assert_equals "1" "$_ra_rc" "--scope + --self exits 1"
 assert_contains "$_ra_output" "mutually exclusive" "--scope + --self error message"
 
 # ============================================================
+# 60.1 — Relative path resolution: --scope ./subdir resolves to absolute
+# ============================================================
+
+# Create a temp subdir, run --scope with relative path, verify it passes path validation
+# (It may fail later due to missing config, but should NOT fail on path resolution)
+_test_relpath_dir=$(mktemp -d)
+_test_subdir="$_test_relpath_dir/subdir"
+mkdir -p "$_test_subdir"
+_ra_rc=0
+_ra_output=$(cd "$_test_relpath_dir" && bash "$automaton_script" --scope ./subdir --dry-run 2>&1) || _ra_rc=$?
+# Should not get path-related errors (may get config error, which is fine)
+assert_not_contains "$_ra_output" "does not exist" "--scope ./subdir passes path validation"
+assert_not_contains "$_ra_output" "not a directory" "--scope ./subdir is recognized as directory"
+rm -rf "$_test_relpath_dir"
+
+# ============================================================
+# 60.1 — AUTOMATON_DIR stays cwd-anchored regardless of --scope
+# ============================================================
+
+# Verify in the source that AUTOMATON_DIR is set from pwd, not PROJECT_ROOT
+_automaton_dir_line=$(grep 'AUTOMATON_DIR=' "$automaton_script" | head -1)
+assert_not_contains "$_automaton_dir_line" 'PROJECT_ROOT' "AUTOMATON_DIR does not reference PROJECT_ROOT"
+assert_matches "$_automaton_dir_line" 'pwd' "AUTOMATON_DIR is derived from pwd (cwd-anchored)"
+
+# ============================================================
 # 60.2 — get_phase_prompt uses AUTOMATON_INSTALL_DIR prefix
 # ============================================================
 

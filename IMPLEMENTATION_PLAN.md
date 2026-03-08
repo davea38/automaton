@@ -64,9 +64,9 @@ This feature enables directory-scoped agent operations, critical for monorepo su
 
 ### 60.5 Tests
 
-- [ ] Create `tests/test_scope.sh` with integration tests: relative path resolution, absolute path passthrough, non-existent path error, file-not-dir error, `--scope .` no-op, `AUTOMATON_DIR` stays cwd-anchored, `--scope` + `--self` mutual exclusion (WHY: 7 distinct code paths need test coverage to prevent regressions) <!-- test: tests/test_scope.sh -->
+- [x] Create `tests/test_scope.sh` with integration tests: relative path resolution, absolute path passthrough, non-existent path error, file-not-dir error, `--scope .` no-op, `AUTOMATON_DIR` stays cwd-anchored, `--scope` + `--self` mutual exclusion (WHY: 7 distinct code paths need test coverage to prevent regressions) <!-- test: tests/test_scope.sh -->
 
-- [ ] Add `ARG_SCOPE` test cases to `tests/test_cli_args.sh`: default is empty, `--scope /tmp` sets value, `--scope` with no argument errors, combined flags work (WHY: existing CLI arg tests must cover the new flag to maintain comprehensive CLI test coverage) <!-- test: tests/test_cli_args.sh -->
+- [x] Add `ARG_SCOPE` test cases to `tests/test_cli_args.sh`: default is empty, `--scope /tmp` sets value, `--scope` with no argument errors, combined flags work (WHY: existing CLI arg tests must cover the new flag to maintain comprehensive CLI test coverage) <!-- test: tests/test_cli_args.sh -->
 
 ---
 
