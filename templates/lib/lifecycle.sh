@@ -223,6 +223,118 @@ self_build_check_scope() {
 }
 
 # ---------------------------------------------------------------------------
+# Post-Task Micro-Validation (audit wave 4, finding 02-A)
+# ---------------------------------------------------------------------------
+
+# Runs a lightweight Sonnet check after each build iteration to verify the
+# task's acceptance criterion was met. Tracks consecutive failures for
+# early escalation.
+#
+# Args: task_description test_file_path
+# Returns: 0 = PASS or UNCERTAIN or disabled, 1 = FAIL
+run_micro_validation() {
+    local task_desc="$1"
+    local test_file="${2:-}"
+
+    # Only run during build phase
+    if [ "${current_phase:-}" != "build" ]; then
+        return 0
+    fi
+
+    # Skip if disabled
+    if [ "${MICRO_VALIDATION_ENABLED:-false}" != "true" ]; then
+        return 0
+    fi
+
+    local prompt_file="${AUTOMATON_INSTALL_DIR:-.}/PROMPT_micro_validate.md"
+    if [ ! -f "$prompt_file" ]; then
+        log "ORCHESTRATOR" "WARN: micro-validation prompt not found: $prompt_file"
+        return 0
+    fi
+
+    # Build lightweight dynamic context with task info and recent diff
+    local files_changed
+    files_changed=$(git diff --name-only HEAD~1 2>/dev/null || echo "")
+    local diff_stat
+    diff_stat=$(git diff --stat HEAD~1 2>/dev/null || echo "")
+
+    local dynamic_block
+    dynamic_block=$(cat <<DYNEOF
+## Micro-Validation Context
+
+**Task:** ${task_desc}
+**Test file:** ${test_file:-none}
+**Iteration:** ${phase_iteration:-0}
+**Files changed:**
+${files_changed}
+
+**Diff summary:**
+${diff_stat}
+DYNEOF
+)
+
+    # Create augmented prompt with dynamic context injected
+    local augmented
+    augmented=$(mktemp "${TMPDIR:-/tmp}/automaton-micro-XXXXXX.md")
+    sed "s|<!-- Orchestrator injects:.*-->|${dynamic_block}|" "$prompt_file" > "$augmented" 2>/dev/null || cp "$prompt_file" "$augmented"
+
+    # Save/restore agent state so micro-validation doesn't clobber build state
+    local saved_result="$AGENT_RESULT"
+    local saved_exit="$AGENT_EXIT_CODE"
+
+    log "ORCHESTRATOR" "Running micro-validation for: $task_desc"
+    run_agent "$augmented" "sonnet"
+    rm -f "$augmented"
+
+    # Extract verdict from agent output (stream-json wraps result as a string)
+    local verdict="UNCERTAIN"
+    local inner_json=""
+    # Try stream-json format first: {"type":"result","result":"{ ... }"}
+    inner_json=$(echo "$AGENT_RESULT" | jq -r 'select(.type == "result") | .result' 2>/dev/null | head -1 || echo "")
+    if [ -n "$inner_json" ]; then
+        verdict=$(echo "$inner_json" | jq -r '.verdict // "UNCERTAIN"' 2>/dev/null || echo "UNCERTAIN")
+    else
+        # Fallback: try raw JSON with verdict field
+        verdict=$(echo "$AGENT_RESULT" | jq -r '.verdict // "UNCERTAIN"' 2>/dev/null || echo "UNCERTAIN")
+    fi
+
+    # Track consecutive failures
+    local prev_failures=0
+    if [ -f "$AUTOMATON_DIR/micro_validation_last.json" ]; then
+        prev_failures=$(jq -r '.consecutive_failures // 0' "$AUTOMATON_DIR/micro_validation_last.json" 2>/dev/null || echo 0)
+    fi
+
+    local consecutive_failures=0
+    if [ "$verdict" = "FAIL" ]; then
+        consecutive_failures=$((prev_failures + 1))
+    fi
+
+    # Record result
+    local result_file="$AUTOMATON_DIR/micro_validation_last.json"
+    cat > "$result_file" <<RESEOF
+{
+  "task": $(echo "$task_desc" | jq -R .),
+  "verdict": "$verdict",
+  "iteration": ${phase_iteration:-0},
+  "consecutive_failures": $consecutive_failures,
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")"
+}
+RESEOF
+
+    log "ORCHESTRATOR" "Micro-validation verdict: $verdict (consecutive failures: $consecutive_failures)"
+    emit_event "micro_validation" "{\"verdict\":\"$verdict\",\"consecutive_failures\":$consecutive_failures}"
+
+    # Restore build agent state
+    AGENT_RESULT="$saved_result"
+    AGENT_EXIT_CODE="$saved_exit"
+
+    if [ "$verdict" = "FAIL" ]; then
+        return 1
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # Structured Learnings (spec-34)
 # ---------------------------------------------------------------------------
 

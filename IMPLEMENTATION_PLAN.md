@@ -112,7 +112,7 @@ From audit finding 02 (missing incremental verification). Adds per-task validati
 
 - [x] Create micro-validation prompt (~30 lines) for lightweight post-task Sonnet check on specific acceptance criterion (WHY: catches bugs in task N before task N+1 compounds them — prevents 500K+ token cost of failed review → rebuild cycles; estimated net savings 60-80%) <!-- test: none -->
 
-- [ ] Implement post-task micro-validation in build loop (`lib/lifecycle.sh`): after each build iteration, run lightweight 2K-token Sonnet check (WHY: batch-and-check is the current anti-pattern — this adds the "verify small" discipline from VSDD) <!-- test: tests/test_micro_validation.sh -->
+- [x] Implement post-task micro-validation in build loop (`lib/lifecycle.sh`): after each build iteration, run lightweight 2K-token Sonnet check (WHY: batch-and-check is the current anti-pattern — this adds the "verify small" discipline from VSDD) <!-- test: tests/test_micro_validation.sh -->
 
 - [ ] Track `git diff --stat` per iteration in `.automaton/agents/` and provide per-task diffs to review agent (WHY: review currently gets one giant diff — per-task breakdown reduces review context size and improves accuracy) <!-- test: none -->
 

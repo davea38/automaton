@@ -122,13 +122,16 @@ assert_equals "0" "$rc" "micro-validation returns 0 for non-build phase"
 assert_equals "0" "$_micro_validation_calls" "no agent invoked for non-build phase"
 
 # ============================================================
-# Test 7: micro-validation prompt file is passed correctly
+# Test 7: micro-validation prompt file content is passed
 # ============================================================
 setup_micro_test
-# Override run_agent to capture prompt path
+# Override run_agent to capture prompt content
 _captured_prompt=""
+_captured_content=""
 run_agent() {
     _captured_prompt="$1"
+    _captured_content=""
+    [ -f "$1" ] && _captured_content=$(cat "$1")
     _micro_validation_calls=$((_micro_validation_calls + 1))
     _micro_validation_model="$2"
     AGENT_EXIT_CODE=0
@@ -137,7 +140,7 @@ run_agent() {
 
 run_micro_validation "task" "tests/test_x.sh"
 
-assert_contains "$_captured_prompt" "PROMPT_micro_validate" "uses micro-validation prompt"
+assert_contains "$_captured_content" "Micro-Validation Agent" "prompt contains micro-validation identity"
 
 # ============================================================
 # Test 8: consecutive failure count tracking

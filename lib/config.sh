@@ -419,6 +419,9 @@ load_config() {
         EXEC_TEST_FRAMEWORK="assertions"
         RED_GREEN_GATE_ENABLED="true"
 
+        # -- micro-validation (audit wave 4) --
+        MICRO_VALIDATION_ENABLED="true"
+
         # -- bootstrap (spec-37) --
         EXEC_BOOTSTRAP_ENABLED="true"
         EXEC_BOOTSTRAP_SCRIPT=".automaton/init.sh"

@@ -651,7 +651,7 @@ post_iteration() {
     check_pacing
 
     # 7. Build-phase-only: stall detection, test failure tracking, plan corruption guard
-    local stall_rc=0 test_fail_rc=0
+    local stall_rc=0 test_fail_rc=0 micro_rc=0
     if [ "$current_phase" = "build" ]; then
         check_stall || stall_rc=$?
         check_test_failures "$AGENT_RESULT" || test_fail_rc=$?
@@ -661,6 +661,9 @@ post_iteration() {
         self_build_check_scope
         # Append iteration memory for incremental context (spec-24)
         append_iteration_memory
+
+        # Post-task micro-validation: lightweight Sonnet check (audit wave 4)
+        run_micro_validation "$task_desc" "" || micro_rc=$?
 
         # Periodic persistent state checkpoint every 5 build iterations (spec-34)
         if [ "$phase_iteration" -gt 0 ] && [ $((phase_iteration % 5)) -eq 0 ]; then
