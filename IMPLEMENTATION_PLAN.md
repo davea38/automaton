@@ -58,9 +58,9 @@ This feature enables directory-scoped agent operations, critical for monorepo su
 
 ### 60.4 Display & Help
 
-- [ ] Add `Scope:` line to startup banner in `automaton.sh` (only when scope differs from cwd) (WHY: users need visual confirmation of which directory agents will operate in — omitting it when scope=cwd avoids noise) <!-- test: tests/test_scope.sh -->
+- [x] Add `Scope:` line to startup banner in `automaton.sh` (only when scope differs from cwd) (WHY: users need visual confirmation of which directory agents will operate in — omitting it when scope=cwd avoids noise) <!-- test: tests/test_scope.sh -->
 
-- [ ] Add `--scope PATH` to `_show_help()` in `lib/display.sh` (WHY: discoverability — users must know the flag exists to use it) <!-- test: tests/test_cli_help.sh -->
+- [x] Add `--scope PATH` to `_show_help()` in `lib/display.sh` (WHY: discoverability — users must know the flag exists to use it) <!-- test: tests/test_cli_help.sh -->
 
 ### 60.5 Tests
 

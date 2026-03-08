@@ -1091,6 +1091,7 @@ Standard Mode:
   --skip-research       Skip Phase 1 (research), start at Phase 2 (plan)
   --skip-review         Skip Phase 4 (review), mark COMPLETE after build
   --config FILE         Use an alternate config file (default: automaton.config.json)
+  --scope PATH          Scope agent operations to a directory (monorepo support) (spec-60)
   --dry-run             Load config, run Gate 1, show settings, then exit
   --self                Self-build mode: improve automaton itself (spec-25)
   --self --continue     Auto-pick highest-priority backlog item and run (spec-26)

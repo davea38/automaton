@@ -581,6 +581,10 @@ print_banner() {
     echo " automaton v${AUTOMATON_VERSION}"
     echo " Phase:   ${phase}"
     echo " Mode:    ${mode_display}"
+    # Show Scope line only when --scope targets a different directory (spec-60 §6)
+    if [ "${PROJECT_ROOT:-$(pwd)}" != "$(pwd)" ]; then
+        echo " Scope:   ${PROJECT_ROOT}"
+    fi
     echo " Budget:  ${budget_display}"
     echo " Config:  ${CONFIG_FILE_USED}"
     echo " Branch:  ${git_branch}"
