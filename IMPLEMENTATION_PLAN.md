@@ -90,7 +90,7 @@ From audit finding 01 (spec-to-code traceability gap). The #1 gap for hit rate �
 
 - [x] Add traceability verification pass to `PROMPT_review.md` (template version): "For each AC-XX-Y, verify implementation evidence" before existing code review steps (WHY: creates the feedback loop — review catches requirements that were silently dropped during build) <!-- test: none -->
 
-- [ ] Add instruction to `PROMPT_review.md` to generate `.automaton/traceability.json` mapping each AC to pass/fail with evidence (WHY: makes traceability auditable and machine-readable — enables future automated regression detection) <!-- test: none -->
+- [x] Add instruction to `PROMPT_review.md` to generate `.automaton/traceability.json` mapping each AC to pass/fail with evidence (WHY: makes traceability auditable and machine-readable — enables future automated regression detection) <!-- test: none -->
 
 ---
 

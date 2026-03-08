@@ -104,6 +104,22 @@ If no `AC-XX-Y` items exist in the plan, skip this phase and note that acceptanc
 
 **If any AC is rated Fail:** Create a specific fix task for each failed AC (e.g., `[ ] Missing: AC-03-2 — invalid credentials should return 401 but endpoint returns 500`). Do NOT pass the review if critical ACs fail.
 
+5. **Generate traceability report:** Write `.automaton/traceability.json` with the AC results. Use this exact structure:
+```json
+{
+  "generated_at": "<ISO 8601 timestamp>",
+  "summary": { "pass": 0, "partial": 0, "fail": 0 },
+  "criteria": [
+    {
+      "id": "AC-XX-Y",
+      "status": "pass|partial|fail",
+      "evidence": "file/path.sh:42 — description of what satisfies or violates the criterion"
+    }
+  ]
+}
+```
+This file enables automated regression detection across review iterations. If no AC items exist, write the file with an empty `criteria` array.
+
 ### Phase 6 — Spec Coverage Analysis
 
 For each spec file in `specs/`:
