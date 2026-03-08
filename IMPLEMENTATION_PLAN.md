@@ -20,7 +20,7 @@ An architectural audit (specs/audit/01-07) identified 7 findings with a 6-wave i
 
 - [x] Sync root `PROMPT_build.md` with `templates/PROMPT_build.md` (the authoritative XML-tagged version with bootstrap support, self-build safety rules, and `<result>` output format) (WHY: root version is a 58-line abbreviated copy missing spec-29 XML structure, spec-22 self-build rules, spec-36 test-first discipline, spec-41 evolution safety, and the `<result>` output format — the orchestrator uses the root version, so agents get incomplete instructions) <!-- test: none -->
 
-- [ ] Sync root `PROMPT_plan.md` with `templates/PROMPT_plan.md` (the authoritative XML-tagged version with bootstrap support, test annotation rules, and `<result>` output format) (WHY: root version is a 41-line abbreviated copy missing spec-29 XML structure, spec-36 test annotation format, anti-over-engineering rules, and the `<result>` output format — the orchestrator uses the root version, so the planning agent gets incomplete instructions) <!-- test: none -->
+- [x] Sync root `PROMPT_plan.md` with `templates/PROMPT_plan.md` (the authoritative XML-tagged version with bootstrap support, test annotation rules, and `<result>` output format) (WHY: root version is a 41-line abbreviated copy missing spec-29 XML structure, spec-36 test annotation format, anti-over-engineering rules, and the `<result>` output format — the orchestrator uses the root version, so the planning agent gets incomplete instructions) <!-- test: none -->
 
 - [ ] Add execute permission to root `automaton.sh` (`chmod +x automaton.sh`) (WHY: template version has execute bit but root doesn't — users expect `./automaton.sh` to work without `bash automaton.sh`) <!-- test: none -->
 
