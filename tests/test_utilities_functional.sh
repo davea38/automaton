@@ -30,6 +30,7 @@ assert_equals "automaton-planner" "$(_prompt_to_agent_name "PROMPT_plan.md")" "m
 assert_equals "automaton-builder" "$(_prompt_to_agent_name "PROMPT_build.md")" "maps build prompt"
 assert_equals "automaton-reviewer" "$(_prompt_to_agent_name "PROMPT_review.md")" "maps review prompt"
 assert_equals "automaton-self-researcher" "$(_prompt_to_agent_name "PROMPT_self_research.md")" "maps self-research prompt"
+assert_equals "automaton-self-planner" "$(_prompt_to_agent_name "PROMPT_self_plan.md")" "maps self-plan prompt"
 assert_equals "" "$(_prompt_to_agent_name "PROMPT_unknown.md")" "returns empty for unknown prompt"
 
 # --- Test: truncate_output below threshold ---
@@ -140,4 +141,98 @@ AGENT_RESULT="still working..."
 assert_equals "1" "$(agent_signaled_complete && echo 0 || echo 1)" "rejects non-complete output"
 
 cd "$_PROJECT_DIR"
+
+# --- Test: 25.1 self-build codebase overview block removed ---
+# This block greps automaton.sh function signatures and injects ~40 lines into
+# build context on every self-build iteration — redundant since builder has tools.
+# After implementation: lib/utilities.sh must NOT contain this block.
+assert_not_contains \
+    "$(grep -n 'Codebase Overview (automaton.sh)' lib/utilities.sh 2>/dev/null || true)" \
+    "Codebase Overview" \
+    "25.1: self-build codebase overview block removed from lib/utilities.sh"
+
+# --- Test: 25.2 assess_complexity strips markdown code fences from Claude output ---
+# The haiku model sometimes wraps JSON in ```json ... ``` fences which breaks jq.
+# After implementation: the assess_complexity() function body in lib/qa.sh must
+# include fence-stripping (sed or jq -r '.') before parsing .tier.
+assess_body=$(sed -n '/^assess_complexity()/,/^}/p' lib/qa.sh 2>/dev/null || true)
+# Fence-stripping uses: sed to remove ``` lines, OR jq -r '.' to unwrap (no field access), OR --raw-input
+fence_strip_in_assess=$(echo "$assess_body" | grep -cE "sed.*\`\`\`|jq -r '\.'|jq --raw-input|strip_markdown_fence" 2>/dev/null; true)
+assert_equals "1" "$([ "${fence_strip_in_assess:-0}" -ge 1 ] && echo 1 || echo 0)" \
+    "25.2: assess_complexity() body has fence-stripping logic in lib/qa.sh"
+
+# --- Test: 27.2 append_budget_history() function exists in lib/budget.sh ---
+# After implementation: a helper function should exist to append iteration cost data
+# to the history array in budget.json.
+grep -q '^append_budget_history()' "$script_file"
+rc=$?
+assert_exit_code 0 "$rc" "27.2: append_budget_history() function exists in lib/budget.sh"
+
+# --- Test: 27.2 append_budget_history() writes valid JSON to budget history ---
+# Smoke test: call the function with mock token globals and verify the history grows.
+LAST_INPUT_TOKENS=1000
+LAST_OUTPUT_TOKENS=200
+LAST_CACHE_CREATE=0
+LAST_CACHE_READ=500
+
+# Create a minimal budget.json for the test
+budget_json="$AUTOMATON_DIR/budget.json"
+echo '{"history":[]}' > "$budget_json"
+
+if declare -f append_budget_history > /dev/null 2>&1; then
+    append_budget_history "build" "1" 30 || true
+    history_len=$(jq '.history | length' "$budget_json" 2>/dev/null || echo 0)
+    assert_equals "1" "$history_len" "27.2: append_budget_history() appends entry to budget.json"
+else
+    # Function not yet implemented — explicit failure
+    echo "FAIL: 27.2: append_budget_history() not yet implemented" >&2
+    ((_TEST_FAIL_COUNT++))
+fi
+
+
+# --- Test: 28.1 budget.sh uses batched jq reads in hot-path functions ---
+# After implementation: functions like check_budget_remaining() should use a
+# single jq call with @tsv or array output to read multiple fields at once.
+# Before: multiple `jq -r '.field'` calls on the same file.
+# After: `jq -r '[.f1,.f2,.f3] | @tsv'` or `jq -r '.f1, .f2, .f3'` patterns.
+budget_tsv_count=$(grep -cE '@tsv|read.*<<.*jq' \
+    "$_PROJECT_DIR/lib/budget.sh" 2>/dev/null; true)
+assert_equals "1" "$([ "${budget_tsv_count:-0}" -ge 1 ] && echo 1 || echo 0)" \
+    "28.1: lib/budget.sh uses batched jq reads (@tsv or read-from-jq pattern)"
+
+# --- Test: 28.2 qa.sh uses batched jq reads in hot-path functions ---
+# After implementation: check_qa_gate(), detect_oscillation(), assess_complexity()
+# should consolidate jq field reads from the same JSON file.
+qa_tsv_count=$(grep -cE '@tsv|read.*<<.*jq' \
+    "$_PROJECT_DIR/lib/qa.sh" 2>/dev/null; true)
+assert_equals "1" "$([ "${qa_tsv_count:-0}" -ge 1 ] && echo 1 || echo 0)" \
+    "28.2: lib/qa.sh uses batched jq reads (@tsv or read-from-jq pattern)"
+
+# --- Test: 28.3 evolution.sh uses batched jq reads in hot-path functions ---
+# After implementation: evolve_reflect(), evolve_observe() should batch
+# multiple field extractions from garden.json and metrics files.
+evolution_tsv_count=$(grep -cE '@tsv|read.*<<.*jq' \
+    "$_PROJECT_DIR/lib/evolution.sh" 2>/dev/null; true)
+assert_equals "1" "$([ "${evolution_tsv_count:-0}" -ge 1 ] && echo 1 || echo 0)" \
+    "28.3: lib/evolution.sh uses batched jq reads (@tsv or read-from-jq pattern)"
+
+# --- Test: 29.1 parallel_core.sh exists after split ---
+# After implementation: lib/parallel.sh is split into two focused modules.
+assert_file_exists "$_PROJECT_DIR/lib/parallel_core.sh" \
+    "29.1: lib/parallel_core.sh exists after parallel.sh split"
+
+# --- Test: 29.1 parallel_teams.sh exists after split ---
+assert_file_exists "$_PROJECT_DIR/lib/parallel_teams.sh" \
+    "29.1: lib/parallel_teams.sh exists after parallel.sh split"
+
+# --- Test: 29.2 automaton.sh sources both parallel modules ---
+# After implementation: the source block in automaton.sh must include both
+# parallel_core.sh and parallel_teams.sh (or parallel.sh must not be the only entry).
+sources_core=$(grep -c 'parallel_core\.sh' "$_PROJECT_DIR/automaton.sh" 2>/dev/null; true)
+sources_teams=$(grep -c 'parallel_teams\.sh' "$_PROJECT_DIR/automaton.sh" 2>/dev/null; true)
+assert_equals "1" "$([ "${sources_core:-0}" -ge 1 ] && echo 1 || echo 0)" \
+    "29.2: automaton.sh sources parallel_core.sh"
+assert_equals "1" "$([ "${sources_teams:-0}" -ge 1 ] && echo 1 || echo 0)" \
+    "29.2: automaton.sh sources parallel_teams.sh"
+
 test_summary
