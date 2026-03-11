@@ -20,6 +20,7 @@ const TEMPLATE_FILES = [
   'PROMPT_build.md',
   'PROMPT_review.md',
   'PROMPT_self_research.md',
+  'PROMPT_self_plan.md',
   'PROMPT_wizard.md',
   'PROMPT_qa.md',
   'PROMPT_evolve_reflect.md',

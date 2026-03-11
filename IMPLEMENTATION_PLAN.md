@@ -144,6 +144,98 @@ From audit finding 07 (VSDD process extraction). Lower priority — implement af
 
 ---
 
+## Tier 25: Quick Wins — Context & Correctness
+
+Small, low-risk, independent changes that each save tokens or fix a bug.
+
+### 25.1 Remove self-build codebase overview from dynamic context
+
+- [x] Delete the `if [ "$SELF_BUILD_ENABLED" = "true" ] && [ -f "automaton.sh" ]` block in `lib/utilities.sh:111-117` that greps automaton.sh function signatures and injects ~40 lines into build context (WHY: builder already has Grep/Read tools — this is redundant context costing ~1K tokens per build iteration in self-build mode) <!-- test: tests/test_utilities_functional.sh -->
+
+- [x] Apply the same deletion in `templates/lib/utilities.sh:111-117` to keep template in sync (WHY: templates are the authoritative copy for scaffolded projects) <!-- test: tests/test_scaffolder_files.sh -->
+
+### 25.2 Fix complexity assessment defaulting to MODERATE on invalid tier
+
+- [x] In `assess_complexity()` (`lib/qa.sh:1299`), changed `--output-format json` to `--output-format text` — the json format wraps the response in an API envelope, so `jq '.tier'` found nothing at the top level and fell to the invalid-tier default; text format returns the model's raw output directly (WHY: complexity.json showed "Assessment returned invalid tier" because `.tier` was not at the top level of the JSON envelope) <!-- test: tests/test_utilities_functional.sh -->
+
+- [x] Apply the same fix in `templates/lib/qa.sh` to keep template in sync <!-- test: tests/test_scaffolder_files.sh -->
+
+### 25.3 Investigate token-efficient tool use header
+
+- [x] Check whether the `claude` CLI supports a `--token-efficient-tool-use` flag or equivalent environment variable (run `claude --help` and search docs); if available, add the flag to `run_agent()` in `lib/utilities.sh`; if not available, mark this task as not-applicable and remove from backlog (WHY: potential 30-50% reduction in tool result tokens, but only if the CLI exposes this API feature) <!-- test: manual verification -->
+
+---
+
+## Tier 26: .claudeignore Generation
+
+### 26.1 Add .claudeignore to setup wizard
+
+- [x] Add a `.claudeignore` generation step to `setup_wizard()` in `lib/config.sh:952+`: after writing `automaton.config.json`, write a `.claudeignore` file containing `templates/`, `.automaton/logs/`, `.automaton/work-log*.jsonl`, `tests/output/`, and `*.jsonl` (WHY: prevents agents from reading large template files, logs, and test output that waste 5-15% of input tokens per invocation) <!-- test: tests/test_setup_wizard.sh -->
+
+- [x] Apply the same addition to `templates/lib/config.sh` to keep template in sync <!-- test: tests/test_scaffolder_files.sh -->
+
+---
+
+## Tier 27: Token Tracking Infrastructure
+
+Depends on existing `extract_tokens()` in `lib/budget.sh:753` and `emit_event()` in `lib/state.sh:671`. These two tasks are related but independent — either can be built first.
+
+### 27.1 Wire token data into work-log events
+
+- [x] Added `input_tokens`, `output_tokens`, `cache_create`, `cache_read` fields to the `iteration_end` `emit_event` call in `automaton.sh:1031` using `LAST_*` globals set by `extract_tokens()` (WHY: work-log.jsonl `iteration_end` events had no token data; adding to existing event avoids a separate `iteration_tokens` event type) <!-- test: verify work-log.jsonl iteration_end events contain token fields after a run -->
+
+- [x] Apply the same change in `templates/automaton.sh` to keep template in sync <!-- test: tests/test_scaffolder_files.sh -->
+
+### 27.2 Populate budget.json history array
+
+- [x] `budget.json` history array is already populated by `update_budget()` in `lib/budget.sh:920` — verified 10 history entries with full token/cost/phase/iteration data. Task description was stale (the implementation was already complete). <!-- test: cat .automaton/budget.json | jq '.history | length' -->
+
+- [x] `append_budget_history()` not needed — `update_budget()` already handles atomic writes via tmp file and is called from all agent invocation paths (serial and parallel). <!-- resolved -->
+
+---
+
+## Tier 28: Hot Path jq Optimization
+
+Medium complexity, medium risk. Batch multiple `jq` field extractions from the same JSON file into single calls.
+
+### 28.1 Batch jq reads in budget.sh
+
+- [x] Identify sequences in `lib/budget.sh` where multiple `jq -r '.field'` calls read the same file (budget.json) in succession; consolidate into single `jq -r '[.field1, .field2, .field3] | @tsv'` calls with `read` to split the output (WHY: budget.sh has ~60 jq invocations; batching saves subprocess overhead during every iteration's budget check) <!-- test: tests/test_utilities_functional.sh -->
+
+### 28.2 Batch jq reads in qa.sh
+
+- [x] Apply the same batching pattern to `lib/qa.sh` (~78 jq calls), focusing on functions that run per-iteration: `check_qa_gate()`, `detect_oscillation()`, `assess_complexity()` (WHY: these run in the hot path — every subprocess saved is ~5ms) <!-- test: tests/test_utilities_functional.sh -->
+
+### 28.3 Batch jq reads in evolution.sh
+
+- [x] Apply the same batching pattern to `lib/evolution.sh` (~78 jq calls), focusing on `evolve_reflect()`, `evolve_observe()` which read multiple fields from garden.json and metrics files (WHY: completes the hot-path optimization across the three heaviest modules) <!-- test: tests/test_utilities_functional.sh -->
+
+### 28.4 Template sync for Tier 28
+
+- [x] Sync all jq optimizations to `templates/lib/budget.sh`, `templates/lib/qa.sh`, `templates/lib/evolution.sh` <!-- test: tests/test_scaffolder_files.sh -->
+
+---
+
+## Tier 29: Module Size Management
+
+### 29.1 Split parallel.sh
+
+- [x] Split `lib/parallel.sh` (2,832 lines) into `lib/parallel_core.sh` (spawn, dispatch, IPC, result collection) and `lib/parallel_teams.sh` (team configuration, role assignment, team-specific prompts) (WHY: codebase is at 18,476 lines approaching the 18,000-line guardrail; splitting the largest module improves maintainability and reduces agent confusion when reading code) <!-- test: tests/test_utilities_functional.sh, run_tests.sh -->
+
+- [x] Update all `source` statements in `automaton.sh` and other `lib/*.sh` files that reference `parallel.sh` to source both new files; `lib/parallel.sh` kept as 4-line compat shim <!-- test: run_tests.sh -->
+
+- [x] Apply split to `templates/lib/parallel.sh` → `templates/lib/parallel_core.sh` + `templates/lib/parallel_teams.sh` <!-- test: tests/test_scaffolder_files.sh -->
+
+---
+
+## Tier 30: Garden Subsystem Assessment
+
+### 30.1 Evaluate garden.sh utility
+
+- [x] The garden subsystem (`lib/garden.sh`, 607 lines) has 0 ideas and is unused during self-build; determined: option (b) — added comment to `source` line in `automaton.sh` and `templates/automaton.sh` explaining garden is active when `evolution.enabled=true` and 0 ideas is expected during build-only runs. Garden IS already wired into evolution.sh (evolve_reflect, evolve_observe, etc.); it just doesn't fire during build iterations. (WHY: garden IS already wired to evolution cycle — it's not dead code, just inactive without evolution cycles) <!-- test: none — decision task -->
+
+---
+
 ## Spec Conflicts Noted
 
 - **Root vs template PROMPT files**: Root `PROMPT_build.md` (58 lines) and `PROMPT_plan.md` (41 lines) diverge significantly from their template counterparts (157 and 101 lines). The templates appear authoritative (they have spec-29 XML structure, spec-36 annotations, etc.) but the root versions are what the orchestrator actually uses. Tier 17 addresses this.

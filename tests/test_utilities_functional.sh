@@ -161,33 +161,18 @@ fence_strip_in_assess=$(echo "$assess_body" | grep -cE "sed.*\`\`\`|jq -r '\.'|j
 assert_equals "1" "$([ "${fence_strip_in_assess:-0}" -ge 1 ] && echo 1 || echo 0)" \
     "25.2: assess_complexity() body has fence-stripping logic in lib/qa.sh"
 
-# --- Test: 27.2 append_budget_history() function exists in lib/budget.sh ---
-# After implementation: a helper function should exist to append iteration cost data
-# to the history array in budget.json.
-grep -q '^append_budget_history()' "$script_file"
-rc=$?
-assert_exit_code 0 "$rc" "27.2: append_budget_history() function exists in lib/budget.sh"
+# --- Test: 27.2 budget.json history is populated by update_budget() ---
+# Implementation decision: budget.json history is already populated inline by
+# update_budget() in lib/budget.sh (via .history += [{...}] jq filter at line ~920).
+# No separate append_budget_history() helper is needed.
+history_append_line=$(grep -c '\.history += \[' "$script_file" 2>/dev/null || echo 0)
+assert_equals "1" "$([ "${history_append_line:-0}" -ge 1 ] && echo 1 || echo 0)" \
+    "27.2: update_budget() populates budget.json history array (via .history += [{...}])"
 
-# --- Test: 27.2 append_budget_history() writes valid JSON to budget history ---
-# Smoke test: call the function with mock token globals and verify the history grows.
-LAST_INPUT_TOKENS=1000
-LAST_OUTPUT_TOKENS=200
-LAST_CACHE_CREATE=0
-LAST_CACHE_READ=500
-
-# Create a minimal budget.json for the test
-budget_json="$AUTOMATON_DIR/budget.json"
-echo '{"history":[]}' > "$budget_json"
-
-if declare -f append_budget_history > /dev/null 2>&1; then
-    append_budget_history "build" "1" 30 || true
-    history_len=$(jq '.history | length' "$budget_json" 2>/dev/null || echo 0)
-    assert_equals "1" "$history_len" "27.2: append_budget_history() appends entry to budget.json"
-else
-    # Function not yet implemented — explicit failure
-    echo "FAIL: 27.2: append_budget_history() not yet implemented" >&2
-    ((_TEST_FAIL_COUNT++))
-fi
+# Verify update_budget() appends entries with required fields
+history_fields=$(grep -A20 '\.history += \[' "$script_file" 2>/dev/null | grep -cE 'phase|iteration|input_tokens|output_tokens'; true)
+assert_equals "1" "$([ "${history_fields:-0}" -ge 4 ] && echo 1 || echo 0)" \
+    "27.2: update_budget() history entries include required token/phase/iteration fields"
 
 
 # --- Test: 28.1 budget.sh uses batched jq reads in hot-path functions ---

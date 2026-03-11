@@ -160,9 +160,8 @@ _display_weekly_summary() {
     fi
 
     local old_week_start old_week_end tokens_used_week
-    old_week_start=$(jq -r '.week_start // ""' "$budget_file")
-    old_week_end=$(jq -r '.week_end // ""' "$budget_file")
-    tokens_used_week=$(jq '.tokens_used_this_week // 0' "$budget_file")
+    IFS=$'\t' read -r old_week_start old_week_end tokens_used_week < <(
+        jq -r '[.week_start // "", .week_end // "", (.tokens_used_this_week // 0 | tostring)] | @tsv' "$budget_file")
     local weekly_allowance="$BUDGET_WEEKLY_ALLOWANCE"
 
     if [ -z "$old_week_start" ] || [ -z "$old_week_end" ]; then
@@ -603,8 +602,8 @@ display_budget_check() {
         # Calculate week boundaries
         local week_start week_end
         if [ -f "$budget_file" ] && [ "$(jq -r '.mode // ""' "$budget_file")" = "allowance" ]; then
-            week_start=$(jq -r '.week_start // ""' "$budget_file")
-            week_end=$(jq -r '.week_end // ""' "$budget_file")
+            IFS=$'\t' read -r week_start week_end < <(
+                jq -r '[.week_start // "", .week_end // ""] | @tsv' "$budget_file")
         fi
         if [ -z "${week_start:-}" ]; then
             week_start=$(_allowance_week_start)
@@ -763,10 +762,8 @@ extract_tokens() {
         return
     fi
 
-    LAST_INPUT_TOKENS=$(echo "$usage_line" | jq -r '.usage.input_tokens // 0')
-    LAST_OUTPUT_TOKENS=$(echo "$usage_line" | jq -r '.usage.output_tokens // 0')
-    LAST_CACHE_CREATE=$(echo "$usage_line" | jq -r '.usage.cache_creation_input_tokens // 0')
-    LAST_CACHE_READ=$(echo "$usage_line" | jq -r '.usage.cache_read_input_tokens // 0')
+    IFS=$'\t' read -r LAST_INPUT_TOKENS LAST_OUTPUT_TOKENS LAST_CACHE_CREATE LAST_CACHE_READ < <(
+        echo "$usage_line" | jq -r '[.usage.input_tokens // 0, .usage.output_tokens // 0, .usage.cache_creation_input_tokens // 0, .usage.cache_read_input_tokens // 0] | @tsv')
 }
 
 # Detects auto-compaction by finding input_tokens drops between turns in
@@ -971,10 +968,9 @@ update_budget() {
     fi
 
     # Structured work log: budget_update (spec-55)
-    local cumulative_tokens
-    cumulative_tokens=$(jq -r '(.used.total_input + .used.total_output) // 0' "$budget_file" 2>/dev/null || echo 0)
-    local remaining_budget
-    remaining_budget=$(jq -r '(.limits.max_tokens - .used.total_input - .used.total_output) // 0' "$budget_file" 2>/dev/null || echo 0)
+    local cumulative_tokens remaining_budget
+    IFS=$'\t' read -r cumulative_tokens remaining_budget < <(
+        jq -r '[(.used.total_input + .used.total_output) // 0, (.limits.max_tokens - .used.total_input - .used.total_output) // 0] | @tsv' "$budget_file" 2>/dev/null) || { cumulative_tokens=0; remaining_budget=0; }
     emit_event "budget_update" "{\"tokens_used\":${cumulative_tokens},\"budget_remaining\":${remaining_budget},\"cost_usd\":${iter_cost}}"
 }
 

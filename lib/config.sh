@@ -1078,6 +1078,19 @@ setup_wizard() {
 
         printf '\nConfiguration written to automaton.config.json\n'
 
+        # --- Generate .claudeignore to reduce agent token usage ---
+        if [ ! -f ".claudeignore" ]; then
+            cat > .claudeignore << 'CLAUDEIGNORE'
+# Automaton: ignore directories that waste agent context tokens
+templates/
+.automaton/logs/
+.automaton/work-log*.jsonl
+test-output/
+*.log
+CLAUDEIGNORE
+            printf 'Created .claudeignore (prevents agents from reading templates/ and log files).\n'
+        fi
+
         # --- Create .automaton/ if absent ---
         if [ ! -d ".automaton" ]; then
             mkdir -p ".automaton"

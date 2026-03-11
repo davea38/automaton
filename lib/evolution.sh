@@ -32,10 +32,8 @@ _evolve_reflect() {
     local i=0
     while [ "$i" -lt "$alert_count" ]; do
         local metric_name metric_dir consec_deg category
-        metric_name=$(echo "$metric_alerts" | jq -r ".[$i].metric")
-        metric_dir=$(echo "$metric_alerts" | jq -r ".[$i].direction")
-        consec_deg=$(echo "$metric_alerts" | jq -r ".[$i].consecutive_degrading")
-        category=$(echo "$metric_alerts" | jq -r ".[$i].category")
+        IFS=$'\t' read -r metric_name metric_dir consec_deg category < <(
+            echo "$metric_alerts" | jq -r --argjson i "$i" '.[$i] | [.metric, .direction, (.consecutive_degrading | tostring), .category] | @tsv')
 
         _signal_emit "attention_needed" \
             "Degrading metric: $metric_name" \
@@ -52,8 +50,8 @@ _evolve_reflect() {
         i=0
         while [ "$i" -lt "$alert_count" ]; do
             local metric_name category
-            metric_name=$(echo "$metric_alerts" | jq -r ".[$i].metric")
-            category=$(echo "$metric_alerts" | jq -r ".[$i].category")
+            IFS=$'\t' read -r metric_name category < <(
+                echo "$metric_alerts" | jq -r --argjson i "$i" '.[$i] | [.metric, .category] | @tsv')
 
             local tags="auto-seed,metrics,$category,$metric_name"
             local dup_id
@@ -89,11 +87,8 @@ _evolve_reflect() {
         local j=0
         while [ "$j" -lt "$unlinked_count" ]; do
             local sig_strength sig_title sig_desc sig_id sig_type
-            sig_strength=$(echo "$unlinked_signals" | jq -r ".[$j].strength")
-            sig_title=$(echo "$unlinked_signals" | jq -r ".[$j].title")
-            sig_desc=$(echo "$unlinked_signals" | jq -r ".[$j].description")
-            sig_id=$(echo "$unlinked_signals" | jq -r ".[$j].id")
-            sig_type=$(echo "$unlinked_signals" | jq -r ".[$j].type")
+            IFS=$'\t' read -r sig_strength sig_title sig_desc sig_id sig_type < <(
+                echo "$unlinked_signals" | jq -r --argjson j "$j" '.[$j] | [(.strength | tostring), .title, .description, .id, .type] | @tsv')
 
             local above_threshold
             above_threshold=$(awk -v s="$sig_strength" -v t="$seed_threshold" \
@@ -212,8 +207,8 @@ _evolve_ideate() {
     local metric_alerts="[]"
     local reflect_recommendation=""
     if [ -f "$reflect_file" ]; then
-        metric_alerts=$(jq '.metric_alerts // []' "$reflect_file" 2>/dev/null || echo "[]")
-        reflect_recommendation=$(jq -r '.recommendation // ""' "$reflect_file" 2>/dev/null || echo "")
+        IFS=$'\t' read -r metric_alerts reflect_recommendation < <(
+            jq -r '[(.metric_alerts // [] | tojson), .recommendation // ""] | @tsv' "$reflect_file" 2>/dev/null) || { metric_alerts="[]"; reflect_recommendation=""; }
     else
         log "EVOLVE" "IDEATE: No reflect.json found, proceeding without reflection summary"
     fi
@@ -344,8 +339,8 @@ _evolve_ideate() {
                 local bfile="$AUTOMATON_DIR/garden/${bid}.json"
                 [ -f "$bfile" ] || continue
                 local btitle bpriority
-                btitle=$(jq -r '.title' "$bfile" 2>/dev/null)
-                bpriority=$(jq -r '.priority // 0' "$bfile" 2>/dev/null)
+                IFS=$'\t' read -r btitle bpriority < <(
+                    jq -r '[.title, (.priority // 0 | tostring)] | @tsv' "$bfile" 2>/dev/null)
                 ideas_promoted_to_bloom=$((ideas_promoted_to_bloom + 1))
 
                 if [ "$first" = "true" ]; then
@@ -464,9 +459,8 @@ _evolve_evaluate() {
     local tokens_used="${_QUORUM_CYCLE_TOKENS:-0}"
 
     if [ -n "$vote_file" ] && [ -f "$vote_file" ]; then
-        vote_id=$(jq -r '.vote_id // "none"' "$vote_file" 2>/dev/null || echo "none")
-        eval_result=$(jq -r '.tally.result // "unknown"' "$vote_file" 2>/dev/null || echo "unknown")
-        conditions=$(jq '.tally.conditions // []' "$vote_file" 2>/dev/null || echo "[]")
+        IFS=$'\t' read -r vote_id eval_result conditions < <(
+            jq -r '[.vote_id // "none", .tally.result // "unknown", (.tally.conditions // [] | tojson)] | @tsv' "$vote_file" 2>/dev/null) || { vote_id="none"; eval_result="unknown"; conditions="[]"; }
     elif [ "${QUORUM_ENABLED:-true}" != "true" ]; then
         eval_result="approved"
         vote_id="auto-approved"
@@ -528,12 +522,9 @@ _evolve_implement() {
         return 0
     fi
 
-    local eval_result
-    eval_result=$(jq -r '.result // "unknown"' "$eval_file" 2>/dev/null || echo "unknown")
-    local idea_id
-    idea_id=$(jq -r '.evaluated // "none"' "$eval_file" 2>/dev/null || echo "none")
-    local conditions
-    conditions=$(jq -r '.conditions // "[]"' "$eval_file" 2>/dev/null || echo "[]")
+    local eval_result idea_id conditions
+    IFS=$'\t' read -r eval_result idea_id conditions < <(
+        jq -r '[.result // "unknown", .evaluated // "none", .conditions // "[]"] | @tsv' "$eval_file" 2>/dev/null) || { eval_result="unknown"; idea_id="none"; conditions="[]"; }
 
     # Skip if no idea was approved
     if [ "$eval_result" != "approved" ] || [ "$idea_id" = "none" ]; then
@@ -558,8 +549,8 @@ _evolve_implement() {
     local idea_file="$AUTOMATON_DIR/garden/${idea_id}.json"
     local idea_title="" idea_description=""
     if [ -f "$idea_file" ]; then
-        idea_title=$(jq -r '.title // "Untitled"' "$idea_file" 2>/dev/null || echo "Untitled")
-        idea_description=$(jq -r '.description // ""' "$idea_file" 2>/dev/null || echo "")
+        IFS=$'\t' read -r idea_title idea_description < <(
+            jq -r '[.title // "Untitled", .description // ""] | @tsv' "$idea_file" 2>/dev/null) || { idea_title="Untitled"; idea_description=""; }
     fi
 
     # Write a minimal implementation plan on the evolution branch
@@ -732,12 +723,9 @@ _evolve_observe() {
         return 0
     fi
 
-    local impl_status
-    impl_status=$(jq -r '.status // "unknown"' "$impl_file" 2>/dev/null || echo "unknown")
-    local idea_id
-    idea_id=$(jq -r '.idea_id // "none"' "$impl_file" 2>/dev/null || echo "none")
-    local branch
-    branch=$(jq -r '.branch // "none"' "$impl_file" 2>/dev/null || echo "none")
+    local impl_status idea_id branch
+    IFS=$'\t' read -r impl_status idea_id branch < <(
+        jq -r '[.status // "unknown", .idea_id // "none", .branch // "none"] | @tsv' "$impl_file" 2>/dev/null) || { impl_status="unknown"; idea_id="none"; branch="none"; }
 
     # Skip if implementation was not completed
     if [ "$impl_status" != "completed" ] || [ "$idea_id" = "none" ]; then

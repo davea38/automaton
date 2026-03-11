@@ -129,7 +129,7 @@ cat > "$prompt_file" <<'EOF'
 # Static Prompt Content
 This should be preserved exactly.
 <dynamic_context>
-placeholder
+SENTINEL_ORIGINAL_CONTEXT_XYZ
 </dynamic_context>
 # Footer content
 EOF
@@ -142,7 +142,7 @@ assert_contains "$augmented" "Static Prompt Content" "augmented preserves static
 assert_contains "$augmented" "Phase: build" "augmented includes phase"
 assert_contains "$augmented" "Iteration: 3" "augmented includes iteration"
 assert_contains "$augmented" "Footer content" "augmented preserves footer"
-assert_not_contains "$augmented" "placeholder" "augmented replaces placeholder"
+assert_not_contains "$augmented" "SENTINEL_ORIGINAL_CONTEXT_XYZ" "augmented replaces placeholder"
 
 # --- Test: log_prompt_size ---
 

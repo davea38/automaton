@@ -121,5 +121,22 @@ else
     ((_TEST_PASS_COUNT++))
 fi
 
+# --- Test 13: 26.1 setup_wizard generates .claudeignore ---
+# After implementation: setup_wizard() in lib/config.sh must write a .claudeignore
+# file containing key exclusion patterns (templates/, .automaton/logs/, *.jsonl).
+grep -q '\.claudeignore' "$script_file"
+rc=$?
+assert_exit_code 0 "$rc" "26.1: setup_wizard references .claudeignore generation"
+
+# --- Test 14: 26.1 .claudeignore content covers expected paths ---
+# The generated file should exclude template files, logs, and test output dirs.
+claudeignore_content=$(grep -A20 '\.claudeignore' "$_PROJECT_DIR/lib/config.sh" 2>/dev/null || true)
+assert_contains "$claudeignore_content" "templates/" \
+    "26.1: .claudeignore excludes templates/ directory"
+assert_contains "$claudeignore_content" ".automaton/logs/" \
+    "26.1: .claudeignore excludes .automaton/logs/ directory"
+assert_contains "$claudeignore_content" "*.jsonl" \
+    "26.1: .claudeignore excludes *.jsonl work-log files"
+
 cd "$SCRIPT_DIR"
 test_summary

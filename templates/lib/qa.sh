@@ -72,11 +72,17 @@ gate_research_completeness() {
     fi
 
     # Check: no TBD/TODO remaining in specs
-    local tbds
-    tbds=$(grep -ri 'TBD\|TODO' specs/ 2>/dev/null | wc -l)
-    if [ "$tbds" -gt 0 ]; then
-        log "ORCHESTRATOR" "  FAIL: $tbds TBD/TODO markers remaining in specs"
-        pass=false
+    # In self-build mode, specs/ contains automaton's own spec files with
+    # structural TBD markers — these are not unresolved research questions.
+    if [ "${SELF_BUILD_ENABLED:-false}" = "true" ]; then
+        log "ORCHESTRATOR" "  SKIP: TBD/TODO check skipped in self-build mode (own specs)"
+    else
+        local tbds
+        tbds=$(grep -ri 'TBD\|TODO' specs/ 2>/dev/null | wc -l)
+        if [ "$tbds" -gt 0 ]; then
+            log "ORCHESTRATOR" "  FAIL: $tbds TBD/TODO markers remaining in specs"
+            pass=false
+        fi
     fi
 
     $pass
@@ -560,11 +566,8 @@ _qa_create_fix_tasks() {
     local i=0
     while [ "$i" -lt "$num_failures" ]; do
         local id type desc spec persistent
-        id=$(echo "$failures" | jq -r ".[$i].id")
-        type=$(echo "$failures" | jq -r ".[$i].type")
-        desc=$(echo "$failures" | jq -r ".[$i].description")
-        spec=$(echo "$failures" | jq -r ".[$i].spec // empty")
-        persistent=$(echo "$failures" | jq -r ".[$i].persistent // false")
+        IFS=$'\t' read -r id type desc spec persistent < <(
+            echo "$failures" | jq -r --argjson i "$i" '.[$i] | [.id, .type, .description, (.spec // ""), (.persistent // false | tostring)] | @tsv')
 
         # Skip if this failure ID already has a QA task in the plan
         if grep -q "QA-.*${id}" "$plan_file" 2>/dev/null; then
@@ -602,6 +605,71 @@ _qa_create_fix_tasks() {
     echo "$count"
 }
 
+# Detects QA oscillation: a failure that was fixed in a later iteration reappears.
+# Scans iteration history files for failure IDs that appear in current failures
+# AND appeared in a prior (non-adjacent) iteration but were absent in between.
+# Usage: _qa_detect_oscillation current_iter_num current_failures_json
+# Returns: 0 if oscillation detected (with oscillating IDs on stdout), 1 if not.
+_qa_detect_oscillation() {
+    local current_iter="$1"
+    local current_failures="$2"
+
+    # Need at least 3 iterations to detect a cycle (fail→fix→re-fail)
+    if [ "$current_iter" -lt 3 ]; then
+        return 1
+    fi
+
+    local current_ids
+    current_ids=$(echo "$current_failures" | jq -r '.[].id' 2>/dev/null)
+    if [ -z "$current_ids" ]; then
+        return 1
+    fi
+
+    local oscillating=""
+
+    # For each current failure ID, check if it appeared in any earlier iteration
+    # but was absent in at least one intermediate iteration (the "fixed" gap)
+    while IFS= read -r fid; do
+        local seen_before=false
+        local was_absent=false
+
+        # Walk iterations from 1 to current-1
+        local i=1
+        while [ "$i" -lt "$current_iter" ]; do
+            local iter_file="${AUTOMATON_DIR}/qa/iteration-${i}.json"
+            if [ -f "$iter_file" ]; then
+                local has_id
+                has_id=$(jq -r --arg id "$fid" '.failures[]? | select(.id == $id) | .id' "$iter_file" 2>/dev/null)
+                if [ -n "$has_id" ]; then
+                    if [ "$was_absent" = "true" ]; then
+                        # This shouldn't happen mid-walk since we're reading
+                        # historically, but the pattern check continues
+                        :
+                    fi
+                    seen_before=true
+                else
+                    if [ "$seen_before" = "true" ]; then
+                        was_absent=true
+                    fi
+                fi
+            fi
+            i=$((i + 1))
+        done
+
+        # Oscillation = seen in a prior iter, absent in a later iter, now back
+        if [ "$seen_before" = "true" ] && [ "$was_absent" = "true" ]; then
+            oscillating="${oscillating:+$oscillating,}$fid"
+        fi
+    done <<< "$current_ids"
+
+    if [ -n "$oscillating" ]; then
+        echo "$oscillating"
+        return 0
+    fi
+
+    return 1
+}
+
 # Writes .automaton/qa/failure-report.md listing unresolved failures with types,
 # iteration history, and persistence flags. Called when QA loop exhausts retries.
 # The report is passed as context to Phase 4 review so the reviewer knows exactly
@@ -630,10 +698,8 @@ _qa_write_failure_report() {
             local i=0
             while [ "$i" -lt "$num_failures" ]; do
                 local fid ftype fdesc fpersist
-                fid=$(echo "$final_failures" | jq -r ".[$i].id")
-                ftype=$(echo "$final_failures" | jq -r ".[$i].type")
-                fdesc=$(echo "$final_failures" | jq -r ".[$i].description" | head -1 | cut -c1-120)
-                fpersist=$(echo "$final_failures" | jq -r ".[$i].persistent // false")
+                IFS=$'\t' read -r fid ftype fdesc fpersist < <(
+                    echo "$final_failures" | jq -r --argjson i "$i" '.[$i] | [.id, .type, (.description | split("\n")[0][0:120]), (.persistent // false | tostring)] | @tsv')
                 echo "| ${fid} | ${ftype} | ${fpersist} | ${fdesc} |"
                 i=$((i + 1))
             done
@@ -651,10 +717,8 @@ _qa_write_failure_report() {
             local iter_file="${AUTOMATON_DIR}/qa/iteration-${iter_num}.json"
             if [ -f "$iter_file" ]; then
                 local ts verdict failed passed
-                ts=$(jq -r '.timestamp // "unknown"' "$iter_file")
-                verdict=$(jq -r '.verdict // "unknown"' "$iter_file")
-                failed=$(jq -r '.failed // 0' "$iter_file")
-                passed=$(jq -r '.passed // 0' "$iter_file")
+                IFS=$'\t' read -r ts verdict failed passed < <(
+                    jq -r '[.timestamp // "unknown", .verdict // "unknown", (.failed // 0 | tostring), (.passed // 0 | tostring)] | @tsv' "$iter_file")
                 echo "- **Iteration ${iter_num}** (${ts}): ${verdict} — ${passed} passed, ${failed} failed"
             fi
             iter_num=$((iter_num + 1))
@@ -705,10 +769,8 @@ _qa_run_loop() {
             result=$(_qa_validate "$qa_iter" "$prev_iter" "$test_cmd" "$spec_dir")
         fi
 
-        last_verdict=$(echo "$result" | jq -r '.verdict')
-        last_failures=$(echo "$result" | jq -c '.failures')
-        last_failed=$(echo "$result" | jq -r '.failed')
-        last_passed=$(echo "$result" | jq -r '.passed')
+        IFS=$'\t' read -r last_verdict last_failures last_failed last_passed < <(
+            echo "$result" | jq -r '[.verdict, (.failures | tojson), (.failed | tostring), (.passed | tostring)] | @tsv')
 
         # Step 2: Early exit on PASS
         if [ "$last_verdict" = "PASS" ]; then
@@ -717,6 +779,15 @@ _qa_run_loop() {
         fi
 
         log "QA" "Iteration ${qa_iter}: ${last_failed} failure(s) found"
+
+        # Step 2b: Oscillation detection — abort if fixes are fighting each other
+        local oscillating_ids=""
+        if oscillating_ids=$(_qa_detect_oscillation "$qa_iter" "$last_failures"); then
+            log "QA" "Oscillation detected: failures cycling — ${oscillating_ids}"
+            log "QA" "Escalating to review instead of retrying"
+            last_verdict="OSCILLATION"
+            break
+        fi
 
         # Step 3: Create fix tasks (only if more iterations remain)
         if [ "$qa_iter" -lt "$max_iter" ]; then
@@ -829,9 +900,12 @@ _critique_generate_report() {
     local report_file="${AUTOMATON_DIR:-.automaton}/SPEC_CRITIQUE.md"
 
     local error_count warning_count info_count
-    error_count=$(echo "$json_output" | jq '[.findings[] | select(.severity == "ERROR")] | length' 2>/dev/null || echo 0)
-    warning_count=$(echo "$json_output" | jq '[.findings[] | select(.severity == "WARNING")] | length' 2>/dev/null || echo 0)
-    info_count=$(echo "$json_output" | jq '[.findings[] | select(.severity == "INFO")] | length' 2>/dev/null || echo 0)
+    IFS=$'\t' read -r error_count warning_count info_count < <(
+        echo "$json_output" | jq -r '
+            ([.findings[] | select(.severity == "ERROR")] | length) as $e |
+            ([.findings[] | select(.severity == "WARNING")] | length) as $w |
+            ([.findings[] | select(.severity == "INFO")] | length) as $i |
+            [$e, $w, $i] | @tsv' 2>/dev/null) || { error_count=0; warning_count=0; info_count=0; }
 
     {
         echo "# Spec Critique Report"
@@ -1216,13 +1290,15 @@ Respond with ONLY a JSON object, no other text:
 {\"tier\": \"SIMPLE|MODERATE|COMPLEX\", \"rationale\": \"one-line reason\"}"
 
         local claude_output=""
-        claude_output=$(echo "$prompt" | claude -p --model haiku --output-format json 2>/dev/null) || true
+        claude_output=$(echo "$prompt" | claude -p --model haiku --output-format text 2>/dev/null) || true
 
-        # Parse the response
+        # Parse the response — strip markdown code fences if present (model sometimes
+        # wraps JSON in ```json ... ``` despite being asked not to)
         if [ -n "$claude_output" ]; then
-            local parsed_tier parsed_rationale
-            parsed_tier=$(echo "$claude_output" | jq -r '.tier // empty' 2>/dev/null) || true
-            parsed_rationale=$(echo "$claude_output" | jq -r '.rationale // empty' 2>/dev/null) || true
+            local parsed_tier parsed_rationale clean_output
+            clean_output=$(echo "$claude_output" | sed 's/^```[a-z]*//;s/^```//' | grep -v '^```' || true)
+            IFS=$'\t' read -r parsed_tier parsed_rationale < <(
+                echo "$clean_output" | jq -r '[.tier // "", .rationale // ""] | @tsv' 2>/dev/null) || true
 
             # Validate tier value
             case "${parsed_tier:-}" in

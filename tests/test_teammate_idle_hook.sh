@@ -119,8 +119,11 @@ cat > "$TMPDIR/alt/.automaton/wave/agent_teams_tasks.json" <<'JSON'
 JSON
 
 exit_code=0
+# Explicitly unset AUTOMATON_PROJECT_ROOT so the fallback to CLAUDE_PROJECT_DIR is exercised.
+# (When running inside an automaton self-build session, AUTOMATON_PROJECT_ROOT is exported
+# into the environment and would otherwise shadow the fallback.)
 echo '{"teammate_name": "builder-1", "team_name": "automaton-build"}' \
-    | CLAUDE_PROJECT_DIR="$TMPDIR/alt" bash "$HOOK_SCRIPT" 2>/dev/null || exit_code=$?
+    | env -u AUTOMATON_PROJECT_ROOT CLAUDE_PROJECT_DIR="$TMPDIR/alt" bash "$HOOK_SCRIPT" 2>/dev/null || exit_code=$?
 assert_exit_code 2 "$exit_code" "Falls back to CLAUDE_PROJECT_DIR when AUTOMATON_PROJECT_ROOT unset"
 
 test_summary

@@ -264,6 +264,7 @@ git() { :; }
 EOF
 
 cat >> "$test_dir/harness_val_smoke.sh" <<TESTEOF
+cd "$test_dir/proj8"
 self_build_checkpoint
 
 # Replace automaton.sh with syntactically valid but smoke-test-failing script

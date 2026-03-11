@@ -259,13 +259,6 @@ inject_dynamic_context() {
                     echo ""
                 fi
 
-                if [ "$SELF_BUILD_ENABLED" = "true" ] && [ -f "automaton.sh" ]; then
-                    echo "## Codebase Overview (automaton.sh)"
-                    echo '```'
-                    grep -n '^[a-z_]*()' automaton.sh | head -40 || true
-                    echo '```'
-                    echo ""
-                fi
             fi
         fi
 

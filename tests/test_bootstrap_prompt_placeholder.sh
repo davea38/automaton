@@ -33,6 +33,11 @@ dynamic_section=$(sed -n '/<dynamic_context>/,/<\/dynamic_context>/p' "$PROJECT_
 echo "$dynamic_section" | grep -q 'BOOTSTRAP_MANIFEST'
 assert_exit_code 0 $? "PROMPT_self_research.md has BOOTSTRAP_MANIFEST in dynamic_context"
 
+# --- Test 5b: PROMPT_self_plan.md has BOOTSTRAP_MANIFEST placeholder ---
+dynamic_section=$(sed -n '/<dynamic_context>/,/<\/dynamic_context>/p' "$PROJECT_ROOT/PROMPT_self_plan.md")
+echo "$dynamic_section" | grep -q 'BOOTSTRAP_MANIFEST'
+assert_exit_code 0 $? "PROMPT_self_plan.md has BOOTSTRAP_MANIFEST in dynamic_context"
+
 # --- Test 6: No Phase 0 Load Context in agent PROMPT files (replaced by bootstrap) ---
 for file in PROMPT_build.md PROMPT_plan.md PROMPT_research.md PROMPT_review.md; do
     if grep -q "Phase 0.*Load Context" "$PROJECT_ROOT/$file"; then
@@ -50,6 +55,15 @@ if grep -q "Phase 0.*Load Context" "$PROJECT_ROOT/PROMPT_self_research.md"; then
     ((_TEST_FAIL_COUNT++))
 else
     echo "PASS: PROMPT_self_research.md Phase 0 Load Context replaced"
+    ((_TEST_PASS_COUNT++))
+fi
+
+# --- Test 7b: PROMPT_self_plan.md Phase 0 replaced ---
+if grep -q "Phase 0.*Load Context" "$PROJECT_ROOT/PROMPT_self_plan.md"; then
+    echo "FAIL: PROMPT_self_plan.md still has Phase 0 Load Context" >&2
+    ((_TEST_FAIL_COUNT++))
+else
+    echo "PASS: PROMPT_self_plan.md Phase 0 Load Context replaced"
     ((_TEST_PASS_COUNT++))
 fi
 
@@ -74,7 +88,7 @@ else
 fi
 
 # --- Test 10: Template files match root PROMPT files ---
-for file in PROMPT_build.md PROMPT_plan.md PROMPT_research.md PROMPT_review.md PROMPT_self_research.md; do
+for file in PROMPT_build.md PROMPT_plan.md PROMPT_research.md PROMPT_review.md PROMPT_self_research.md PROMPT_self_plan.md; do
     if [ -f "$PROJECT_ROOT/templates/$file" ]; then
         if diff -q "$PROJECT_ROOT/$file" "$PROJECT_ROOT/templates/$file" > /dev/null 2>&1; then
             echo "PASS: templates/$file matches root $file"

@@ -27,7 +27,7 @@ source "$AUTOMATON_LIB_DIR/budget.sh"
 source "$AUTOMATON_LIB_DIR/errors.sh"
 source "$AUTOMATON_LIB_DIR/lifecycle.sh"
 source "$AUTOMATON_LIB_DIR/context.sh"
-source "$AUTOMATON_LIB_DIR/garden.sh"
+source "$AUTOMATON_LIB_DIR/garden.sh"  # spec-41/44: active when evolution.enabled=true; 0 ideas during build-only runs
 source "$AUTOMATON_LIB_DIR/signals.sh"
 source "$AUTOMATON_LIB_DIR/quorum.sh"
 source "$AUTOMATON_LIB_DIR/metrics.sh"

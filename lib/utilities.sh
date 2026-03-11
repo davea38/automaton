@@ -35,6 +35,7 @@ _prompt_to_agent_name() {
         PROMPT_build.md)          echo "automaton-builder" ;;
         PROMPT_review.md)         echo "automaton-reviewer" ;;
         PROMPT_self_research.md)  echo "automaton-self-researcher" ;;
+        PROMPT_self_plan.md)      echo "automaton-self-planner" ;;
         *)                        echo "" ;;
     esac
 }
@@ -107,13 +108,6 @@ _build_dynamic_context_stdin() {
             dynamic_content+=""$'\n'
         fi
 
-        if [ "$SELF_BUILD_ENABLED" = "true" ] && [ -f "automaton.sh" ]; then
-            dynamic_content+="## Codebase Overview (automaton.sh)"$'\n'
-            dynamic_content+='```'$'\n'
-            dynamic_content+=$(grep -n '^[a-z_]*()' automaton.sh | head -40 || true)$'\n'
-            dynamic_content+='```'$'\n'
-            dynamic_content+=""$'\n'
-        fi
     fi
 
     # Review-specific context: inject QA failure report when available (spec-46.4)
@@ -503,7 +497,7 @@ run_agent() {
         local dynamic_context
         dynamic_context=$(_build_dynamic_context_stdin "$prompt_file")
 
-        local cmd_args=("--agent" "$agent_name" "--output-format" "stream-json" "--model" "$model")
+        local cmd_args=("--agent" "$agent_name" "--output-format" "stream-json" "--model" "$model" "--betas" "token-efficient-tool-use-2025-02-19")
 
         if [ "$FLAG_DANGEROUSLY_SKIP_PERMISSIONS" = "true" ]; then
             cmd_args+=("--dangerously-skip-permissions")
@@ -571,7 +565,7 @@ run_agent() {
     # Check if static prefix meets minimum cacheable threshold (spec-30)
     check_cache_prefix_threshold "$effective_prompt" "$model"
 
-    local cmd_args=("-p" "--output-format" "stream-json" "--model" "$model")
+    local cmd_args=("-p" "--output-format" "stream-json" "--model" "$model" "--betas" "token-efficient-tool-use-2025-02-19")
 
     if [ "$FLAG_DANGEROUSLY_SKIP_PERMISSIONS" = "true" ]; then
         cmd_args+=("--dangerously-skip-permissions")
@@ -630,7 +624,13 @@ get_phase_prompt() {
                 echo "${_install_dir}/PROMPT_research.md"
             fi
             ;;
-        plan)     echo "${_install_dir}/PROMPT_plan.md" ;;
+        plan)
+            if [ "${ARG_SELF:-false}" = "true" ] && [ -f "${_install_dir}/PROMPT_self_plan.md" ]; then
+                echo "${_install_dir}/PROMPT_self_plan.md"
+            else
+                echo "${_install_dir}/PROMPT_plan.md"
+            fi
+            ;;
         build)    echo "${_install_dir}/PROMPT_build.md" ;;
         review)   echo "${_install_dir}/PROMPT_review.md" ;;
     esac
