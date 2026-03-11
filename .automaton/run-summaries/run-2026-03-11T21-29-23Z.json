@@ -1,0 +1,43 @@
+{
+  "run_id": "run-2026-03-11T21-29-23Z",
+  "started_at": "2026-03-11T21:29:23Z",
+  "completed_at": "2026-03-11T22:35:54Z",
+  "exit_code": 130,
+  "phases_completed": [
+    "research",
+    "plan",
+    "build",
+    "review"
+  ],
+  "iterations_total": 25,
+  "tasks_completed": 58,
+  "tasks_remaining": 0,
+  "tokens_used": {
+    "input": 1506,
+    "output": 158673,
+    "cache_read": 18948201,
+    "cache_create": 709638
+  },
+  "estimated_cost_usd": 12.85,
+  "learnings_added": 0,
+  "new_learnings": [],
+  "git_commits": [
+    "10d6f96",
+    "2db870e",
+    "b9b7da7",
+    "9879b1e",
+    "3468b7f",
+    "a58e040",
+    "8c12ae7",
+    "2d07442"
+  ],
+  "test_coverage": {
+    "tasks_with_tests": 32,
+    "tasks_without_tests": 5,
+    "tasks_exempt": 17,
+    "tasks_unannotated": 4,
+    "coverage_ratio": 0.86,
+    "tests_passing": 0,
+    "tests_failing": 0
+  }
+}

@@ -11,6 +11,18 @@
       "phases": {},
       "bootstrap_tokens_saved": 0,
       "bootstrap_avg_time_ms": 35
+    },
+    {
+      "run_id": "run-2026-03-11T21-29-23Z",
+      "mode": "allowance",
+      "tokens_used": 160179,
+      "estimated_cost_usd": 12.85,
+      "cache_hit_ratio": 0.96,
+      "peak_utilization": 12.3,
+      "avg_utilization": 3.3,
+      "phases": {},
+      "bootstrap_tokens_saved": 710021,
+      "bootstrap_avg_time_ms": 90
     }
   ],
   "weekly_totals": [
@@ -18,6 +30,12 @@
       "week_start": "2026-03-02",
       "week_end": "2026-03-08",
       "tokens_used": 5609,
+      "runs": 1
+    },
+    {
+      "week_start": "2026-03-09",
+      "week_end": "2026-03-15",
+      "tokens_used": 160179,
       "runs": 1
     }
   ]
