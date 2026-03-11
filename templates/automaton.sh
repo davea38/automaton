@@ -5,7 +5,8 @@
 set -euo pipefail
 
 AUTOMATON_VERSION="0.1.0"
-AUTOMATON_DIR=".automaton"
+AUTOMATON_INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+AUTOMATON_DIR="$(pwd)/.automaton"
 
 # Safety ceiling for unlimited build iterations. When max_iterations.build=0
 # (unlimited), the build phase can run indefinitely. This constant prevents
@@ -26,7 +27,7 @@ source "$AUTOMATON_LIB_DIR/budget.sh"
 source "$AUTOMATON_LIB_DIR/errors.sh"
 source "$AUTOMATON_LIB_DIR/lifecycle.sh"
 source "$AUTOMATON_LIB_DIR/context.sh"
-source "$AUTOMATON_LIB_DIR/garden.sh"
+source "$AUTOMATON_LIB_DIR/garden.sh"  # spec-41/44: active when evolution.enabled=true; 0 ideas during build-only runs
 source "$AUTOMATON_LIB_DIR/signals.sh"
 source "$AUTOMATON_LIB_DIR/quorum.sh"
 source "$AUTOMATON_LIB_DIR/metrics.sh"
@@ -81,6 +82,7 @@ ARG_SETUP=false
 ARG_NO_SETUP=false
 ARG_WIZARD=false
 ARG_NO_WIZARD=false
+ARG_SCOPE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -115,6 +117,14 @@ while [ $# -gt 0 ]; do
         --self)
             ARG_SELF=true
             shift
+            ;;
+        --scope)
+            if [ -z "${2:-}" ]; then
+                echo "Error: --scope requires a directory path argument." >&2
+                exit 1
+            fi
+            ARG_SCOPE="$2"
+            shift 2
             ;;
         --continue)
             ARG_CONTINUE=true
@@ -293,6 +303,26 @@ fi
 if [ "$ARG_WIZARD" = "true" ] && [ "$ARG_NO_WIZARD" = "true" ]; then
     echo "Error: --wizard and --no-wizard are mutually exclusive." >&2
     exit 1
+fi
+
+# --- Mutual exclusion: --scope + --self (spec-60) ---
+if [ -n "$ARG_SCOPE" ] && [ "$ARG_SELF" = "true" ]; then
+    echo "Error: --scope and --self are mutually exclusive." >&2
+    exit 1
+fi
+
+# --- Resolve --scope path (spec-60) ---
+PROJECT_ROOT="$(pwd)"
+if [ -n "$ARG_SCOPE" ]; then
+    if [ ! -e "$ARG_SCOPE" ]; then
+        echo "Error: --scope path does not exist or is not accessible: $ARG_SCOPE" >&2
+        exit 1
+    fi
+    if [ ! -d "$ARG_SCOPE" ]; then
+        echo "Error: --scope path is not a directory: $ARG_SCOPE" >&2
+        exit 1
+    fi
+    PROJECT_ROOT="$(cd "$ARG_SCOPE" && pwd)"
 fi
 
 # --- Doctor / health check (spec-48) ---
@@ -855,6 +885,22 @@ run_orchestration() {
             log "ORCHESTRATOR" "Skipping review (--skip-review)"
             transition_to_phase "COMPLETE"
             continue
+        fi
+
+        # Tiered review (audit wave 5): run mechanical Sonnet pass first.
+        # If tests/lint/build fail, skip the expensive Opus judgment pass and
+        # return to build with fix tasks already appended by the mechanical agent.
+        if [ "$current_phase" = "review" ] && [ "${TIERED_REVIEW_ENABLED:-true}" = "true" ]; then
+            if ! run_mechanical_review; then
+                review_attempts=$((review_attempts + 1))
+                if [ "$review_attempts" -ge 3 ]; then
+                    escalate "Mechanical review failed after $review_attempts attempts. Human intervention required."
+                fi
+                log "ORCHESTRATOR" "Mechanical review failed ($review_attempts/3). Returning to build."
+                stall_count=0
+                transition_to_phase "build"
+                continue
+            fi
         fi
 
         log "ORCHESTRATOR" "Phase: $current_phase (max: $([ "$max_iter" -eq 0 ] && echo 'unlimited' || echo "$max_iter"))"

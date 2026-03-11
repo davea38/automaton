@@ -35,6 +35,7 @@ _prompt_to_agent_name() {
         PROMPT_build.md)          echo "automaton-builder" ;;
         PROMPT_review.md)         echo "automaton-reviewer" ;;
         PROMPT_self_research.md)  echo "automaton-self-researcher" ;;
+        PROMPT_self_plan.md)      echo "automaton-self-planner" ;;
         *)                        echo "" ;;
     esac
 }
@@ -107,13 +108,6 @@ _build_dynamic_context_stdin() {
             dynamic_content+=""$'\n'
         fi
 
-        if [ "$SELF_BUILD_ENABLED" = "true" ] && [ -f "automaton.sh" ]; then
-            dynamic_content+="## Codebase Overview (automaton.sh)"$'\n'
-            dynamic_content+='```'$'\n'
-            dynamic_content+=$(grep -n '^[a-z_]*()' automaton.sh | head -40 || true)$'\n'
-            dynamic_content+='```'$'\n'
-            dynamic_content+=""$'\n'
-        fi
     fi
 
     # Review-specific context: inject QA failure report when available (spec-46.4)
@@ -503,7 +497,7 @@ run_agent() {
         local dynamic_context
         dynamic_context=$(_build_dynamic_context_stdin "$prompt_file")
 
-        local cmd_args=("--agent" "$agent_name" "--output-format" "stream-json" "--model" "$model")
+        local cmd_args=("--agent" "$agent_name" "--output-format" "stream-json" "--model" "$model" "--betas" "token-efficient-tool-use-2025-02-19")
 
         if [ "$FLAG_DANGEROUSLY_SKIP_PERMISSIONS" = "true" ]; then
             cmd_args+=("--dangerously-skip-permissions")
@@ -515,6 +509,10 @@ run_agent() {
 
         log "ORCHESTRATOR" "Invoking native agent: name=$agent_name model=$model"
 
+        # Scope support (spec-60): export PROJECT_ROOT so hooks can determine
+        # which directory the agent is operating in.
+        export AUTOMATON_PROJECT_ROOT="${PROJECT_ROOT:-.}"
+
         AGENT_RESULT=""
         AGENT_EXIT_CODE=0
 
@@ -524,7 +522,9 @@ run_agent() {
 
         local _tmp_output
         _tmp_output=$(mktemp) || { _stop_progress_spinner "$_spinner_pid"; log "ORCHESTRATOR" "Failed to create temp file"; AGENT_EXIT_CODE=1; return 0; }
-        echo "$dynamic_context" | claude "${cmd_args[@]}" > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
+        # Scope support (spec-60): run agent in PROJECT_ROOT so it operates on
+        # the scoped directory while the orchestrator stays at invocation cwd.
+        echo "$dynamic_context" | (cd "${PROJECT_ROOT:-.}" && claude "${cmd_args[@]}") > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
 
         _stop_progress_spinner "$_spinner_pid"
 
@@ -565,7 +565,7 @@ run_agent() {
     # Check if static prefix meets minimum cacheable threshold (spec-30)
     check_cache_prefix_threshold "$effective_prompt" "$model"
 
-    local cmd_args=("-p" "--output-format" "stream-json" "--model" "$model")
+    local cmd_args=("-p" "--output-format" "stream-json" "--model" "$model" "--betas" "token-efficient-tool-use-2025-02-19")
 
     if [ "$FLAG_DANGEROUSLY_SKIP_PERMISSIONS" = "true" ]; then
         cmd_args+=("--dangerously-skip-permissions")
@@ -576,6 +576,10 @@ run_agent() {
     fi
 
     log "ORCHESTRATOR" "Invoking agent: model=$model prompt=$effective_prompt"
+
+    # Scope support (spec-60): export PROJECT_ROOT so hooks can determine
+    # which directory the agent is operating in.
+    export AUTOMATON_PROJECT_ROOT="${PROJECT_ROOT:-.}"
 
     AGENT_RESULT=""
     AGENT_EXIT_CODE=0
@@ -589,7 +593,9 @@ run_agent() {
     # Error classifiers (is_rate_limit, is_network_error) need stderr to detect failures.
     local _tmp_output
     _tmp_output=$(mktemp) || { _stop_progress_spinner "$_spinner_pid"; log "ORCHESTRATOR" "Failed to create temp file"; AGENT_EXIT_CODE=1; return 0; }
-    cat "$effective_prompt" | claude "${cmd_args[@]}" > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
+    # Scope support (spec-60): run agent in PROJECT_ROOT so it operates on
+    # the scoped directory while the orchestrator stays at invocation cwd.
+    cat "$effective_prompt" | (cd "${PROJECT_ROOT:-.}" && claude "${cmd_args[@]}") > "$_tmp_output" 2>&1 || AGENT_EXIT_CODE=$?
 
     _stop_progress_spinner "$_spinner_pid"
 
@@ -618,7 +624,13 @@ get_phase_prompt() {
                 echo "${_install_dir}/PROMPT_research.md"
             fi
             ;;
-        plan)     echo "${_install_dir}/PROMPT_plan.md" ;;
+        plan)
+            if [ "${ARG_SELF:-false}" = "true" ] && [ -f "${_install_dir}/PROMPT_self_plan.md" ]; then
+                echo "${_install_dir}/PROMPT_self_plan.md"
+            else
+                echo "${_install_dir}/PROMPT_plan.md"
+            fi
+            ;;
         build)    echo "${_install_dir}/PROMPT_build.md" ;;
         review)   echo "${_install_dir}/PROMPT_review.md" ;;
     esac

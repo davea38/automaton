@@ -62,7 +62,7 @@ spawn_builders() {
     builder_count=$(jq '.assignments | length' "$AUTOMATON_DIR/wave/assignments.json")
     local stagger="$PARALLEL_STAGGER_SECONDS"
     local project_root
-    project_root=$(pwd)
+    project_root="${PROJECT_ROOT:-$(pwd)}"
 
     log "CONDUCTOR" "Wave $wave: spawning $builder_count builders (stagger: ${stagger}s)"
 
