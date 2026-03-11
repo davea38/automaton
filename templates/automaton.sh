@@ -36,7 +36,8 @@ source "$AUTOMATON_LIB_DIR/utilities.sh"
 source "$AUTOMATON_LIB_DIR/evolution.sh"
 source "$AUTOMATON_LIB_DIR/qa.sh"
 source "$AUTOMATON_LIB_DIR/display.sh"
-source "$AUTOMATON_LIB_DIR/parallel.sh"
+source "$AUTOMATON_LIB_DIR/parallel_core.sh"
+source "$AUTOMATON_LIB_DIR/parallel_teams.sh"
 
 # ---------------------------------------------------------------------------
 # CLI Argument Parsing & Main Entry Point
@@ -982,7 +983,7 @@ run_orchestration() {
                 continue
             fi
 
-            emit_event "iteration_end" "{\"exit_code\":${AGENT_EXIT_CODE:-0},\"files_changed\":0}"
+            emit_event "iteration_end" "{\"exit_code\":${AGENT_EXIT_CODE:-0},\"files_changed\":0,\"input_tokens\":${LAST_INPUT_TOKENS:-0},\"output_tokens\":${LAST_OUTPUT_TOKENS:-0},\"cache_create\":${LAST_CACHE_CREATE:-0},\"cache_read\":${LAST_CACHE_READ:-0}}"
 
             # Check if agent signaled COMPLETE
             if agent_signaled_complete; then
