@@ -186,5 +186,19 @@
     "threshold": 20,
     "markers": ["TODO", "FIXME", "HACK", "DEBT", "WORKAROUND", "TEMPORARY"]
   },
-  "guardrails_mode": "warn"
+  "guardrails_mode": "warn",
+  "collaboration": {
+    "mode": "collaborative",
+    "checkpoint_dir": ".automaton/checkpoints"
+  },
+  "project_garden": {
+    "enabled": true,
+    "suggest_after_research": true,
+    "suggest_after_review": true,
+    "max_suggestions_per_cycle": 5
+  },
+  "research": {
+    "deep_research_budget": 200000,
+    "deep_research_model": "sonnet"
+  }
 }

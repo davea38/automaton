@@ -1,0 +1,14 @@
+{
+  "total": 0,
+  "by_stage": {
+    "seed": 0,
+    "sprout": 0,
+    "bloom": 0,
+    "harvest": 0,
+    "wilt": 0
+  },
+  "bloom_candidates": [],
+  "recent_activity": [],
+  "next_id": 1,
+  "updated_at": "2026-03-08T20:20:18Z"
+}

@@ -2,11 +2,17 @@
 
 ## 1. Vision
 
-Automaton is a multi-agent orchestration system for autonomous software delivery. You talk to an architect, define what you want, and walk away. It researches, plans, builds, and reviews your project end-to-end using Claude Code agents coordinated by a bash orchestrator.
+Automaton is a **collaborative software mentor** that can also run as an **autonomous factory**. It guides users through the best way to create software with AI — explaining decisions, teaching patterns, and pausing at key milestones for approval — while retaining the ability to run end-to-end unattended for experienced users.
 
-It extends the proven RALPH loop methodology (plan/build cycles via `claude -p`) with: automated research, multi-phase orchestration, token tracking, rate limiting, budget enforcement, error recovery, and a conversation-first UX.
+**Two modes, one system:**
 
-The experience should feel like talking to an architect who then goes and builds your entire project.
+- **Collaborative (default):** Automaton walks alongside you. It researches, explains what it found and why. It plans, shows you the task breakdown and reasoning. It builds, then reviews and teaches you what it learned. At each phase transition, you approve, modify, pause, or abort. The experience should feel like pair-programming with a senior architect who explains their thinking.
+
+- **Autonomous:** The original vision. You talk to an architect, define what you want, and walk away. It researches, plans, builds, and reviews your project end-to-end. You come back to working software. The experience should feel like delegating to a trusted contractor.
+
+It extends the proven RALPH loop methodology (plan/build cycles via `claude -p`) with: automated research, multi-phase orchestration, token tracking, rate limiting, budget enforcement, error recovery, collaborative checkpoints, project-aware suggestions, deep research capability, guided discovery for vague ideas, and a conversation-first UX.
+
+The system also acts as a **project advisor**: suggesting missing features, security improvements, and best practices through a project idea garden — thinking about your software, not just building it.
 
 ## 2. Problem Statement
 

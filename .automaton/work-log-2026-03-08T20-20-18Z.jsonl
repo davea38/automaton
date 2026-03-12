@@ -1,0 +1,3 @@
+{"ts":"2026-03-08T20:20:18Z","event":"iteration_start","phase":"research","iteration":1,"elapsed_s":0,"details":{"task":"research iteration 1"}}
+{"ts":"2026-03-08T20:22:23Z","event":"iteration_end","phase":"research","iteration":1,"elapsed_s":125,"details":{"exit_code":0,"files_changed":0}}
+{"ts":"2026-03-08T20:22:23Z","event":"iteration_start","phase":"research","iteration":2,"elapsed_s":125,"details":{"task":"research iteration 2"}}
