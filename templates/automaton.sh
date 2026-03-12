@@ -753,6 +753,7 @@ transition_to_phase() {
 
     current_phase="$new_phase"
     phase_iteration=0
+    max_iter_reached=false
     PHASE_START_TIME=$(date +%s)
 
     emit_event "phase_start" "{\"phase_config\":{}}"
@@ -826,6 +827,9 @@ run_orchestration() {
         fi
     fi
 
+    # Refresh AGENTS.md at run start so agents see accurate state (spec-34)
+    generate_agents_md 2>/dev/null || true
+
     # --- Pre-flight spec critique (spec-47) ---
     # When auto_preflight is enabled and not skipped, critique specs before planning.
     # Only runs on fresh starts (not resumes) and when not in self-build mode.
@@ -866,6 +870,7 @@ run_orchestration() {
     local review_attempts=0
 
     # === Outer phase loop ===
+    local max_iter_reached=false
     while [ "$current_phase" != "COMPLETE" ]; do
         local prompt_file model max_iter
         prompt_file=$(get_phase_prompt "$current_phase")
@@ -877,6 +882,27 @@ run_orchestration() {
             prepare_parallel_plan_prompt
             if [ -n "${PARALLEL_PLAN_PROMPT:-}" ]; then
                 prompt_file="$PARALLEL_PLAN_PROMPT"
+            fi
+        fi
+
+        # Auto-skip research when all plan tasks are complete (avoids wasteful
+        # 5-iteration research runs when nothing remains to research).
+        if [ "$current_phase" = "research" ]; then
+            local _plan_file="${PROJECT_ROOT:-.}/IMPLEMENTATION_PLAN.md"
+            if [ -f "$_plan_file" ] && ! grep -q '\[ \]' "$_plan_file" 2>/dev/null; then
+                log "ORCHESTRATOR" "Auto-skipping research: all tasks in IMPLEMENTATION_PLAN.md are complete"
+                transition_to_phase "plan"
+                continue
+            fi
+        fi
+
+        # Pre-check for plan phase: if all tasks already complete, skip planning.
+        if [ "$current_phase" = "plan" ]; then
+            local _plan_file="${PROJECT_ROOT:-.}/IMPLEMENTATION_PLAN.md"
+            if [ -f "$_plan_file" ] && ! grep -q '\[ \]' "$_plan_file" 2>/dev/null; then
+                log "ORCHESTRATOR" "Auto-skipping plan: all tasks in IMPLEMENTATION_PLAN.md are complete"
+                transition_to_phase "build"
+                continue
             fi
         fi
 
@@ -928,6 +954,7 @@ run_orchestration() {
                 log "ORCHESTRATOR" "Max iterations reached for $current_phase ($max_iter)"
                 phase_iteration=$((phase_iteration - 1))
                 iteration=$((iteration - 1))
+                max_iter_reached=true
                 break
             fi
 
@@ -957,13 +984,16 @@ run_orchestration() {
 
             # --- Invoke the agent ---
             emit_event "iteration_start" "{\"task\":\"${current_phase} iteration ${phase_iteration}\"}"
-            local iter_start_epoch
+            local iter_start_epoch iter_pre_commit
             iter_start_epoch=$(date +%s)
+            iter_pre_commit=$(git rev-parse HEAD 2>/dev/null || echo "")
             run_agent "$prompt_file" "$model"
 
             # --- Error classification and recovery ---
             if [ "$AGENT_EXIT_CODE" -ne 0 ]; then
-                emit_event "error" "{\"message\":\"agent exit code ${AGENT_EXIT_CODE}\",\"fatal\":false}"
+                local _err_detail
+                _err_detail=$(printf '%s' "${AGENT_RESULT:-}" | tail -10 | jq -Rs '.' 2>/dev/null || echo '"(no output)"')
+                emit_event "error" "{\"message\":\"agent exit code ${AGENT_EXIT_CODE}\",\"fatal\":false,\"detail\":${_err_detail}}"
                 if is_rate_limit "$AGENT_RESULT" || is_network_error "$AGENT_RESULT"; then
                     if ! handle_rate_limit run_agent "$prompt_file" "$model"; then
                         # All retries exhausted (inc. 10-min pause); retry iteration
@@ -1029,7 +1059,11 @@ run_orchestration() {
                 continue
             fi
 
-            emit_event "iteration_end" "{\"exit_code\":${AGENT_EXIT_CODE:-0},\"files_changed\":0,\"input_tokens\":${LAST_INPUT_TOKENS:-0},\"output_tokens\":${LAST_OUTPUT_TOKENS:-0},\"cache_create\":${LAST_CACHE_CREATE:-0},\"cache_read\":${LAST_CACHE_READ:-0}}"
+            local iter_files_changed=0
+            if [ -n "$iter_pre_commit" ]; then
+                iter_files_changed=$(git diff --name-only "${iter_pre_commit}..HEAD" 2>/dev/null | wc -l || echo 0)
+            fi
+            emit_event "iteration_end" "{\"exit_code\":${AGENT_EXIT_CODE:-0},\"files_changed\":${iter_files_changed},\"input_tokens\":${LAST_INPUT_TOKENS:-0},\"output_tokens\":${LAST_OUTPUT_TOKENS:-0},\"cache_create\":${LAST_CACHE_CREATE:-0},\"cache_read\":${LAST_CACHE_READ:-0}}"
 
             # Check if agent signaled COMPLETE
             if agent_signaled_complete; then
@@ -1053,7 +1087,7 @@ run_orchestration() {
                     research_gate_failures=$((${research_gate_failures:-0} + 1))
                     local remaining_tbds
                     remaining_tbds=$(grep -ri 'TBD\|TODO' specs/ 2>/dev/null | wc -l)
-                    if [ "$research_gate_failures" -lt 2 ] && [ "$phase_iteration" -lt "$max_iter" ]; then
+                    if [ "$research_gate_failures" -lt 2 ] && [ "$phase_iteration" -lt "$max_iter" ] && [ "$max_iter_reached" != "true" ]; then
                         log "ORCHESTRATOR" "Research gate failed ($remaining_tbds TBDs remaining). Retrying research (attempt $((research_gate_failures + 1)))."
                         # Don't transition — stay in research for another iteration
                     else

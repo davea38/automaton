@@ -1287,7 +1287,7 @@ COMPLEX: 4+ files, new patterns, dependency changes, API surface change (multi-f
 Task: ${task_desc}
 
 Respond with ONLY a JSON object, no other text:
-{\"tier\": \"SIMPLE|MODERATE|COMPLEX\", \"rationale\": \"one-line reason\"}"
+{\"tier\": \"MODERATE\", \"rationale\": \"one-line reason\"}"
 
         local claude_output=""
         claude_output=$(echo "$prompt" | claude -p --model haiku --output-format text 2>/dev/null) || true

@@ -236,6 +236,115 @@ Medium complexity, medium risk. Batch multiple `jq` field extractions from the s
 
 ---
 
+## Tier 31: Observability & Correctness Bug Fixes (Priority: HIGH)
+
+Small, low-risk, independent fixes for data collection bugs that degrade stall detection and post-run diagnostics. All 4 tasks are independent — build in any order.
+
+### 31.1 Fix files_changed always 0 in iteration_end events
+
+- [x] The `files_changed` variable is computed at `automaton.sh:690` via `git diff --name-only HEAD~1` and written to agent history JSON at line 698. But the `emit_event "iteration_end"` call at line 1032 hardcodes `\"files_changed\":0` instead of using this variable. The fix: right before the `emit_event "iteration_end"` at line 1032, compute `local files_changed_count; files_changed_count=$(git diff --name-only HEAD~1 2>/dev/null | wc -l)` and replace `\"files_changed\":0` with `\"files_changed\":${files_changed_count:-0}`. Note: the existing `files_changed` at line 690 is a JSON array (for agent history); the event needs an integer count. Apply to `templates/automaton.sh`. (WHY: stall detection in `lib/qa.sh` relies on `files_changed` from work-log events; hardcoded 0 makes every iteration look stalled) <!-- test: grep iteration_end .automaton/work-log.jsonl and verify files_changed > 0 after a build run -->
+
+### 31.2 Fix complexity assessment prompt template
+
+- [x] In `assess_complexity()` in `lib/qa.sh`, find the prompt template string containing `"SIMPLE|MODERATE|COMPLEX"` (around line 1290). Change the JSON example from `{"tier": "SIMPLE|MODERATE|COMPLEX", "rationale": "one-line reason"}` to `{"tier": "MODERATE", "rationale": "one-line reason"}`. Add a comment above: `# Valid tier values: SIMPLE, MODERATE, COMPLEX`. The pipe-delimited string causes Haiku to return the literal `"SIMPLE|MODERATE|COMPLEX"` which fails the bash `case` match. Apply to `templates/lib/qa.sh`. (WHY: complexity assessment defaults to MODERATE for ALL tasks because the model returns the template literal instead of a single value) <!-- test: tests/test_utilities_functional.sh -->
+
+### 31.3 Add stderr capture to agent failure events
+
+- [x] At `automaton.sh:966`, the error event is: `emit_event "error" "{\"message\":\"agent exit code ${AGENT_EXIT_CODE}\",\"fatal\":false}"`. Expand to capture diagnostic detail from `$AGENT_RESULT`. Before the emit_event, compute: `local error_detail; error_detail=$(printf '%s' "$AGENT_RESULT" | tail -10 | jq -Rs '.' 2>/dev/null || echo '"(no output)"')`. Then change the emit to: `emit_event "error" "{\"message\":\"agent exit code ${AGENT_EXIT_CODE}\",\"fatal\":false,\"detail\":${error_detail}}"`. Apply to `templates/automaton.sh`. (WHY: run-2026-03-12T14:00 had 3 consecutive exit-code-1 failures with no way to diagnose cause — only the numeric exit code was logged) <!-- test: verify error events in work-log.jsonl contain detail field after a forced failure -->
+
+### 31.4 Fix research max_iterations not enforced
+
+- [x] Root cause: `automaton.sh:927-931` — when `phase_iteration > max_iter`, the inner loop breaks but first decrements `phase_iteration` back to `max_iter - 1` (line 929). The outer loop then re-enters the `research` case, and the gate check at line 1056 (`phase_iteration < max_iter`) evaluates true because of the decrement — allowing another full cycle of inner-loop iterations. Fix: add `local max_iter_reached=false` before the outer while loop (around line 870). In the max_iter break block (lines 927-931), add `max_iter_reached=true` before `break`. In the research gate check (line 1056), change `[ "$phase_iteration" -lt "$max_iter" ]` to `[ "$phase_iteration" -lt "$max_iter" ] && [ "$max_iter_reached" != "true" ]`. Reset `max_iter_reached=false` in `transition_to_phase()`. Apply to `templates/automaton.sh`. (WHY: config says max 3 research iterations but runs show 5 — the decrement-before-break causes the outer loop to re-enter research) <!-- test: run with max_iterations.research=2 and verify exactly 2 research iterations in work-log -->
+
+
+---
+
+## Tier 32: Phase Skip & Guard Rail Fixes (Priority: HIGH)
+
+Prevent wasted iterations when phases have nothing to do. Tasks 32.1 and 32.2 are independent; 32.3 is independent of both.
+
+### 32.1 Auto-skip research when all specs are implemented
+
+- [x] In `automaton.sh`, after the starting state block (lines 815-827) and before the outer while loop, add a research skip check. The logic: if `current_phase = "research"` AND `IMPLEMENTATION_PLAN.md` exists AND has 0 unchecked tasks, then transition to plan phase. Implemented in the phase loop pre-checks (before `--skip-review` check). Apply to `templates/automaton.sh`. (WHY: research phase ran 5 iterations with 0 file changes because all specs were already implemented -- wastes ~7 minutes and ~2M tokens per self-build run) <!-- test: run self-build with all tasks [x] and verify research is skipped -->
+
+### 32.2 Plan phase: detect all-tasks-complete before planning
+
+- [x] In the plan gate block (`automaton.sh:1066-1080`), add a pre-check BEFORE calling `gate_check "plan_validity"`. The check: if `IMPLEMENTATION_PLAN.md` exists AND has 0 unchecked tasks, then log "All plan tasks already complete -- skipping to build" and call `transition_to_phase "build"` followed by `continue`. Implemented in the phase loop pre-checks (before `--skip-review` check). Apply to `templates/automaton.sh`. (WHY: run-2026-03-11T21:09 escalated because the planner couldn't produce a valid plan when nothing remained -- the gate requires >=5 unchecked tasks, which is impossible when everything is done) <!-- test: create IMPLEMENTATION_PLAN.md with all [x] tasks, verify plan phase auto-skips -->
+
+### 32.3 Auto-refresh AGENTS.md at run start
+
+- [x] In `automaton.sh`, right after the starting-state block (after line 827, before the pre-flight spec critique at line 829), add: `generate_agents_md 2>/dev/null || true`. The function already exists in `lib/lifecycle.sh:748` and is already called at line 742 during initialization. Adding it here ensures AGENTS.md is also refreshed on `--resume` runs (the line 742 call only fires for fresh runs). Apply to `templates/automaton.sh`. (WHY: AGENTS.md shows stale phase "research", run count "2", and missing 4+ recent runs -- misleads both humans and agents reading it for context) <!-- test: verify AGENTS.md reflects accurate state after a run start -->
+
+---
+
+## Tier 33: Spec 61 -- Collaboration Mode (Priority: MEDIUM)
+
+Foundation for specs 62-64. All new functionality; no existing code modified beyond wiring. Depends on Tiers 31-32 being stable.
+
+### 33.1 Create lib/collaborate.sh core module
+
+- [ ] Create `lib/collaborate.sh` (~250 lines) with: `checkpoint()` function (the core -- checks mode, TTY, generates summary, writes audit file, presents choices, dispatches); `generate_checkpoint_summary()` (phase-specific summary generation reading state.json, IMPLEMENTATION_PLAN.md, traceability.json); `handle_modify()` (launches interactive `claude` session with context files); `handle_pause()` (writes `checkpoint_paused_at` to state.json, exits 0); `handle_abort()` (writes state, exits 1). Create matching `templates/lib/collaborate.sh`. (WHY: AC-61-1 through AC-61-9 -- this is the entire checkpoint system) <!-- test: tests/test_collaborate.sh -->
+
+### 33.2 Add --mode CLI flag and config
+
+- [ ] Add `--mode` CLI flag parsing to `automaton.sh` (alongside existing --skip-research etc.): `--mode) ARG_MODE="$2"; shift 2`. Add `collaboration` config section to `automaton.config.json` and `templates/automaton.config.json`: `{"collaboration": {"mode": "collaborative", "checkpoint_dir": ".automaton/checkpoints"}}`. Load in `lib/config.sh` with CLI override. Add to help text in `lib/display.sh`. (WHY: AC-61-10 -- CLI flag must override config) <!-- test: tests/test_cli_args.sh -->
+
+### 33.3 Wire checkpoints into phase transitions
+
+- [ ] In `automaton.sh`, source `lib/collaborate.sh` and call `checkpoint "after_research"` after line 1051 (research-to-plan transition), `checkpoint "after_plan"` after line 1074 (plan-to-build transition), `checkpoint "after_review"` before the COMPLETE transition in review gate. Handle `--resume` detection of `checkpoint_paused_at` in state.json at startup. Apply to `templates/automaton.sh`. (WHY: AC-61-1 -- checkpoints at all 3 phase transitions) <!-- test: tests/test_collaborate.sh -->
+
+### 33.4 Add educational annotation injection
+
+- [ ] In `lib/context.sh`, when `COLLABORATION_MODE != "autonomous"`, append educational context blocks to phase prompts: "Why This Matters" for research, "Rationale" instructions for plan, "Learning Opportunity" for review. Gate on `COLLABORATION_MODE` variable. Apply to `templates/lib/context.sh`. (WHY: AC-61-11 -- educational annotations in collaborative mode) <!-- test: tests/test_collaborate.sh -->
+
+### 33.5 Update setup wizard
+
+- [ ] In `lib/config.sh` `run_setup_wizard()`, add collaboration mode question after existing questions: "How would you like automaton to work? 1. Collaborative (recommended) 2. Autonomous". Default: 1. Write choice to config. Apply to `templates/lib/config.sh`. (WHY: spec-61 section 11 -- discoverability for new users) <!-- test: tests/test_setup_wizard.sh -->
+
+---
+
+## Tier 34: Spec 64 -- Wizard Discovery & Spec 63 -- Deep Research (Priority: MEDIUM)
+
+These are largely prompt-only changes (spec 64) and a new standalone mode (spec 63). Can be built in parallel. Spec 63 standalone mode works without spec 61; collaborative integration (34.5) depends on Tier 33.
+
+### 34.1 Add Discovery Stage to wizard and converse prompts
+
+- [ ] Edit `PROMPT_wizard.md`: add Stage 0 (Discovery) before existing Stage 1. Include vagueness detection heuristics, 2-3 open-ended questions, 3-direction suggestion format, rejection/combination handling, transition signal. Edit `PROMPT_converse.md` with same discovery capability. Gate educational framing on `COLLABORATION_MODE` context variable (injected by spec-61's system). Apply edits to `templates/PROMPT_wizard.md` and `templates/PROMPT_converse.md`. (WHY: AC-64-1 through AC-64-9 -- entirely prompt-driven, no bash changes) <!-- test: tests/test_wizard_discovery.sh -->
+
+### 34.2 Create PROMPT_deep_research.md
+
+- [ ] Create `PROMPT_deep_research.md` (~100 lines) instructing Claude to: understand domain from topic + PRD/specs, research 3-5 approaches via web search, produce comparative matrix, make recommendation. Output format per spec-63 section 4. Create matching `templates/PROMPT_deep_research.md`. (WHY: AC-63-1 through AC-63-4 -- the research prompt drives the quality of output) <!-- test: tests/test_deep_research.sh -->
+
+### 34.3 Add --research CLI flag and dispatch
+
+- [ ] Add `--research` CLI flag to `automaton.sh`: `--research) ARG_RESEARCH_TOPIC="$2"; shift 2`. Add dispatch: if `ARG_RESEARCH_TOPIC` is set, run `run_deep_research "$ARG_RESEARCH_TOPIC"` and exit (standalone mode, no phase loop). Implement `run_deep_research()` in `lib/collaborate.sh` or a new `lib/research.sh`: sanitize topic for filename, create `.automaton/research/` dir, invoke claude with PROMPT_deep_research.md + topic context, enforce `research.deep_research_budget` token limit, write output to `RESEARCH-{topic}-{timestamp}.md`. Add config keys `research.deep_research_budget` (200000) and `research.deep_research_model` ("sonnet") to config files. Add to help text. Apply to templates. (WHY: AC-63-1, AC-63-5, AC-63-6, AC-63-8 -- standalone deep research mode) <!-- test: tests/test_deep_research.sh -->
+
+### 34.4 Include research documents in plan phase context
+
+- [ ] In `lib/context.sh`, when building plan phase context, check for `.automaton/research/RESEARCH-*.md` files and include their content (or summaries if too large) in the dynamic context. (WHY: AC-63-7 -- research findings should inform planning decisions) <!-- test: tests/test_deep_research.sh -->
+
+### 34.5 Add [r]esearch option to after_research checkpoint (depends on 33.1)
+
+- [ ] In `lib/collaborate.sh`, when displaying the `after_research` checkpoint choices, add `[r]esearch` option. When selected, prompt for topic, call `run_deep_research()`, then re-display checkpoint. (WHY: AC-63-9 -- collaborative mode integration) <!-- test: tests/test_collaborate.sh -->
+
+---
+
+## Build Order Summary
+
+**Recommended next task**: 31.1 (files_changed fix) -- lowest risk, highest observability impact, 1 line change + template sync.
+
+**Tier 31** (4 tasks, all independent, all LOW effort): Fix data collection bugs that degrade stall detection and diagnostics. Build in any order. Each task is a 1-5 line change in automaton.sh or lib/qa.sh plus template sync.
+
+**Tier 32** (3 tasks, all independent, all LOW effort): Prevent wasted iterations. 32.1 saves ~2M tokens per self-build run. 32.2 prevents false escalations. 32.3 is cosmetic but improves agent context.
+
+**Tier 33** (5 tasks, sequential 33.1->33.2->33.3, then 33.4/33.5 independent): New collaboration mode. MEDIUM effort. 33.1 is the core module (~250 lines new code).
+
+**Tier 34** (5 tasks, 34.1/34.2 independent, 34.3 depends on 34.2, 34.5 depends on 33.1): Prompt changes + standalone research mode. 34.1 and 34.2 are LOW effort prompt-only tasks.
+
+**Total remaining**: 17 unchecked tasks across 4 tiers.
+
+---
+
 ## Spec Conflicts Noted
 
 - **Root vs template PROMPT files**: Root `PROMPT_build.md` (58 lines) and `PROMPT_plan.md` (41 lines) diverge significantly from their template counterparts (157 and 101 lines). The templates appear authoritative (they have spec-29 XML structure, spec-36 annotations, etc.) but the root versions are what the orchestrator actually uses. Tier 17 addresses this.
