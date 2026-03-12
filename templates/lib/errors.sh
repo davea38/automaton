@@ -251,12 +251,20 @@ check_plan_integrity() {
 # Returns: 0 = continue normally, 1 = force re-plan (transition to plan phase)
 # Exits:   3 via escalate() if re-planning has failed twice
 check_stall() {
+    # Filter out bookkeeping files that the orchestrator commits every iteration
+    # (AGENTS.md, .automaton/*, work-log, etc.) — only real code changes should
+    # reset the stall counter, otherwise the detector never fires.
     local diff_stat
-    diff_stat=$(git diff --stat HEAD~1 2>/dev/null || true)
+    diff_stat=$(git diff --stat HEAD~1 \
+        -- . \
+        ':!.automaton' \
+        ':!AGENTS.md' \
+        ':!.automaton/**' \
+        2>/dev/null || true)
 
     if [ -z "$diff_stat" ]; then
         stall_count=$((stall_count + 1))
-        log "ORCHESTRATOR" "Stall detected ($stall_count/$EXEC_STALL_THRESHOLD). No code changes."
+        log "ORCHESTRATOR" "Stall detected ($stall_count/$EXEC_STALL_THRESHOLD). No meaningful code changes (bookkeeping-only diffs excluded)."
     else
         stall_count=0
         return 0

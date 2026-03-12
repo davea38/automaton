@@ -124,6 +124,41 @@ check_stall || result=$?
 assert_equals "1" "$result" "third stall triggers re-plan"
 assert_equals "1" "$replan_count" "replan_count incremented"
 
+# Restore real git
+unset -f git
+
+# ============================================================
+# check_stall — bookkeeping-only diffs should still count as stall
+# ============================================================
+stall_count=0
+replan_count=0
+
+# Mock git diff to return bookkeeping-only files when pathspec is used,
+# but simulate real git behavior: with exclusion pathspecs, bookkeeping
+# files are excluded so the output is empty → stall detected.
+git() {
+    if [ "$1" = "diff" ]; then
+        # If pathspec exclusions are present (contains ':!'), return empty
+        # (bookkeeping files filtered out, no real changes)
+        local args="$*"
+        if echo "$args" | grep -q ':!'; then
+            echo ""
+        else
+            # Without exclusions, would show bookkeeping files
+            echo " AGENTS.md | 2 +-"
+        fi
+        return 0
+    fi
+}
+export -f git
+
+LOG_OUTPUT=""
+check_stall
+assert_equals "1" "$stall_count" "bookkeeping-only diff still triggers stall"
+
+# Unset mock
+unset -f git
+
 # ============================================================
 # check_test_failures — test failure escalation
 # ============================================================
