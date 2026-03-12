@@ -5,7 +5,7 @@
 - Project: automaton
 - Language: Bash (orchestrator), Node.js (CLI scaffolder)
 - Framework: None (pure bash + jq for orchestrator)
-- Current Phase: research
+- Current Phase: plan
 - Total Runs: 2
 
 ## Commands
