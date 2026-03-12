@@ -139,4 +139,29 @@ assert_contains "$claudeignore_content" "*.jsonl" \
     "26.1: .claudeignore excludes *.jsonl work-log files"
 
 cd "$SCRIPT_DIR"
+
+# --- Test 15: 33.5 setup_wizard asks collaboration mode question ---
+# After implementation: run_setup_wizard() must present collaboration mode choice.
+wizard_body=$(sed -n '/^run_setup_wizard()/,/^}/p' "$_PROJECT_DIR/lib/config.sh" 2>/dev/null || true)
+assert_contains "$wizard_body" "Collaborative" \
+    "33.5: setup_wizard presents Collaborative mode option"
+
+# --- Test 16: 33.5 setup_wizard presents Autonomous option ---
+assert_contains "$wizard_body" "Autonomous" \
+    "33.5: setup_wizard presents Autonomous mode option"
+
+# --- Test 17: 33.5 setup_wizard writes collaboration.mode to config ---
+assert_contains "$wizard_body" "collaboration" \
+    "33.5: setup_wizard writes collaboration key to config"
+
+# --- Test 18: 33.5 collaboration config section has mode field ---
+collab_mode=$(jq -r '.collaboration.mode' "$_PROJECT_DIR/automaton.config.json" 2>/dev/null || echo "null")
+assert_not_contains "$collab_mode" "null" \
+    "33.5: automaton.config.json has collaboration.mode field"
+
+# --- Test 19: 33.5 lib/config.sh loads collaboration.mode ---
+grep -q 'COLLABORATION_MODE' "$_PROJECT_DIR/lib/config.sh" 2>/dev/null
+rc=$?
+assert_exit_code 0 "$rc" "33.5: lib/config.sh sets COLLABORATION_MODE variable"
+
 test_summary

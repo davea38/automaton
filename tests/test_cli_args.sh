@@ -263,4 +263,35 @@ assert_equals "false" "$ARG_GARDEN" "default: ARG_GARDEN=false"
 assert_equals "" "$ARG_COMPLEXITY" "default: ARG_COMPLEXITY empty"
 assert_equals "" "$ARG_SCOPE" "default: ARG_SCOPE empty"
 
+# ============================================================
+# spec-61: --mode flag (AC-61-10)
+# ============================================================
+
+# 33.2: ARG_MODE default is empty string
+grep -q 'ARG_MODE=""' "$script_file"
+rc=$?
+assert_exit_code 0 "$rc" "33.2: ARG_MODE default is empty string"
+
+# 33.2: --mode flag exists in argument parser
+grep -q '\-\-mode)' "$script_file"
+rc=$?
+assert_exit_code 0 "$rc" "33.2: --mode flag exists in argument parser"
+
+# 33.2: --mode collaborative sets ARG_MODE
+grep -q 'ARG_MODE' "$script_file"
+rc=$?
+assert_exit_code 0 "$rc" "33.2: ARG_MODE variable referenced in source"
+
+# 33.2: help text includes --mode
+help_output=$(bash "$automaton_script" --help 2>&1) || true
+assert_contains "$help_output" "--mode" "33.2: help text includes --mode"
+
+# 33.2: --mode with invalid value errors
+output=$(bash "$automaton_script" --mode "invalid_xyz" 2>&1) || rc=$?
+assert_contains "$output" "Invalid mode" "33.2: --mode with invalid value shows error message"
+
+# 33.2: collaboration config section exists in automaton.config.json
+collab_mode=$(jq -r '.collaboration.mode' "$_PROJECT_DIR/automaton.config.json" 2>/dev/null || echo "null")
+assert_not_contains "$collab_mode" "null" "33.2: automaton.config.json has collaboration.mode"
+
 test_summary
