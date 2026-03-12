@@ -5,7 +5,7 @@
 - Project: automaton
 - Language: Bash (orchestrator), Node.js (CLI scaffolder)
 - Framework: None (pure bash + jq for orchestrator)
-- Current Phase: plan
+- Current Phase: build
 - Total Runs: 11
 
 ## Commands
@@ -23,7 +23,7 @@
 - run-2026-03-12T19-50-59Z: research â†’ plan â†’ build â†’ review â†’ build â†’ plan (75 tasks)
 - run-2026-03-11T21-29-23Z: research â†’ plan â†’ build â†’ review (58 tasks)
 - run-2026-03-08T20-20-18Z:  (242 tasks)
-- 2026-03-12T22-20-23Z: researchâ
+- 2026-03-12T22-20-23Z: researchâplanâ
 - 2026-03-12T19-50-59Z: researchâplanâbuildâreviewâbuildâplanâ
 - 2026-03-12T18-07-28Z: researchâplanâbuildâplanâbuildâplanâ
 
