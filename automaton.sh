@@ -984,10 +984,14 @@ run_orchestration() {
 
             # --- Invoke the agent ---
             emit_event "iteration_start" "{\"task\":\"${current_phase} iteration ${phase_iteration}\"}"
-            local iter_start_epoch iter_pre_commit
+            local iter_start_epoch iter_pre_commit iter_post_agent_commit
             iter_start_epoch=$(date +%s)
             iter_pre_commit=$(git rev-parse HEAD 2>/dev/null || echo "")
             run_agent "$prompt_file" "$model"
+            # Capture HEAD immediately after agent exits — before post_iteration makes
+            # any additional commits (e.g. commit_persistent_state). This is the
+            # authoritative snapshot for files_changed counting.
+            iter_post_agent_commit=$(git rev-parse HEAD 2>/dev/null || echo "")
 
             # --- Error classification and recovery ---
             if [ "$AGENT_EXIT_CODE" -ne 0 ]; then
@@ -1002,6 +1006,7 @@ run_orchestration() {
                         continue
                     fi
                     # Successful retry — AGENT_RESULT/AGENT_EXIT_CODE updated
+                    iter_post_agent_commit=$(git rev-parse HEAD 2>/dev/null || echo "")
                 else
                     # Generic CLI crash — retry with backoff
                     handle_cli_crash "$AGENT_EXIT_CODE" "$AGENT_RESULT"
@@ -1060,9 +1065,16 @@ run_orchestration() {
             fi
 
             local iter_files_changed=0
-            if [ -n "$iter_pre_commit" ]; then
-                iter_files_changed=$(git diff --name-only "${iter_pre_commit}..HEAD" 2>/dev/null | wc -l || echo 0)
+            if [ -n "$iter_pre_commit" ] && [ -n "$iter_post_agent_commit" ] && \
+               [ "$iter_pre_commit" != "$iter_post_agent_commit" ]; then
+                # Count unique files changed by the agent during this iteration.
+                # Use the snapshot captured right after run_agent (not current HEAD)
+                # to exclude commits made by post_iteration (e.g. commit_persistent_state).
+                local _diff_out
+                _diff_out=$(git diff --name-only "${iter_pre_commit}..${iter_post_agent_commit}" 2>/dev/null) || true
+                iter_files_changed=$(echo "${_diff_out}" | grep -c . 2>/dev/null || echo 0)
             fi
+            log "ORCHESTRATOR" "iter_files_changed: pre=${iter_pre_commit:0:8} post=${iter_post_agent_commit:0:8} n=${iter_files_changed}"
             emit_event "iteration_end" "{\"exit_code\":${AGENT_EXIT_CODE:-0},\"files_changed\":${iter_files_changed},\"input_tokens\":${LAST_INPUT_TOKENS:-0},\"output_tokens\":${LAST_OUTPUT_TOKENS:-0},\"cache_create\":${LAST_CACHE_CREATE:-0},\"cache_read\":${LAST_CACHE_READ:-0}}"
 
             # Check if agent signaled COMPLETE
