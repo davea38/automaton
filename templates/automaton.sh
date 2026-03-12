@@ -1036,7 +1036,11 @@ run_orchestration() {
                 local _err_detail
                 _err_detail=$(printf '%s' "${AGENT_RESULT:-}" | tail -10 | jq -Rs '.' 2>/dev/null || echo '"(no output)"')
                 emit_event "error" "{\"message\":\"agent exit code ${AGENT_EXIT_CODE}\",\"fatal\":false,\"detail\":${_err_detail}}"
-                if is_rate_limit "$AGENT_RESULT" || is_network_error "$AGENT_RESULT"; then
+                if is_environment_error "$AGENT_RESULT"; then
+                    # Deterministic error — retrying won't help, escalate immediately
+                    escalate "Environment/configuration error (exit ${AGENT_EXIT_CODE}): $(printf '%s' "${AGENT_RESULT:-}" | tail -5)"
+                    # escalate() exits — control never reaches here
+                elif is_rate_limit "$AGENT_RESULT" || is_network_error "$AGENT_RESULT"; then
                     if ! handle_rate_limit run_agent "$prompt_file" "$model"; then
                         # All retries exhausted (inc. 10-min pause); retry iteration
                         phase_iteration=$((phase_iteration - 1))
@@ -1046,9 +1050,9 @@ run_orchestration() {
                     # Successful retry — AGENT_RESULT/AGENT_EXIT_CODE updated
                     iter_post_agent_commit=$(git rev-parse HEAD 2>/dev/null || echo "")
                 else
-                    # Generic CLI crash — retry with backoff
+                    # Generic CLI crash — retry with backoff, escalate on max failures
                     handle_cli_crash "$AGENT_EXIT_CODE" "$AGENT_RESULT"
-                    # Returns 0 to retry, or exits 1 on max failures
+                    # Returns 0 to retry, or escalates (exit 3) on max failures
                     phase_iteration=$((phase_iteration - 1))
                     iteration=$((iteration - 1))
                     continue

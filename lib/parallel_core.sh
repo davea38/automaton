@@ -2019,7 +2019,11 @@ run_single_builder_iteration() {
 
     # Error classification and recovery
     if [ "$AGENT_EXIT_CODE" -ne 0 ]; then
-        if is_rate_limit "$AGENT_RESULT" || is_network_error "$AGENT_RESULT"; then
+        if is_environment_error "$AGENT_RESULT"; then
+            # Deterministic error — retrying won't help, escalate immediately
+            escalate "Environment/configuration error (exit ${AGENT_EXIT_CODE}): $(printf '%s' "${AGENT_RESULT:-}" | tail -5)"
+            # escalate() exits — control never reaches here
+        elif is_rate_limit "$AGENT_RESULT" || is_network_error "$AGENT_RESULT"; then
             if ! handle_rate_limit run_agent "$prompt_file" "$model"; then
                 # All retries exhausted
                 phase_iteration=$((phase_iteration - 1))
@@ -2028,7 +2032,7 @@ run_single_builder_iteration() {
             fi
             # Successful retry — AGENT_RESULT/AGENT_EXIT_CODE updated
         else
-            # Generic CLI crash — handle_cli_crash may exit 1 on max failures
+            # Generic CLI crash — retry with backoff, escalate on max failures
             handle_cli_crash "$AGENT_EXIT_CODE" "$AGENT_RESULT"
             phase_iteration=$((phase_iteration - 1))
             iteration=$((iteration - 1))

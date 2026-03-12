@@ -47,7 +47,16 @@ assert_equals "0" "$(is_test_failure "jest failed" && echo 0 || echo 1)" "is_tes
 assert_equals "0" "$(is_test_failure "pytest failed" && echo 0 || echo 1)" "is_test_failure detects pytest failed"
 assert_equals "1" "$(is_test_failure "all tests passed" && echo 0 || echo 1)" "is_test_failure rejects passing output"
 
-# --- Test: handle_cli_crash increments failures and respects max ---
+# --- Test: is_environment_error classification ---
+
+assert_equals "0" "$(is_environment_error "Error: Claude Code cannot be launched inside another Claude Code session." && echo 0 || echo 1)" "is_environment_error detects nested session"
+assert_equals "0" "$(is_environment_error "Nested sessions share runtime resources" && echo 0 || echo 1)" "is_environment_error detects nested sessions message"
+assert_equals "0" "$(is_environment_error "unset the CLAUDECODE environment variable" && echo 0 || echo 1)" "is_environment_error detects CLAUDECODE hint"
+assert_equals "0" "$(is_environment_error "bash: claude: command not found" && echo 0 || echo 1)" "is_environment_error detects command not found"
+assert_equals "1" "$(is_environment_error "normal output" && echo 0 || echo 1)" "is_environment_error rejects normal output"
+assert_equals "1" "$(is_environment_error "" && echo 0 || echo 1)" "is_environment_error handles empty string"
+
+# --- Test: handle_cli_crash increments failures and escalates at max ---
 
 consecutive_failures=0
 EXEC_MAX_CONSECUTIVE_FAILURES=3
@@ -59,10 +68,10 @@ assert_equals "1" "$consecutive_failures" "handle_cli_crash increments failure c
 handle_cli_crash 1 "another error" 2>/dev/null
 assert_equals "2" "$consecutive_failures" "handle_cli_crash increments to 2"
 
-# Third failure should trigger exit (max=3)
+# Third failure should escalate (exit 3) via escalate()
 rc=0
 (handle_cli_crash 1 "fatal" 2>/dev/null) || rc=$?
-assert_equals "1" "$rc" "handle_cli_crash exits 1 at max failures"
+assert_equals "3" "$rc" "handle_cli_crash escalates (exit 3) at max failures"
 
 # --- Test: reset_failure_count ---
 

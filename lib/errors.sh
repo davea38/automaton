@@ -122,15 +122,17 @@ check_pacing() {
 
 # Handles a CLI crash (non-zero exit that is NOT a rate limit or network error).
 # Increments consecutive_failures counter, sleeps for retry_delay, and returns 0
-# to signal "retry this iteration". If max consecutive failures is reached, saves
-# state and exits with code 1 (resumable).
+# to signal "retry this iteration". If max consecutive failures is reached,
+# escalates to the user (exit 3) so the problem is surfaced rather than silently
+# dropped.
 #
 # The caller is responsible for classifying the error first (is_rate_limit /
-# is_network_error) and only calling this function for unclassified CLI failures.
+# is_network_error / is_environment_error) and only calling this function for
+# unclassified CLI failures.
 #
 # Usage: handle_cli_crash exit_code [agent_output]
 # Returns: 0 = retry the iteration
-# Exits:   1 = max consecutive failures reached (state saved for --resume)
+# Exits:   3 via escalate() when max consecutive failures reached
 handle_cli_crash() {
     local exit_code="$1"
     local agent_output="${2:-}"
@@ -139,9 +141,10 @@ handle_cli_crash() {
     log "ORCHESTRATOR" "CLI error (exit $exit_code), attempt $consecutive_failures/$EXEC_MAX_CONSECUTIVE_FAILURES"
 
     if [ "$consecutive_failures" -ge "$EXEC_MAX_CONSECUTIVE_FAILURES" ]; then
-        log "ORCHESTRATOR" "Max consecutive failures reached ($EXEC_MAX_CONSECUTIVE_FAILURES). Saving state."
-        write_state
-        exit 1
+        local last_output
+        last_output=$(printf '%s' "$agent_output" | tail -5)
+        escalate "CLI crashed $EXEC_MAX_CONSECUTIVE_FAILURES consecutive times (exit $exit_code). Last output: $last_output"
+        # escalate() exits — control never reaches here
     fi
 
     log "ORCHESTRATOR" "Retrying in ${EXEC_RETRY_DELAY_SECONDS}s..."
@@ -177,6 +180,15 @@ is_rate_limit() {
 is_network_error() {
     local output="${1:-}"
     echo "$output" | grep -qi 'network\|connection\|timeout\|ECONNREFUSED\|ETIMEDOUT\|ENOTFOUND\|EHOSTUNREACH\|getaddrinfo'
+}
+
+# Classifies whether agent output indicates an environment or configuration
+# error that is deterministic and will never succeed on retry.
+# Usage: if is_environment_error "$agent_output"; then ...
+# Returns: 0 if environment error detected, 1 otherwise
+is_environment_error() {
+    local output="${1:-}"
+    echo "$output" | grep -qi 'cannot be launched inside another\|nested sessions\|unset the CLAUDECODE\|permission denied.*claude\|claude.*command not found\|command not found.*claude\|no such file.*claude'
 }
 
 # Classifies whether agent output indicates a test failure.
