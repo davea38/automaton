@@ -220,4 +220,19 @@ assert_equals "1" "$([ "${sources_core:-0}" -ge 1 ] && echo 1 || echo 0)" \
 assert_equals "1" "$([ "${sources_teams:-0}" -ge 1 ] && echo 1 || echo 0)" \
     "29.2: automaton.sh sources parallel_teams.sh"
 
+# --- Test: 31.2 assess_complexity prompt uses concrete tier example, not pipe-delimited ---
+# Before fix: {"tier": "SIMPLE|MODERATE|COMPLEX"} causes Haiku to return the literal
+# pipe-delimited string, which fails bash case matching (| is OR in case patterns).
+# After fix: the prompt must use a single concrete example like {"tier": "MODERATE", ...}
+# and must NOT use the pipe-delimited format in the JSON example.
+assess_prompt=$(grep -A 40 'assess_complexity()' "$_PROJECT_DIR/lib/qa.sh" 2>/dev/null | head -60 || true)
+pipe_format_count=$(echo "$assess_prompt" | grep -cF 'SIMPLE|MODERATE|COMPLEX' 2>/dev/null; true)
+assert_equals "0" "${pipe_format_count:-0}" \
+    "31.2: assess_complexity() prompt must NOT use SIMPLE|MODERATE|COMPLEX pipe-delimited example"
+
+# The prompt must use a single concrete tier value (e.g. "MODERATE") in its JSON example
+single_tier_count=$(echo "$assess_prompt" | grep -cE '"tier"[[:space:]]*:[[:space:]]*"(SIMPLE|MODERATE|COMPLEX)"' 2>/dev/null; true)
+assert_equals "1" "$([ "${single_tier_count:-0}" -ge 1 ] && echo 1 || echo 0)" \
+    "31.2: assess_complexity() prompt uses a single concrete tier value in JSON example"
+
 test_summary
