@@ -426,13 +426,102 @@ run_guardrails() {
     return 0
 }
 
+# Extracts the next incomplete task from IMPLEMENTATION_PLAN.md (or backlog).
+# Returns the task text (without the checkbox prefix) or empty string.
+_get_next_task_from_plan() {
+    local plan_file="${PROJECT_ROOT:-.}/IMPLEMENTATION_PLAN.md"
+    if [ "${ARG_SELF:-false}" = "true" ] && [ -f "$AUTOMATON_DIR/backlog.md" ]; then
+        plan_file="$AUTOMATON_DIR/backlog.md"
+    fi
+    [ -f "$plan_file" ] || return 0
+    grep -m1 '^\- \[ \]' "$plan_file" 2>/dev/null | sed 's/^- \[ \] //' | sed 's/ (WHY:.*//' || true
+}
+
+# Returns "done/total" task progress from IMPLEMENTATION_PLAN.md.
+_get_task_progress() {
+    local plan_file="${PROJECT_ROOT:-.}/IMPLEMENTATION_PLAN.md"
+    if [ "${ARG_SELF:-false}" = "true" ] && [ -f "$AUTOMATON_DIR/backlog.md" ]; then
+        plan_file="$AUTOMATON_DIR/backlog.md"
+    fi
+    [ -f "$plan_file" ] || { echo "0/0"; return 0; }
+    local done remaining
+    done=$(grep -c '^\- \[x\]' "$plan_file" 2>/dev/null) || done=0
+    remaining=$(grep -c '^\- \[ \]' "$plan_file" 2>/dev/null) || remaining=0
+    echo "${done}/$((done + remaining))"
+}
+
+# Logs a rich post-iteration summary: files changed, commit message, task progress.
+# Called from the main loop after each successful iteration.
+_log_iteration_summary() {
+    local pre_commit="$1" post_commit="$2" duration="$3"
+
+    # Duration in human-friendly format
+    local dur_display
+    if [ "$duration" -ge 60 ]; then
+        dur_display="$((duration / 60))m $((duration % 60))s"
+    else
+        dur_display="${duration}s"
+    fi
+
+    # Files changed
+    local files_list="" files_count=0
+    if [ -n "$pre_commit" ] && [ -n "$post_commit" ] && [ "$pre_commit" != "$post_commit" ]; then
+        files_list=$(git diff --name-only "${pre_commit}..${post_commit}" 2>/dev/null || true)
+        if [ -n "$files_list" ]; then
+            files_count=$(echo "$files_list" | grep -c . 2>/dev/null || echo 0)
+        fi
+    fi
+
+    # Latest commit message (from agent's work)
+    local commit_msg=""
+    if [ -n "$post_commit" ] && [ "$pre_commit" != "$post_commit" ]; then
+        commit_msg=$(git log --format="%s" -1 "$post_commit" 2>/dev/null || true)
+    fi
+
+    # Diff stat (insertions/deletions)
+    local diff_summary=""
+    if [ -n "$pre_commit" ] && [ -n "$post_commit" ] && [ "$pre_commit" != "$post_commit" ]; then
+        diff_summary=$(git diff --stat "${pre_commit}..${post_commit}" 2>/dev/null | tail -1 | sed 's/^ *//' || true)
+    fi
+
+    # Task progress
+    local progress
+    progress=$(_get_task_progress)
+
+    # Build the log message
+    log "ORCHESTRATOR" "Iteration complete (${dur_display}) | tasks: ${progress} | files: ${files_count} changed"
+
+    if [ -n "$commit_msg" ]; then
+        log "ORCHESTRATOR" "  commit: ${commit_msg}"
+    fi
+    if [ -n "$diff_summary" ] && [ "$diff_summary" != " " ]; then
+        log "ORCHESTRATOR" "  diff:   ${diff_summary}"
+    fi
+    if [ "$files_count" -gt 0 ] && [ "$files_count" -le 10 ]; then
+        log "ORCHESTRATOR" "  files:  $(echo "$files_list" | tr '\n' ' ')"
+    elif [ "$files_count" -gt 10 ]; then
+        local first_five
+        first_five=$(echo "$files_list" | head -5 | tr '\n' ' ')
+        log "ORCHESTRATOR" "  files:  ${first_five}(+$((files_count - 5)) more)"
+    fi
+}
+
 _start_progress_spinner() {
     local phase="$1" iteration="$2" model="$3"
+    local task_hint="${4:-}"
     local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
     local i=0 elapsed=0
+    # Truncate task hint for spinner display
+    if [ ${#task_hint} -gt 60 ]; then
+        task_hint="${task_hint:0:57}..."
+    fi
+    local task_display=""
+    if [ -n "$task_hint" ]; then
+        task_display="  ${task_hint}"
+    fi
     while true; do
         local c="${spin_chars:$((i % ${#spin_chars})):1}"
-        printf "\r  %s  [%s] %s iter %s  (%s)  %ds elapsed..." "$c" "$model" "$phase" "$iteration" "agent running" "$elapsed" >&2
+        printf "\r  %s  [%s] %s iter %s  (%s)  %ds elapsed...%s" "$c" "$model" "$phase" "$iteration" "agent running" "$elapsed" "$task_display" >&2
         sleep 1
         elapsed=$((elapsed + 1))
         i=$((i + 1))
@@ -517,7 +606,7 @@ run_agent() {
         AGENT_EXIT_CODE=0
 
         # Start progress spinner so the terminal shows activity
-        _start_progress_spinner "$current_phase" "$phase_iteration" "$model" &
+        _start_progress_spinner "$current_phase" "$phase_iteration" "$model" "$(_get_next_task_from_plan)" &
         local _spinner_pid=$!
 
         local _tmp_output
@@ -585,7 +674,7 @@ run_agent() {
     AGENT_EXIT_CODE=0
 
     # Start progress spinner so the terminal shows activity
-    _start_progress_spinner "$current_phase" "$phase_iteration" "$model" &
+    _start_progress_spinner "$current_phase" "$phase_iteration" "$model" "$(_get_next_task_from_plan)" &
     local _spinner_pid=$!
 
     # Capture stdout (stream-json) and stderr (errors, verbose logs) together.
@@ -711,10 +800,31 @@ emit_status_line() {
             out_display="${LAST_OUTPUT_TOKENS:-0}"
         fi
 
-        echo "[${phase_upper} ${iter_display}] ${current_phase} iteration ${phase_iteration} | ${inp_display}/${out_display} tokens | cache: ${cache_pct} | allowance: ${tokens_display} remaining (cache saves cost, not tokens)"
+        # Include task progress when available
+        local _progress _task_hint_status
+        _progress=$(_get_task_progress)
+        _task_hint_status=$(_get_next_task_from_plan)
+        if [ -n "$_task_hint_status" ] && [ ${#_task_hint_status} -gt 50 ]; then
+            _task_hint_status="${_task_hint_status:0:47}..."
+        fi
+        local _task_suffix=""
+        if [ -n "$_task_hint_status" ]; then
+            _task_suffix=" | next: ${_task_hint_status}"
+        fi
+        echo "[${phase_upper} ${iter_display}] tasks: ${_progress} | ${inp_display}/${out_display} tokens | cache: ${cache_pct} | allowance: ${tokens_display} remaining${_task_suffix}"
     else
         remaining_budget=$(jq -r '(.limits.max_cost_usd - .used.estimated_cost_usd) * 100 | floor / 100' \
             "$AUTOMATON_DIR/budget.json" 2>/dev/null || echo "?")
-        echo "[${phase_upper} ${iter_display}] ${current_phase} iteration ${phase_iteration} | ~\$${iter_cost} | cache: ${cache_pct} | budget: \$${remaining_budget} remaining"
+        local _progress _task_hint_status
+        _progress=$(_get_task_progress)
+        _task_hint_status=$(_get_next_task_from_plan)
+        if [ -n "$_task_hint_status" ] && [ ${#_task_hint_status} -gt 50 ]; then
+            _task_hint_status="${_task_hint_status:0:47}..."
+        fi
+        local _task_suffix=""
+        if [ -n "$_task_hint_status" ]; then
+            _task_suffix=" | next: ${_task_hint_status}"
+        fi
+        echo "[${phase_upper} ${iter_display}] tasks: ${_progress} | ~\$${iter_cost} | cache: ${cache_pct} | budget: \$${remaining_budget} remaining${_task_suffix}"
     fi
 }

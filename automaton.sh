@@ -654,9 +654,15 @@ post_iteration() {
     iter_cost=$(estimate_cost "$model" "$LAST_INPUT_TOKENS" "$LAST_OUTPUT_TOKENS" \
         "$LAST_CACHE_CREATE" "$LAST_CACHE_READ")
 
-    # 3. Task description and status
+    # 3. Task description and status — use actual task name when in build phase
     local task_desc status
-    task_desc="${current_phase} iteration ${phase_iteration}"
+    local _plan_task
+    _plan_task=$(_get_next_task_from_plan)
+    if [ -n "$_plan_task" ] && [ "$current_phase" = "build" ]; then
+        task_desc="$_plan_task"
+    else
+        task_desc="${current_phase} iteration ${phase_iteration}"
+    fi
     if [ "$AGENT_EXIT_CODE" -eq 0 ]; then
         status="success"
     else
@@ -967,7 +973,13 @@ run_orchestration() {
             fi
         fi
 
-        log "ORCHESTRATOR" "Phase: $current_phase (max: $([ "$max_iter" -eq 0 ] && echo 'unlimited' || echo "$max_iter"))"
+        local _phase_task_progress _phase_next_task
+        _phase_task_progress=$(_get_task_progress)
+        _phase_next_task=$(_get_next_task_from_plan)
+        log "ORCHESTRATOR" "Phase: $current_phase | model: $model | max_iter: $([ "$max_iter" -eq 0 ] && echo 'unlimited' || echo "$max_iter") | tasks: $_phase_task_progress"
+        if [ -n "$_phase_next_task" ] && [ "$current_phase" = "build" ]; then
+            log "ORCHESTRATOR" "  next task: $_phase_next_task"
+        fi
 
         # === Build phase: parallel vs single-builder (spec-14, spec-15, spec-28) ===
         # When parallel.enabled is true:
@@ -1021,7 +1033,22 @@ run_orchestration() {
             fi
 
             # --- Invoke the agent ---
-            emit_event "iteration_start" "{\"task\":\"${current_phase} iteration ${phase_iteration}\"}"
+            local _current_task_desc=""
+            _current_task_desc=$(_get_next_task_from_plan)
+            local _task_progress=""
+            _task_progress=$(_get_task_progress)
+
+            if [ -n "$_current_task_desc" ]; then
+                local _task_json
+                _task_json=$(printf '%s' "$_current_task_desc" | jq -Rs '.' 2>/dev/null || echo '"unknown"')
+                emit_event "iteration_start" "{\"task\":${_task_json},\"progress\":\"${_task_progress}\"}"
+                log "ORCHESTRATOR" "--- ${current_phase} iteration ${phase_iteration} [${_task_progress}] ---"
+                log "ORCHESTRATOR" "  task: ${_current_task_desc}"
+            else
+                emit_event "iteration_start" "{\"task\":\"${current_phase} iteration ${phase_iteration}\",\"progress\":\"${_task_progress}\"}"
+                log "ORCHESTRATOR" "--- ${current_phase} iteration ${phase_iteration} [${_task_progress}] ---"
+            fi
+
             local iter_start_epoch iter_pre_commit iter_post_agent_commit
             iter_start_epoch=$(date +%s)
             iter_pre_commit=$(git rev-parse HEAD 2>/dev/null || echo "")
@@ -1116,8 +1143,23 @@ run_orchestration() {
                 _diff_out=$(git diff --name-only "${iter_pre_commit}..${iter_post_agent_commit}" 2>/dev/null) || true
                 iter_files_changed=$(echo "${_diff_out}" | grep -c . 2>/dev/null || echo 0)
             fi
-            log "ORCHESTRATOR" "iter_files_changed: pre=${iter_pre_commit:0:8} post=${iter_post_agent_commit:0:8} n=${iter_files_changed}"
-            emit_event "iteration_end" "{\"exit_code\":${AGENT_EXIT_CODE:-0},\"files_changed\":${iter_files_changed},\"input_tokens\":${LAST_INPUT_TOKENS:-0},\"output_tokens\":${LAST_OUTPUT_TOKENS:-0},\"cache_create\":${LAST_CACHE_CREATE:-0},\"cache_read\":${LAST_CACHE_READ:-0}}"
+
+            # Rich post-iteration summary: duration, files, commit, progress
+            local _iter_end_epoch _iter_duration
+            _iter_end_epoch=$(date +%s)
+            _iter_duration=$((_iter_end_epoch - iter_start_epoch))
+            _log_iteration_summary "$iter_pre_commit" "$iter_post_agent_commit" "$_iter_duration"
+
+            # Enrich iteration_end event with task info and commit
+            local _iter_commit_msg=""
+            if [ -n "$iter_post_agent_commit" ] && [ "$iter_pre_commit" != "$iter_post_agent_commit" ]; then
+                _iter_commit_msg=$(git log --format="%s" -1 "$iter_post_agent_commit" 2>/dev/null || true)
+            fi
+            local _iter_commit_json
+            _iter_commit_json=$(printf '%s' "${_iter_commit_msg:-}" | jq -Rs '.' 2>/dev/null || echo '""')
+            local _iter_task_json
+            _iter_task_json=$(printf '%s' "${_current_task_desc:-}" | jq -Rs '.' 2>/dev/null || echo '""')
+            emit_event "iteration_end" "{\"exit_code\":${AGENT_EXIT_CODE:-0},\"files_changed\":${iter_files_changed},\"input_tokens\":${LAST_INPUT_TOKENS:-0},\"output_tokens\":${LAST_OUTPUT_TOKENS:-0},\"cache_create\":${LAST_CACHE_CREATE:-0},\"cache_read\":${LAST_CACHE_READ:-0},\"duration_s\":${_iter_duration},\"task\":${_iter_task_json},\"commit_message\":${_iter_commit_json},\"progress\":\"$(_get_task_progress)\"}"
 
             # Check if agent signaled COMPLETE
             if agent_signaled_complete; then
