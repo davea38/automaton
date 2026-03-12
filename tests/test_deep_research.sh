@@ -21,24 +21,24 @@ assert_file_exists "$DEEP_RESEARCH_PROMPT" "34.2/AC-63-1: PROMPT_deep_research.m
 prompt_content=$(cat "$DEEP_RESEARCH_PROMPT" 2>/dev/null || true)
 
 # AC-63-2: Instructs researching 3-5 approaches
-assert_contains "$prompt_content" "3\|approaches" \
-    "34.2/AC-63-2: Prompt instructs researching 3-5 approaches"
+grep -q '3\|approaches' <<< "$prompt_content" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.2/AC-63-2: Prompt instructs researching 3-5 approaches"
 
 # AC-63-3: Comparative matrix required
-assert_contains "$prompt_content" "matrix\|comparative\|Comparative" \
-    "34.2/AC-63-3: Prompt requires comparative matrix"
+grep -q 'matrix\|comparative\|Comparative' <<< "$prompt_content" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.2/AC-63-3: Prompt requires comparative matrix"
 
 # AC-63-4: Recommendation section required
-assert_contains "$prompt_content" "Recommendation\|recommendation\|recommend" \
-    "34.2/AC-63-4: Prompt requires recommendation with reasoning"
+grep -q 'Recommendation\|recommendation\|recommend' <<< "$prompt_content" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.2/AC-63-4: Prompt requires recommendation with reasoning"
 
 # Output format: deep research title
-assert_contains "$prompt_content" "Deep Research\|deep research" \
-    "34.2: Prompt specifies 'Deep Research' document title format"
+grep -q 'Deep Research\|deep research' <<< "$prompt_content" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.2: Prompt specifies 'Deep Research' document title format"
 
 # AC-63-8: Standalone mode — works without PRD/specs
-assert_contains "$prompt_content" "standalone\|without PRD\|no project\|PRD.*if.*exist\|if.*exist.*PRD" \
-    "34.2/AC-63-8: Prompt handles standalone mode (no PRD/specs)"
+grep -q 'standalone\|without PRD\|no project\|PRD.*if.*exist\|if.*exist.*PRD' <<< "$prompt_content" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.2/AC-63-8: Prompt handles standalone mode (no PRD/specs)"
 
 # Template sync
 assert_file_exists "$TMPL_DEEP_RESEARCH_PROMPT" \
@@ -96,8 +96,8 @@ assert_contains "$help_output" "--research" "34.3: help text includes --research
 
 # Empty topic string errors
 output=$(bash "$automaton_script" --research "" 2>&1) || rc=$?
-assert_contains "$output" "requires a topic\|topic.*required\|requires.*topic" \
-    "34.3: --research with empty topic shows error"
+grep -q 'requires a topic\|topic.*required\|requires.*topic' <<< "$output" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.3: --research with empty topic shows error"
 
 # Templates: automaton.sh template has --research flag
 grep -q '\-\-research)' "$_PROJECT_DIR/templates/automaton.sh" 2>/dev/null

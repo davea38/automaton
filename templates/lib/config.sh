@@ -177,7 +177,13 @@ load_config() {
             (.debt_tracking.threshold // 20 | tostring),
             (.debt_tracking.markers // ["TODO","FIXME","HACK","DEBT","WORKAROUND","TEMPORARY"] | join(" ")),
             # guardrails (1)
-            (.guardrails_mode // "warn")
+            (.guardrails_mode // "warn"),
+            # collaboration (2)
+            (.collaboration.mode // "collaborative"),
+            (.collaboration.checkpoint_dir // ".automaton/checkpoints"),
+            # research deep (2)
+            (.research.deep_research_budget // 200000 | tostring),
+            (.research.deep_research_model // "sonnet")
         ] | .[]' "$config_file") || {
             echo "Error: Failed to parse config file: $config_file" >&2
             return 1
@@ -369,6 +375,14 @@ load_config() {
         # -- guardrails --
         GUARDRAILS_MODE="${_cv[$_i]}"; ((_i++ , 1))
         GUARDRAILS_SIZE_CEILING=18000
+
+        # -- collaboration (spec-61) --
+        COLLABORATION_MODE="${_cv[$_i]}"; ((_i++ , 1))
+        COLLAB_CHECKPOINT_DIR="${_cv[$_i]}"; ((_i++ , 1))
+
+        # -- deep research (spec-63) --
+        DEEP_RESEARCH_BUDGET="${_cv[$_i]}"; ((_i++ , 1))
+        DEEP_RESEARCH_MODEL="${_cv[$_i]}"; ((_i++ , 1))
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -570,6 +584,14 @@ load_config() {
         # -- guardrails (spec-58) --
         GUARDRAILS_MODE="warn"
         GUARDRAILS_SIZE_CEILING=18000
+
+        # -- collaboration (spec-61) --
+        COLLABORATION_MODE="collaborative"
+        COLLAB_CHECKPOINT_DIR=".automaton/checkpoints"
+
+        # -- deep research (spec-63) --
+        DEEP_RESEARCH_BUDGET=200000
+        DEEP_RESEARCH_MODEL="sonnet"
     fi
 }
 
@@ -1019,6 +1041,20 @@ setup_wizard() {
             *) skip_research="false" ;;
         esac
 
+        # --- Prompt 5: Collaboration Mode ---
+        local collab_mode="collaborative"
+        printf '\nHow would you like automaton to work?\n\n'
+        printf '  1. Collaborative (recommended) — Pauses at key milestones to explain\n'
+        printf '     decisions and get your approval. Best for learning and oversight.\n\n'
+        printf '  2. Autonomous — Runs end-to-end without stopping. Best for experienced\n'
+        printf '     users who want to walk away and come back to results.\n\n'
+        printf 'Choice [1]: '
+        read -r _collab_input
+        case "${_collab_input:-1}" in
+            2) collab_mode="autonomous" ;;
+            *) collab_mode="collaborative" ;;
+        esac
+
         # --- Confirmation Summary ---
         local _push_display="yes"
         [ "$auto_push" = "false" ] && _push_display="no"
@@ -1030,6 +1066,7 @@ setup_wizard() {
         printf '  Budget limit:    $%s\n' "$budget_usd"
         printf '  Auto-push:       %s\n' "$_push_display"
         printf '  Skip research:   %s\n' "$_skip_display"
+        printf '  Collaboration:   %s\n' "$collab_mode"
         printf '  Config file:     automaton.config.json\n'
         printf '\nWrite this configuration? (yes/no) [yes]: '
         read -r _confirm
@@ -1051,6 +1088,7 @@ setup_wizard() {
             --arg budget "$budget_usd" \
             --argjson auto_push "$auto_push" \
             --argjson skip_research "$skip_research" \
+            --arg collab_mode "$collab_mode" \
             '{
                 models: { primary: $model, research: "sonnet", planning: "opus", building: $model, review: "opus", subagent_default: "sonnet" },
                 budget: { mode: "api", max_total_tokens: 10000000, max_cost_usd: ($budget | tonumber), per_phase: { research: 500000, plan: 1000000, build: 7000000, review: 1500000 }, per_iteration: 500000 },
@@ -1073,7 +1111,9 @@ setup_wizard() {
                 safety: { max_total_lines: 15000, max_total_functions: 300, min_test_pass_rate: 0.80, max_consecutive_failures: 3, max_consecutive_regressions: 2, preserve_failed_branches: true, preflight_enabled: true, sandbox_testing_enabled: true },
                 work_log: { enabled: true, log_level: "normal" },
                 debt_tracking: { enabled: true, threshold: 20, markers: ["TODO", "FIXME", "HACK", "DEBT", "WORKAROUND", "TEMPORARY"] },
-                guardrails_mode: "warn"
+                guardrails_mode: "warn",
+                collaboration: { mode: $collab_mode, checkpoint_dir: ".automaton/checkpoints" },
+                research: { deep_research_budget: 200000, deep_research_model: "sonnet" }
             }' > automaton.config.json
 
         printf '\nConfiguration written to automaton.config.json\n'

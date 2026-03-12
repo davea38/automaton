@@ -1092,6 +1092,8 @@ Standard Mode:
   --skip-review         Skip Phase 4 (review), mark COMPLETE after build
   --config FILE         Use an alternate config file (default: automaton.config.json)
   --scope PATH          Scope agent operations to a directory (monorepo support) (spec-60)
+  --mode MODE           Set collaboration mode: collaborative|supervised|autonomous (spec-61)
+  --research "topic"    Run standalone deep research on a topic, write report, and exit (spec-63)
   --dry-run             Load config, run Gate 1, show settings, then exit
   --self                Self-build mode: improve automaton itself (spec-25)
   --self --continue     Auto-pick highest-priority backlog item and run (spec-26)

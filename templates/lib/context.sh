@@ -287,6 +287,63 @@ inject_dynamic_context() {
             echo ""
         fi
 
+        # Plan-specific context: include deep research documents when available (spec-63)
+        if [ "$current_phase" = "plan" ]; then
+            local _research_dir="${AUTOMATON_DIR:-.automaton}/research"
+            local _research_files
+            _research_files=$(ls "$_research_dir"/RESEARCH-*.md 2>/dev/null || true)
+            if [ -n "$_research_files" ]; then
+                echo "## Deep Research Documents"
+                echo ""
+                echo "The following research documents were produced by --research runs and should"
+                echo "inform your architectural decisions:"
+                echo ""
+                while IFS= read -r _rf; do
+                    [ -f "$_rf" ] || continue
+                    echo "### $(basename "$_rf")"
+                    cat "$_rf"
+                    echo ""
+                done <<< "$_research_files"
+            fi
+        fi
+
+        # Educational annotations (spec-61): inject phase-specific learning context
+        # when COLLABORATION_MODE is not autonomous. Helps users understand each phase.
+        if [ "${COLLABORATION_MODE:-autonomous}" != "autonomous" ]; then
+            case "$current_phase" in
+                research)
+                    cat <<'RESEARCH_EDU'
+
+## Why This Matters
+The research phase resolves unknowns in your specs before planning begins. Automated
+research prevents common failure modes: building on the wrong library version, choosing
+an architecture that doesn't scale, or missing a critical API limitation. Every TBD
+resolved now prevents a costly rework cycle later.
+RESEARCH_EDU
+                    ;;
+                plan)
+                    cat <<'PLAN_EDU'
+
+## Rationale Instructions
+For each task you create, explain WHY it matters — not just WHAT it does. Users learn
+task decomposition by seeing the reasoning: "This task creates the auth middleware
+BEFORE the protected routes because Express processes middleware in registration order."
+Dependency order should be explicitly justified.
+PLAN_EDU
+                    ;;
+                review)
+                    cat <<'REVIEW_EDU'
+
+## Learning Opportunity
+Beyond pass/fail, highlight patterns and anti-patterns you observe. Point out what the
+builder did well (e.g., "Good separation of concerns in the auth module"). Flag teaching
+moments (e.g., "The error handling pattern here could cause silent failures at scale").
+Help the user understand not just what was built, but how to think about building better.
+REVIEW_EDU
+                    ;;
+            esac
+        fi
+
         # Suffix: </dynamic_context> and everything after
         sed -n '/<\/dynamic_context>/,$p' "$prompt_file"
     } > "$augmented"

@@ -1278,7 +1278,8 @@ assess_complexity() {
     else
         # Make a single haiku call to classify the task
         local prompt
-        prompt="Classify this task into exactly one tier: SIMPLE, MODERATE, or COMPLEX.
+        prompt=$(cat <<COMPLEXITY_PROMPT
+Classify this task into exactly one tier: SIMPLE, MODERATE, or COMPLEX.
 
 SIMPLE: Single file, no logic change, no new tests needed (typo fix, config change, comment update).
 MODERATE: 1-3 files, contained logic change, existing patterns (single feature, bug fix, refactor one function).
@@ -1287,7 +1288,9 @@ COMPLEX: 4+ files, new patterns, dependency changes, API surface change (multi-f
 Task: ${task_desc}
 
 Respond with ONLY a JSON object, no other text:
-{\"tier\": \"MODERATE\", \"rationale\": \"one-line reason\"}"
+{"tier": "MODERATE", "rationale": "one-line reason"}
+COMPLEXITY_PROMPT
+)
 
         local claude_output=""
         claude_output=$(echo "$prompt" | claude -p --model haiku --output-format text 2>/dev/null) || true

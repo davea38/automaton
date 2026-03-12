@@ -283,23 +283,23 @@ Foundation for specs 62-64. All new functionality; no existing code modified bey
 
 ### 33.1 Create lib/collaborate.sh core module
 
-- [ ] Create `lib/collaborate.sh` (~250 lines) with: `checkpoint()` function (the core -- checks mode, TTY, generates summary, writes audit file, presents choices, dispatches); `generate_checkpoint_summary()` (phase-specific summary generation reading state.json, IMPLEMENTATION_PLAN.md, traceability.json); `handle_modify()` (launches interactive `claude` session with context files); `handle_pause()` (writes `checkpoint_paused_at` to state.json, exits 0); `handle_abort()` (writes state, exits 1). Create matching `templates/lib/collaborate.sh`. (WHY: AC-61-1 through AC-61-9 -- this is the entire checkpoint system) <!-- test: tests/test_collaborate.sh -->
+- [x] Create `lib/collaborate.sh` (~250 lines) with: `checkpoint()` function (the core -- checks mode, TTY, generates summary, writes audit file, presents choices, dispatches); `generate_checkpoint_summary()` (phase-specific summary generation reading state.json, IMPLEMENTATION_PLAN.md, traceability.json); `handle_modify()` (launches interactive `claude` session with context files); `handle_pause()` (writes `checkpoint_paused_at` to state.json, exits 0); `handle_abort()` (writes state, exits 1). Create matching `templates/lib/collaborate.sh`. (WHY: AC-61-1 through AC-61-9 -- this is the entire checkpoint system) <!-- test: tests/test_collaborate.sh -->
 
 ### 33.2 Add --mode CLI flag and config
 
-- [ ] Add `--mode` CLI flag parsing to `automaton.sh` (alongside existing --skip-research etc.): `--mode) ARG_MODE="$2"; shift 2`. Add `collaboration` config section to `automaton.config.json` and `templates/automaton.config.json`: `{"collaboration": {"mode": "collaborative", "checkpoint_dir": ".automaton/checkpoints"}}`. Load in `lib/config.sh` with CLI override. Add to help text in `lib/display.sh`. (WHY: AC-61-10 -- CLI flag must override config) <!-- test: tests/test_cli_args.sh -->
+- [x] Add `--mode` CLI flag parsing to `automaton.sh` (alongside existing --skip-research etc.): `--mode) ARG_MODE="$2"; shift 2`. Add `collaboration` config section to `automaton.config.json` and `templates/automaton.config.json`: `{"collaboration": {"mode": "collaborative", "checkpoint_dir": ".automaton/checkpoints"}}`. Load in `lib/config.sh` with CLI override. Add to help text in `lib/display.sh`. (WHY: AC-61-10 -- CLI flag must override config) <!-- test: tests/test_cli_args.sh -->
 
 ### 33.3 Wire checkpoints into phase transitions
 
-- [ ] In `automaton.sh`, source `lib/collaborate.sh` and call `checkpoint "after_research"` after line 1051 (research-to-plan transition), `checkpoint "after_plan"` after line 1074 (plan-to-build transition), `checkpoint "after_review"` before the COMPLETE transition in review gate. Handle `--resume` detection of `checkpoint_paused_at` in state.json at startup. Apply to `templates/automaton.sh`. (WHY: AC-61-1 -- checkpoints at all 3 phase transitions) <!-- test: tests/test_collaborate.sh -->
+- [x] In `automaton.sh`, source `lib/collaborate.sh` and call `checkpoint "after_research"` after line 1051 (research-to-plan transition), `checkpoint "after_plan"` after line 1074 (plan-to-build transition), `checkpoint "after_review"` before the COMPLETE transition in review gate. Handle `--resume` detection of `checkpoint_paused_at` in state.json at startup. Apply to `templates/automaton.sh`. (WHY: AC-61-1 -- checkpoints at all 3 phase transitions) <!-- test: tests/test_collaborate.sh -->
 
 ### 33.4 Add educational annotation injection
 
-- [ ] In `lib/context.sh`, when `COLLABORATION_MODE != "autonomous"`, append educational context blocks to phase prompts: "Why This Matters" for research, "Rationale" instructions for plan, "Learning Opportunity" for review. Gate on `COLLABORATION_MODE` variable. Apply to `templates/lib/context.sh`. (WHY: AC-61-11 -- educational annotations in collaborative mode) <!-- test: tests/test_collaborate.sh -->
+- [x] In `lib/context.sh`, when `COLLABORATION_MODE != "autonomous"`, append educational context blocks to phase prompts: "Why This Matters" for research, "Rationale" instructions for plan, "Learning Opportunity" for review. Gate on `COLLABORATION_MODE` variable. Apply to `templates/lib/context.sh`. (WHY: AC-61-11 -- educational annotations in collaborative mode) <!-- test: tests/test_collaborate.sh -->
 
 ### 33.5 Update setup wizard
 
-- [ ] In `lib/config.sh` `run_setup_wizard()`, add collaboration mode question after existing questions: "How would you like automaton to work? 1. Collaborative (recommended) 2. Autonomous". Default: 1. Write choice to config. Apply to `templates/lib/config.sh`. (WHY: spec-61 section 11 -- discoverability for new users) <!-- test: tests/test_setup_wizard.sh -->
+- [x] In `lib/config.sh` `run_setup_wizard()`, add collaboration mode question after existing questions: "How would you like automaton to work? 1. Collaborative (recommended) 2. Autonomous". Default: 1. Write choice to config. Apply to `templates/lib/config.sh`. (WHY: spec-61 section 11 -- discoverability for new users) <!-- test: tests/test_setup_wizard.sh -->
 
 ---
 
@@ -309,23 +309,23 @@ These are largely prompt-only changes (spec 64) and a new standalone mode (spec 
 
 ### 34.1 Add Discovery Stage to wizard and converse prompts
 
-- [ ] Edit `PROMPT_wizard.md`: add Stage 0 (Discovery) before existing Stage 1. Include vagueness detection heuristics, 2-3 open-ended questions, 3-direction suggestion format, rejection/combination handling, transition signal. Edit `PROMPT_converse.md` with same discovery capability. Gate educational framing on `COLLABORATION_MODE` context variable (injected by spec-61's system). Apply edits to `templates/PROMPT_wizard.md` and `templates/PROMPT_converse.md`. (WHY: AC-64-1 through AC-64-9 -- entirely prompt-driven, no bash changes) <!-- test: tests/test_wizard_discovery.sh -->
+- [x] Edit `PROMPT_wizard.md`: add Stage 0 (Discovery) before existing Stage 1. Include vagueness detection heuristics, 2-3 open-ended questions, 3-direction suggestion format, rejection/combination handling, transition signal. Edit `PROMPT_converse.md` with same discovery capability. Gate educational framing on `COLLABORATION_MODE` context variable (injected by spec-61's system). Apply edits to `templates/PROMPT_wizard.md` and `templates/PROMPT_converse.md`. (WHY: AC-64-1 through AC-64-9 -- entirely prompt-driven, no bash changes) <!-- test: tests/test_wizard_discovery.sh -->
 
 ### 34.2 Create PROMPT_deep_research.md
 
-- [ ] Create `PROMPT_deep_research.md` (~100 lines) instructing Claude to: understand domain from topic + PRD/specs, research 3-5 approaches via web search, produce comparative matrix, make recommendation. Output format per spec-63 section 4. Create matching `templates/PROMPT_deep_research.md`. (WHY: AC-63-1 through AC-63-4 -- the research prompt drives the quality of output) <!-- test: tests/test_deep_research.sh -->
+- [x] Create `PROMPT_deep_research.md` (~100 lines) instructing Claude to: understand domain from topic + PRD/specs, research 3-5 approaches via web search, produce comparative matrix, make recommendation. Output format per spec-63 section 4. Create matching `templates/PROMPT_deep_research.md`. (WHY: AC-63-1 through AC-63-4 -- the research prompt drives the quality of output) <!-- test: tests/test_deep_research.sh -->
 
 ### 34.3 Add --research CLI flag and dispatch
 
-- [ ] Add `--research` CLI flag to `automaton.sh`: `--research) ARG_RESEARCH_TOPIC="$2"; shift 2`. Add dispatch: if `ARG_RESEARCH_TOPIC` is set, run `run_deep_research "$ARG_RESEARCH_TOPIC"` and exit (standalone mode, no phase loop). Implement `run_deep_research()` in `lib/collaborate.sh` or a new `lib/research.sh`: sanitize topic for filename, create `.automaton/research/` dir, invoke claude with PROMPT_deep_research.md + topic context, enforce `research.deep_research_budget` token limit, write output to `RESEARCH-{topic}-{timestamp}.md`. Add config keys `research.deep_research_budget` (200000) and `research.deep_research_model` ("sonnet") to config files. Add to help text. Apply to templates. (WHY: AC-63-1, AC-63-5, AC-63-6, AC-63-8 -- standalone deep research mode) <!-- test: tests/test_deep_research.sh -->
+- [x] Add `--research` CLI flag to `automaton.sh`: `--research) ARG_RESEARCH_TOPIC="$2"; shift 2`. Add dispatch: if `ARG_RESEARCH_TOPIC` is set, run `run_deep_research "$ARG_RESEARCH_TOPIC"` and exit (standalone mode, no phase loop). Implement `run_deep_research()` in `lib/collaborate.sh` or a new `lib/research.sh`: sanitize topic for filename, create `.automaton/research/` dir, invoke claude with PROMPT_deep_research.md + topic context, enforce `research.deep_research_budget` token limit, write output to `RESEARCH-{topic}-{timestamp}.md`. Add config keys `research.deep_research_budget` (200000) and `research.deep_research_model` ("sonnet") to config files. Add to help text. Apply to templates. (WHY: AC-63-1, AC-63-5, AC-63-6, AC-63-8 -- standalone deep research mode) <!-- test: tests/test_deep_research.sh -->
 
 ### 34.4 Include research documents in plan phase context
 
-- [ ] In `lib/context.sh`, when building plan phase context, check for `.automaton/research/RESEARCH-*.md` files and include their content (or summaries if too large) in the dynamic context. (WHY: AC-63-7 -- research findings should inform planning decisions) <!-- test: tests/test_deep_research.sh -->
+- [x] In `lib/context.sh`, when building plan phase context, check for `.automaton/research/RESEARCH-*.md` files and include their content (or summaries if too large) in the dynamic context. (WHY: AC-63-7 -- research findings should inform planning decisions) <!-- test: tests/test_deep_research.sh -->
 
 ### 34.5 Add [r]esearch option to after_research checkpoint (depends on 33.1)
 
-- [ ] In `lib/collaborate.sh`, when displaying the `after_research` checkpoint choices, add `[r]esearch` option. When selected, prompt for topic, call `run_deep_research()`, then re-display checkpoint. (WHY: AC-63-9 -- collaborative mode integration) <!-- test: tests/test_collaborate.sh -->
+- [x] In `lib/collaborate.sh`, when displaying the `after_research` checkpoint choices, add `[r]esearch` option. When selected, prompt for topic, call `run_deep_research()`, then re-display checkpoint. (WHY: AC-63-9 -- collaborative mode integration) <!-- test: tests/test_collaborate.sh -->
 
 ---
 

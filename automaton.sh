@@ -39,6 +39,7 @@ source "$AUTOMATON_LIB_DIR/qa.sh"
 source "$AUTOMATON_LIB_DIR/display.sh"
 source "$AUTOMATON_LIB_DIR/parallel_core.sh"
 source "$AUTOMATON_LIB_DIR/parallel_teams.sh"
+source "$AUTOMATON_LIB_DIR/collaborate.sh"  # spec-61: collaboration mode and checkpoints
 
 # ---------------------------------------------------------------------------
 # CLI Argument Parsing & Main Entry Point
@@ -83,6 +84,8 @@ ARG_NO_SETUP=false
 ARG_WIZARD=false
 ARG_NO_WIZARD=false
 ARG_SCOPE=""
+ARG_MODE=""
+ARG_RESEARCH_TOPIC=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -281,6 +284,22 @@ while [ $# -gt 0 ]; do
             ARG_NO_WIZARD=true
             shift
             ;;
+        --mode)
+            if [ -z "${2:-}" ] || ! echo "${2:-}" | grep -qE '^(collaborative|supervised|autonomous)$'; then
+                echo "Error: Invalid mode '${2:-}'. Valid values: collaborative, supervised, autonomous" >&2
+                exit 1
+            fi
+            ARG_MODE="$2"
+            shift 2
+            ;;
+        --research)
+            if [ -z "${2:-}" ]; then
+                echo "Error: --research requires a topic string" >&2
+                exit 1
+            fi
+            ARG_RESEARCH_TOPIC="$2"
+            shift 2
+            ;;
         --help|-h)
             _show_help
             exit 0
@@ -413,6 +432,9 @@ if [ "$ARG_SKIP_REVIEW" = "true" ]; then
 fi
 if [ -n "$ARG_LOG_LEVEL" ]; then
     WORK_LOG_LEVEL="$ARG_LOG_LEVEL"
+fi
+if [ -n "$ARG_MODE" ]; then
+    COLLABORATION_MODE="$ARG_MODE"
 fi
 
 # --- Self-build mode activation (spec-25) ---
@@ -819,6 +841,13 @@ run_orchestration() {
         # Check for allowance week rollover on resume (spec-23)
         _allowance_check_rollover
         log "ORCHESTRATOR" "RESUMED: phase=$current_phase iteration=$iteration"
+        # Re-display checkpoint if run was paused at one (spec-61)
+        local _paused_at
+        _paused_at=$(jq -r '.checkpoint_paused_at // empty' "${AUTOMATON_DIR:-.automaton}/state.json" 2>/dev/null || true)
+        if [ -n "$_paused_at" ]; then
+            log "ORCHESTRATOR" "Resuming from paused checkpoint: $_paused_at"
+            checkpoint "$_paused_at"
+        fi
     else
         initialize
         if [ "$FLAG_SKIP_RESEARCH" = "true" ]; then
@@ -1095,6 +1124,7 @@ run_orchestration() {
                 # Counts remaining TBDs so the log message is actionable.
                 if gate_check "research_completeness"; then
                     transition_to_phase "plan"
+                    checkpoint "after_research"
                 else
                     research_gate_failures=$((${research_gate_failures:-0} + 1))
                     local remaining_tbds
@@ -1118,6 +1148,7 @@ run_orchestration() {
                         run_steelman_critique || true
                     fi
                     transition_to_phase "build"
+                    checkpoint "after_plan"
                     # Red-before-green gate (audit wave 3): record pre-build test failures
                     local rg_test_runner="${PROJECT_ROOT:-.}/run_tests.sh"
                     red_green_record_baseline "$rg_test_runner"
@@ -1210,6 +1241,7 @@ run_orchestration() {
                             fi
                         fi
                     fi
+                    checkpoint "after_review"
                     transition_to_phase "COMPLETE"
                 else
                     review_attempts=$((review_attempts + 1))
@@ -1264,6 +1296,12 @@ run_orchestration() {
 # --- Budget check mode (spec-35) ---
 if [ "$ARG_BUDGET_CHECK" = "true" ]; then
     display_budget_check
+fi
+
+# --- Deep research mode (spec-63) ---
+if [ -n "$ARG_RESEARCH_TOPIC" ]; then
+    run_deep_research "$ARG_RESEARCH_TOPIC"
+    exit $?
 fi
 
 # --- Health dashboard mode (spec-43) ---

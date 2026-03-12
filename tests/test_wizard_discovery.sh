@@ -24,28 +24,28 @@ assert_contains "$wizard_content" "Discovery" \
     "34.1/AC-64-1: PROMPT_wizard.md contains Discovery stage"
 
 # AC-64-1: Vagueness detection heuristics present
-assert_contains "$wizard_content" "vague\|hedging\|vagueness" \
-    "34.1/AC-64-1: PROMPT_wizard.md describes vagueness detection"
+grep -q 'vague\|hedging\|vagueness' <<< "$wizard_content" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.1/AC-64-1: PROMPT_wizard.md describes vagueness detection"
 
 # AC-64-2: 3 concrete directions requirement
 assert_contains "$wizard_content" "3 " \
     "34.1/AC-64-2: PROMPT_wizard.md instructs suggesting 3 project directions"
 
 # AC-64-3: Transition to Stage 1 after selection
-assert_contains "$wizard_content" "Stage 1\|stage 1" \
-    "34.1/AC-64-3: PROMPT_wizard.md includes transition to Stage 1"
+grep -q 'Stage 1\|stage 1' <<< "$wizard_content" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.1/AC-64-3: PROMPT_wizard.md includes transition to Stage 1"
 
 # AC-64-4: Reject-all handling (suggest new directions)
-assert_contains "$wizard_content" "reject\|new directions\|3 more" \
-    "34.1/AC-64-4: PROMPT_wizard.md handles rejection of all directions"
+grep -q 'reject\|new directions\|3 more' <<< "$wizard_content" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.1/AC-64-4: PROMPT_wizard.md handles rejection of all directions"
 
 # AC-64-6: Specificity bypass — skip discovery for specific input
-assert_contains "$wizard_content" "specific\|specificty\|bypass\|skip" \
-    "34.1/AC-64-6: PROMPT_wizard.md describes specificity bypass"
+grep -q 'specific\|specificty\|bypass\|skip' <<< "$wizard_content" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.1/AC-64-6: PROMPT_wizard.md describes specificity bypass"
 
 # AC-64-7: Educational framing gated on COLLABORATION_MODE
-assert_contains "$wizard_content" "COLLABORATION_MODE\|collaborative\|educational" \
-    "34.1/AC-64-7: PROMPT_wizard.md references collaboration mode for educational framing"
+grep -q 'COLLABORATION_MODE\|collaborative\|educational' <<< "$wizard_content" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.1/AC-64-7: PROMPT_wizard.md references collaboration mode for educational framing"
 
 # ============================================================
 # 34.1: PROMPT_converse.md Discovery Capability
@@ -54,12 +54,12 @@ assert_contains "$wizard_content" "COLLABORATION_MODE\|collaborative\|educationa
 assert_file_exists "$CONVERSE_PROMPT" "PROMPT_converse.md exists"
 
 converse_content=$(cat "$CONVERSE_PROMPT" 2>/dev/null || true)
-assert_contains "$converse_content" "Discovery\|discovery" \
-    "34.1/AC-64-9: PROMPT_converse.md contains discovery capability"
+grep -q 'Discovery\|discovery' <<< "$converse_content" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.1/AC-64-9: PROMPT_converse.md contains discovery capability"
 
 # AC-64-1: Vagueness detection in converse prompt
-assert_contains "$converse_content" "vague\|vagueness\|hedging" \
-    "34.1/AC-64-9: PROMPT_converse.md describes vagueness detection"
+grep -q 'vague\|vagueness\|hedging' <<< "$converse_content" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.1/AC-64-9: PROMPT_converse.md describes vagueness detection"
 
 # ============================================================
 # 34.1: Template sync
@@ -73,7 +73,7 @@ assert_contains "$tmpl_wizard" "Discovery" \
     "34.1: templates/PROMPT_wizard.md has Discovery stage"
 
 tmpl_converse=$(cat "$TMPL_CONVERSE_PROMPT" 2>/dev/null || true)
-assert_contains "$tmpl_converse" "Discovery\|discovery" \
-    "34.1: templates/PROMPT_converse.md has discovery capability"
+grep -q 'Discovery\|discovery' <<< "$tmpl_converse" && rc=0 || rc=1
+assert_exit_code 0 "$rc" "34.1: templates/PROMPT_converse.md has discovery capability"
 
 test_summary

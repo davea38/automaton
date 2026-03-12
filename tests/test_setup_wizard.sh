@@ -142,7 +142,7 @@ cd "$SCRIPT_DIR"
 
 # --- Test 15: 33.5 setup_wizard asks collaboration mode question ---
 # After implementation: run_setup_wizard() must present collaboration mode choice.
-wizard_body=$(sed -n '/^run_setup_wizard()/,/^}/p' "$_PROJECT_DIR/lib/config.sh" 2>/dev/null || true)
+wizard_body=$(sed -n '/^setup_wizard()\|^run_setup_wizard()/,/^}/p' "$_PROJECT_DIR/lib/config.sh" 2>/dev/null || true)
 assert_contains "$wizard_body" "Collaborative" \
     "33.5: setup_wizard presents Collaborative mode option"
 
