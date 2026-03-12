@@ -605,3 +605,138 @@ _garden_get_bloom_candidates() {
     echo "$candidates" | sort -t' ' -k1 -nr | awk '{print $2}'
     return 0
 }
+
+# ---------------------------------------------------------------------------
+# Project Garden (spec-62): suggestion generation for the user's project.
+# Separate from the evolution garden (spec-38) — uses project-garden/ dir.
+# ---------------------------------------------------------------------------
+
+# Generates improvement suggestions for the user's project using PROMPT_suggest.md.
+# Stores results in .automaton/project-garden/seeds.json.
+# In collaborative mode, prints a summary to stdout for checkpoint display.
+# In autonomous mode, writes .automaton/project-suggestions.md silently.
+# Usage: run_project_suggestions "after_research"|"after_review"
+run_project_suggestions() {
+    local trigger="${1:-after_research}"
+
+    # Check master toggle
+    if [ "${PROJECT_GARDEN_ENABLED:-true}" != "true" ]; then
+        return 0
+    fi
+
+    # Check trigger-specific toggle
+    case "$trigger" in
+        after_research)
+            [ "${PROJECT_GARDEN_SUGGEST_AFTER_RESEARCH:-true}" = "true" ] || return 0
+            ;;
+        after_review)
+            [ "${PROJECT_GARDEN_SUGGEST_AFTER_REVIEW:-true}" = "true" ] || return 0
+            ;;
+    esac
+
+    local prompt_file="${AUTOMATON_INSTALL_DIR:-$(dirname "${BASH_SOURCE[0]}")/..}/PROMPT_suggest.md"
+    if [ ! -f "$prompt_file" ]; then
+        log "PROJECT_GARDEN" "WARN: PROMPT_suggest.md not found at $prompt_file — skipping suggestions"
+        return 0
+    fi
+
+    local pg_dir="$AUTOMATON_DIR/project-garden"
+    mkdir -p "$pg_dir"
+
+    local seeds_file="$pg_dir/seeds.json"
+    local model="${MODEL_BUILDING:-sonnet}"
+    local max_suggestions="${PROJECT_GARDEN_MAX_SUGGESTIONS:-5}"
+
+    log "PROJECT_GARDEN" "Generating project suggestions (trigger=$trigger, max=$max_suggestions)"
+
+    # Replace MAX_SUGGESTIONS placeholder in prompt
+    local augmented_prompt
+    augmented_prompt=$(sed "s/MAX_SUGGESTIONS/$max_suggestions/g" "$prompt_file")
+
+    # Call claude to generate suggestions
+    local raw_output
+    raw_output=$(echo "$augmented_prompt" | claude -p --model "$model" --output-format text 2>/dev/null) || {
+        log "PROJECT_GARDEN" "Suggestion generation failed — skipping"
+        return 0
+    }
+
+    # Check for error response
+    if echo "$raw_output" | jq -e '.error' >/dev/null 2>&1; then
+        local err_msg
+        err_msg=$(echo "$raw_output" | jq -r '.error')
+        log "PROJECT_GARDEN" "Suggestion error: $err_msg"
+        return 0
+    fi
+
+    # Parse suggestions array
+    local suggestions
+    suggestions=$(echo "$raw_output" \
+        | sed 's/^```[a-z]*//;s/^```//' | grep -v '^```' \
+        | jq '.' 2>/dev/null) || {
+        log "PROJECT_GARDEN" "Failed to parse suggestions JSON — skipping"
+        return 0
+    }
+
+    local suggestion_count
+    suggestion_count=$(echo "$suggestions" | jq 'length' 2>/dev/null || echo 0)
+    if [ "$suggestion_count" -eq 0 ]; then
+        log "PROJECT_GARDEN" "No suggestions generated"
+        return 0
+    fi
+
+    # Build seed entries with metadata
+    local now
+    now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local new_seeds
+    new_seeds=$(echo "$suggestions" | jq --arg trigger "$trigger" --arg ts "$now" '
+        to_entries | map({
+            id: ("pg-" + $ts[:10] + "-" + (.key + 1 | tostring | if length < 3 then "0" * (3 - length) + . else . end)),
+            title: .value.title,
+            category: (.value.category // "general"),
+            rationale: (.value.rationale // ""),
+            complexity: (.value.complexity // "medium"),
+            related_spec: (.value.related_spec // "general"),
+            stage: "seed",
+            source_trigger: $trigger,
+            created_at: $ts,
+            support_count: 0
+        })
+    ' 2>/dev/null) || new_seeds="[]"
+
+    # Merge with existing seeds (de-duplicate by title)
+    local existing_seeds="[]"
+    [ -f "$seeds_file" ] && existing_seeds=$(jq '.' "$seeds_file" 2>/dev/null || echo "[]")
+
+    local merged
+    merged=$(jq -s '
+        .[0] as $existing |
+        .[1] as $new |
+        ($existing | map(.title)) as $existing_titles |
+        $existing + ($new | map(select(.title as $t | $existing_titles | index($t) == null)))
+    ' <(echo "$existing_seeds") <(echo "$new_seeds") 2>/dev/null) || merged="$new_seeds"
+
+    echo "$merged" > "$seeds_file"
+
+    log "PROJECT_GARDEN" "Saved $suggestion_count suggestions to $seeds_file"
+
+    # Autonomous mode: write human-readable summary
+    local summary_file="$AUTOMATON_DIR/project-suggestions.md"
+    {
+        echo "# Project Suggestions (generated $(date -u +%Y-%m-%d))"
+        echo ""
+        echo "Trigger: $trigger"
+        echo ""
+        echo "$new_seeds" | jq -r '.[] | "- [\(.category)] \(.title) (\(.complexity))\n  \(.rationale)\n"' 2>/dev/null || true
+    } > "$summary_file"
+
+    # Collaborative mode: print checkpoint summary
+    if [ "${COLLABORATION_MODE:-collaborative}" = "collaborative" ]; then
+        echo ""
+        echo "## Project Suggestions ($suggestion_count new)"
+        echo "$new_seeds" | jq -r 'to_entries | .[] | "  \(.key + 1). [\(.value.category)] \(.value.title) (\(.value.complexity))"' 2>/dev/null || true
+        echo ""
+        echo "Full list: .automaton/project-garden/seeds.json"
+    fi
+
+    return 0
+}

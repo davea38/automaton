@@ -1126,6 +1126,10 @@ Garden:
   --prune ID "reason"   Wilt an idea with a reason
   --promote ID          Force-promote idea to bloom
 
+Project Garden:
+  --suggest             Generate project improvement suggestions (one-shot)
+  --project-garden      Display current project suggestions
+
 Observation:
   --health              Display health metrics dashboard
   --signals             Display active stigmergic signals

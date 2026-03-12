@@ -170,6 +170,14 @@ while [ $# -gt 0 ]; do
             ARG_GARDEN=true
             shift
             ;;
+        --suggest)
+            ARG_SUGGEST=true
+            shift
+            ;;
+        --project-garden)
+            ARG_PROJECT_GARDEN=true
+            shift
+            ;;
         --garden-detail)
             ARG_GARDEN_DETAIL="${2:-}"
             if [ -z "$ARG_GARDEN_DETAIL" ]; then
@@ -760,9 +768,6 @@ transition_to_phase() {
     # Generate context summary at phase transition (spec-24)
     generate_context_summary
 
-    # Regenerate AGENTS.md from learnings.json + project metadata (spec-34)
-    generate_agents_md
-
     # Notify: phase completed (spec-52)
     send_notification "phase_completed" "$current_phase" "success" "${current_phase} phase completed"
 
@@ -774,6 +779,10 @@ transition_to_phase() {
         '. + [{"phase": $p, "completed_at": $t}]')
 
     current_phase="$new_phase"
+
+    # Regenerate AGENTS.md after current_phase is updated so it shows the
+    # phase we are entering (not the one we just left) (spec-34)
+    generate_agents_md
     phase_iteration=0
     max_iter_reached=false
     PHASE_START_TIME=$(date +%s)
@@ -1123,6 +1132,8 @@ run_orchestration() {
                 # On fail: retry research if within max iterations, then warn and proceed.
                 # Counts remaining TBDs so the log message is actionable.
                 if gate_check "research_completeness"; then
+                    # Project garden: generate suggestions based on research output (spec-62)
+                    run_project_suggestions "after_research" 2>/dev/null || true
                     transition_to_phase "plan"
                     checkpoint "after_research"
                 else
@@ -1241,6 +1252,8 @@ run_orchestration() {
                             fi
                         fi
                     fi
+                    # Project garden: generate implementation-informed suggestions (spec-62)
+                    run_project_suggestions "after_review" 2>/dev/null || true
                     checkpoint "after_review"
                     transition_to_phase "COMPLETE"
                 else
@@ -1313,6 +1326,27 @@ fi
 # --- --garden display mode (spec-44) ---
 if [ "$ARG_GARDEN" = "true" ]; then
     _display_garden
+    exit 0
+fi
+
+# --- --suggest mode (spec-62): one-shot project suggestion generation ---
+if [ "${ARG_SUGGEST:-false}" = "true" ]; then
+    load_config 2>/dev/null || true
+    run_project_suggestions "after_research"
+    exit 0
+fi
+
+# --- --project-garden display mode (spec-62) ---
+if [ "${ARG_PROJECT_GARDEN:-false}" = "true" ]; then
+    _pg_seeds="${AUTOMATON_DIR}/project-garden/seeds.json"
+    if [ ! -f "$_pg_seeds" ]; then
+        echo "No project suggestions yet. Run --suggest to generate some."
+        exit 0
+    fi
+    echo "# Project Garden"
+    echo ""
+    echo "## Seeds (pending)"
+    jq -r '.[] | select(.stage == "seed") | "  [\(.category)] \(.title) (\(.complexity))\n    \(.rationale)\n"' "$_pg_seeds" 2>/dev/null || echo "  (none)"
     exit 0
 fi
 

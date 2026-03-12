@@ -767,9 +767,14 @@ generate_agents_md() {
         project_name=$(basename "$(pwd)")
     fi
 
-    # Count completed runs from run-summaries/ (may not exist yet)
+    # Count total run attempts from timestamped work-log files (includes partial/interrupted
+    # runs that never produced a run-summary). The current run's work-log.jsonl (no timestamp
+    # in name) is excluded to avoid double-counting.
     local run_count=0
-    if [ -d "$AUTOMATON_DIR/run-summaries" ]; then
+    run_count=$(find "$AUTOMATON_DIR" -maxdepth 1 -name 'work-log-*.jsonl' 2>/dev/null | wc -l)
+    run_count=$(echo "$run_count" | tr -d ' ')
+    # Fall back to run-summaries count if no work-logs exist (older installs)
+    if [ "$run_count" -eq 0 ] && [ -d "$AUTOMATON_DIR/run-summaries" ]; then
         run_count=$(find "$AUTOMATON_DIR/run-summaries" -maxdepth 1 -name '*.json' 2>/dev/null | wc -l)
         run_count=$(echo "$run_count" | tr -d ' ')
     fi
@@ -788,17 +793,47 @@ generate_agents_md() {
         ' "$learnings_file" 2>/dev/null | head -40 || true)
     fi
 
-    # Build recent activity from run-summaries/ (last 3 runs)
+    # Build recent activity: prefer run-summaries (have full phase/task data), but
+    # supplement with work-log filenames to cover partial/interrupted runs that never
+    # produced a summary. Show up to 5 most recent entries.
     local activity_lines=""
+    local _summary_ids=""
     if [ -d "$AUTOMATON_DIR/run-summaries" ]; then
         # shellcheck disable=SC2012
         activity_lines=$(ls -t "$AUTOMATON_DIR/run-summaries/"*.json 2>/dev/null \
-            | head -3 \
+            | head -5 \
             | while IFS= read -r f; do
                 jq -r '"- " + .run_id + ": " +
                     (.phases_completed | join(" → ")) +
                     " (" + (.tasks_completed | tostring) + " tasks)"' "$f" 2>/dev/null || true
             done || true)
+        # Track which run IDs already have summaries to avoid duplicates below
+        _summary_ids=$(ls -t "$AUTOMATON_DIR/run-summaries/"*.json 2>/dev/null \
+            | while IFS= read -r f; do jq -r '.run_id // empty' "$f" 2>/dev/null; done \
+            | head -5 | paste -sd '|' || true)
+    fi
+    # Supplement with work-log files for runs that have no summary (interrupted runs)
+    local _wl_lines=""
+    local _wl_count=0
+    while IFS= read -r wl; do
+        local _run_id
+        _run_id=$(basename "$wl" .jsonl | sed 's/^work-log-//')
+        # Skip if already in summaries
+        if [ -n "$_summary_ids" ] && echo "$_run_id" | grep -qE "^(${_summary_ids})$" 2>/dev/null; then
+            continue
+        fi
+        # Extract phases from work-log events (phase field is top-level)
+        local _phases
+        _phases=$(jq -r 'select(.event=="phase_end") | .phase // empty' "$wl" 2>/dev/null \
+            | tr '\n' '→' | sed 's/→$//' || echo "partial run")
+        _wl_lines="${_wl_lines}- ${_run_id}: ${_phases:-partial run}
+"
+        _wl_count=$((_wl_count + 1))
+        [ "$_wl_count" -ge 3 ] && break
+    done < <(ls -t "$AUTOMATON_DIR"/work-log-*.jsonl 2>/dev/null || true)
+    if [ -n "$_wl_lines" ]; then
+        activity_lines="${activity_lines}
+${_wl_lines}"
     fi
 
     # Assemble AGENTS.md into a temp file

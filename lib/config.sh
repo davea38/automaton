@@ -183,7 +183,12 @@ load_config() {
             (.collaboration.checkpoint_dir // ".automaton/checkpoints"),
             # research deep (2)
             (.research.deep_research_budget // 200000 | tostring),
-            (.research.deep_research_model // "sonnet")
+            (.research.deep_research_model // "sonnet"),
+            # project_garden (4)
+            (.project_garden.enabled // true | tostring),
+            (.project_garden.suggest_after_research // true | tostring),
+            (.project_garden.suggest_after_review // true | tostring),
+            (.project_garden.max_suggestions_per_cycle // 5 | tostring)
         ] | .[]' "$config_file") || {
             echo "Error: Failed to parse config file: $config_file" >&2
             return 1
@@ -383,6 +388,12 @@ load_config() {
         # -- deep research (spec-63) --
         DEEP_RESEARCH_BUDGET="${_cv[$_i]}"; ((_i++ , 1))
         DEEP_RESEARCH_MODEL="${_cv[$_i]}"; ((_i++ , 1))
+
+        # -- project garden (spec-62) --
+        PROJECT_GARDEN_ENABLED="${_cv[$_i]}"; ((_i++ , 1))
+        PROJECT_GARDEN_SUGGEST_AFTER_RESEARCH="${_cv[$_i]}"; ((_i++ , 1))
+        PROJECT_GARDEN_SUGGEST_AFTER_REVIEW="${_cv[$_i]}"; ((_i++ , 1))
+        PROJECT_GARDEN_MAX_SUGGESTIONS="${_cv[$_i]}"; ((_i++ , 1))
     else
         CONFIG_FILE_USED="(defaults)"
 
@@ -592,6 +603,12 @@ load_config() {
         # -- deep research (spec-63) --
         DEEP_RESEARCH_BUDGET=200000
         DEEP_RESEARCH_MODEL="sonnet"
+
+        # -- project garden (spec-62) --
+        PROJECT_GARDEN_ENABLED="true"
+        PROJECT_GARDEN_SUGGEST_AFTER_RESEARCH="true"
+        PROJECT_GARDEN_SUGGEST_AFTER_REVIEW="true"
+        PROJECT_GARDEN_MAX_SUGGESTIONS=5
     fi
 }
 
@@ -1300,7 +1317,9 @@ _apply_rate_limit_preset() {
 # Applies higher parallel defaults when in allowance mode (spec-35).
 # Max Plan subscribers have no per-token cost, so more parallelism is free.
 # Only overrides values that the user has NOT explicitly set in their config.
-# Defaults applied: max_builders=5, stagger_seconds=5, research iterations=5.
+# Defaults applied: max_builders=5, stagger_seconds=5.
+# NOTE: research iteration override removed — auto-skip logic (automaton.sh:917-926)
+# now handles wasteful research runs; overriding the user's config is misleading.
 _apply_allowance_parallel_defaults() {
     if [ "$BUDGET_MODE" != "allowance" ]; then
         return 0
@@ -1319,11 +1338,6 @@ _apply_allowance_parallel_defaults() {
     if [ "$PARALLEL_STAGGER_SECONDS" -eq 15 ]; then
         PARALLEL_STAGGER_SECONDS=5
         changed="${changed}stagger=5s "
-    fi
-
-    if [ "$EXEC_MAX_ITER_RESEARCH" -eq 3 ]; then
-        EXEC_MAX_ITER_RESEARCH=5
-        changed="${changed}research_iters=5 "
     fi
 
     if [ -n "$changed" ]; then
