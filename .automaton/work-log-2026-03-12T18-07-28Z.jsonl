@@ -1,0 +1,19 @@
+{"ts":"2026-03-12T18:07:28Z","event":"phase_end","phase":"research","iteration":0,"elapsed_s":0,"details":{"exit_code":0,"iterations":0}}
+{"ts":"2026-03-12T18:07:28Z","event":"phase_start","phase":"plan","iteration":0,"elapsed_s":0,"details":{"phase_config":{}}}
+{"ts":"2026-03-12T18:07:28Z","event":"phase_end","phase":"plan","iteration":0,"elapsed_s":0,"details":{"exit_code":0,"iterations":0}}
+{"ts":"2026-03-12T18:07:29Z","event":"phase_start","phase":"build","iteration":0,"elapsed_s":1,"details":{"phase_config":{}}}
+{"ts":"2026-03-12T18:07:29Z","event":"iteration_start","phase":"build","iteration":1,"elapsed_s":1,"details":{"task":"build iteration 1"}}
+{"ts":"2026-03-12T18:08:43Z","event":"iteration_start","phase":"build","iteration":2,"elapsed_s":75,"details":{"task":"build iteration 2"}}
+{"ts":"2026-03-12T18:09:57Z","event":"phase_end","phase":"build","iteration":2,"elapsed_s":149,"details":{"exit_code":0,"iterations":2}}
+{"ts":"2026-03-12T18:09:58Z","event":"phase_start","phase":"plan","iteration":2,"elapsed_s":150,"details":{"phase_config":{}}}
+{"ts":"2026-03-12T18:09:58Z","event":"phase_end","phase":"plan","iteration":2,"elapsed_s":150,"details":{"exit_code":0,"iterations":0}}
+{"ts":"2026-03-12T18:09:58Z","event":"phase_start","phase":"build","iteration":2,"elapsed_s":150,"details":{"phase_config":{}}}
+{"ts":"2026-03-12T18:09:58Z","event":"iteration_start","phase":"build","iteration":3,"elapsed_s":150,"details":{"task":"build iteration 1"}}
+{"ts":"2026-03-12T18:11:34Z","event":"iteration_start","phase":"build","iteration":4,"elapsed_s":246,"details":{"task":"build iteration 2"}}
+{"ts":"2026-03-12T18:13:34Z","event":"phase_end","phase":"build","iteration":4,"elapsed_s":366,"details":{"exit_code":0,"iterations":2}}
+{"ts":"2026-03-12T18:13:35Z","event":"phase_start","phase":"plan","iteration":4,"elapsed_s":367,"details":{"phase_config":{}}}
+{"ts":"2026-03-12T18:13:35Z","event":"phase_end","phase":"plan","iteration":4,"elapsed_s":367,"details":{"exit_code":0,"iterations":0}}
+{"ts":"2026-03-12T18:13:35Z","event":"phase_start","phase":"build","iteration":4,"elapsed_s":367,"details":{"phase_config":{}}}
+{"ts":"2026-03-12T18:13:35Z","event":"iteration_start","phase":"build","iteration":5,"elapsed_s":367,"details":{"task":"build iteration 1"}}
+{"ts":"2026-03-12T18:14:56Z","event":"iteration_start","phase":"build","iteration":6,"elapsed_s":448,"details":{"task":"build iteration 2"}}
+{"ts":"2026-03-12T18:16:00Z","event":"escalation","phase":"build","iteration":6,"elapsed_s":512,"details":{"reason":"Agent stalled after 2 re-plans. Manual intervention required.","target":"user"}}
